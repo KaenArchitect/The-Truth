@@ -63,6 +63,10 @@ import {
   summarizeArchivedAudit
 } from './src/data/agentArchiveApi.ts';
 import { buildSsrRootInnerHtml, injectSsrRootHtml } from './src/data/ssrSnapshotHtml.ts';
+import {
+  verifyFirebaseBearerToken,
+  type VerifiedFirebaseUser
+} from './src/server/firebaseTokenVerifier.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -297,13 +301,24 @@ hydrateDailyQuotaLedger();
 // Warm Top-150 market cap directory on startup in the background (0 Gemini credits)
 void getMarketCapDirectory().catch(() => {});
 
-function extractRequestPrincipal(
+interface ResolvedServerPrincipal {
+  primaryKey: string;
+  allKeys: string[];
+  normalizedIp: string;
+  verifiedUser: VerifiedFirebaseUser | null;
+  isAdmin: boolean;
+  verifiedEmail: string | null;
+}
+
+async function resolveVerifiedRequestPrincipal(
   req: Request,
   body?: { userId?: unknown; clientId?: unknown }
-) {
+): Promise<ResolvedServerPrincipal> {
   const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const ip = forwarded || req.ip || req.socket.remoteAddress || 'unknown';
-  const userId =
+  const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
+  const rawUserId =
+    verifiedUser?.uid ||
     (typeof body?.userId === 'string' && body.userId) ||
     (typeof req.headers['x-truth-user-id'] === 'string' && req.headers['x-truth-user-id']) ||
     (typeof req.query.userId === 'string' && req.query.userId) ||
@@ -313,7 +328,33 @@ function extractRequestPrincipal(
     (typeof req.headers['x-truth-client-id'] === 'string' && req.headers['x-truth-client-id']) ||
     (typeof req.query.clientId === 'string' && req.query.clientId) ||
     null;
-  return resolveQuotaPrincipalKeys({ userId, clientId, ip });
+  const keys = resolveQuotaPrincipalKeys({ userId: rawUserId, clientId, ip });
+  return {
+    ...keys,
+    verifiedUser,
+    isAdmin: Boolean(verifiedUser?.isAdmin),
+    verifiedEmail: verifiedUser?.email || null
+  };
+}
+
+async function requireVerifiedAdmin(
+  req: Request,
+  res: Response
+): Promise<VerifiedFirebaseUser | null> {
+  const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
+  if (!verifiedUser) {
+    res.status(401).json({
+      error: 'Authentication required. Sign in with your verified Google Admin account.'
+    });
+    return null;
+  }
+  if (!verifiedUser.isAdmin) {
+    res.status(403).json({
+      error: 'Admin privileges required.'
+    });
+    return null;
+  }
+  return verifiedUser;
 }
 
 // ============================================================================
@@ -528,11 +569,19 @@ async function createApp(): Promise<express.Express> {
     });
   });
 
-  app.get('/api/config', (req: Request, res: Response) => {
-    const principal = extractRequestPrincipal(req);
-    const dailyQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
+  app.get('/api/config', async (req: Request, res: Response) => {
+    const principal = await resolveVerifiedRequestPrincipal(req);
+    const dailyQuota = getUserDailyQuotaStatus(
+      dailyQuotaLedger,
+      principal.allKeys,
+      Date.now(),
+      DAILY_NEW_FULL_PULL_LIMIT,
+      principal.isAdmin
+    );
     res.json({
-      strictCreditLock: isStrictCreditLockActive(),
+      strictCreditLock: isStrictCreditLockActive() && !principal.isAdmin,
+      isAdmin: principal.isAdmin,
+      adminEmail: principal.isAdmin ? principal.verifiedEmail : null,
       dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
       unrestrictedMetalsAndNetworks: true,
       dailyQuota,
@@ -551,13 +600,95 @@ async function createApp(): Promise<express.Express> {
     });
   });
 
-  app.get('/api/quota', (req: Request, res: Response) => {
-    const principal = extractRequestPrincipal(req);
-    const dailyQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
+  app.get('/api/quota', async (req: Request, res: Response) => {
+    const principal = await resolveVerifiedRequestPrincipal(req);
+    const dailyQuota = getUserDailyQuotaStatus(
+      dailyQuotaLedger,
+      principal.allKeys,
+      Date.now(),
+      DAILY_NEW_FULL_PULL_LIMIT,
+      principal.isAdmin
+    );
     res.json({
+      isAdmin: principal.isAdmin,
+      adminEmail: principal.isAdmin ? principal.verifiedEmail : null,
       dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
       unrestrictedMetalsAndNetworks: true,
       dailyQuota
+    });
+  });
+
+  app.post('/api/admin/clear-quota', async (req: Request, res: Response) => {
+    const admin = await requireVerifiedAdmin(req, res);
+    if (!admin) return;
+    dailyQuotaLedger = {};
+    rateBuckets.clear();
+    persistDailyQuotaLedger();
+    const principal = await resolveVerifiedRequestPrincipal(req);
+    const dailyQuota = getUserDailyQuotaStatus(
+      dailyQuotaLedger,
+      principal.allKeys,
+      Date.now(),
+      DAILY_NEW_FULL_PULL_LIMIT,
+      true
+    );
+    res.json({
+      ok: true,
+      clearedBy: admin.email,
+      dailyQuota
+    });
+  });
+
+  app.post('/api/admin/purge-cache', async (req: Request, res: Response) => {
+    const admin = await requireVerifiedAdmin(req, res);
+    if (!admin) return;
+    serverAuditCache.clear();
+    serverAliasCache.clear();
+    Object.values(PRELOADED_AUDITS).forEach((item) => indexAuditAliases(item));
+    try {
+      if (fs.existsSync(CACHE_FILE_PATH)) {
+        fs.unlinkSync(CACHE_FILE_PATH);
+      }
+    } catch {
+      // Non-fatal
+    }
+    await syncFirestoreArchivedAuditsToCache(true);
+    persistServerCacheToDisk();
+    res.json({
+      ok: true,
+      clearedBy: admin.email,
+      cachedCount: serverAuditCache.size
+    });
+  });
+
+  app.post('/api/admin/delete-audit', async (req: Request, res: Response) => {
+    const admin = await requireVerifiedAdmin(req, res);
+    if (!admin) return;
+    const body = (req.body || {}) as { ticker?: unknown };
+    const rawTicker = typeof body.ticker === 'string' ? body.ticker : '';
+    const tk = resolveCanonicalAssetTicker(rawTicker) || normalizeLookupKey(rawTicker);
+    if (!tk) {
+      res.status(400).json({ error: 'Valid asset ticker is required.' });
+      return;
+    }
+
+    for (const [aliasKey, mappedTk] of serverAliasCache.entries()) {
+      if (mappedTk === tk) {
+        serverAliasCache.delete(aliasKey);
+      }
+    }
+
+    if (PRELOADED_AUDITS[tk]) {
+      indexAuditAliases(PRELOADED_AUDITS[tk]);
+    } else {
+      serverAuditCache.delete(tk);
+    }
+    persistServerCacheToDisk();
+    res.json({
+      ok: true,
+      deletedBy: admin.email,
+      ticker: tk,
+      restoredBaseline: Boolean(PRELOADED_AUDITS[tk])
     });
   });
 
@@ -630,7 +761,7 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    const principal = extractRequestPrincipal(req, body);
+    const principal = await resolveVerifiedRequestPrincipal(req, body);
     const existingBaseline =
       body.existingBaseline && Array.isArray(body.existingBaseline.invariants)
         ? body.existingBaseline
@@ -649,7 +780,13 @@ async function createApp(): Promise<express.Express> {
     if (!bypassCache) {
       const hit = lookupCachedAudit(rawQuery);
       if (hit) {
-        const currentQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
+        const currentQuota = getUserDailyQuotaStatus(
+          dailyQuotaLedger,
+          principal.allKeys,
+          Date.now(),
+          DAILY_NEW_FULL_PULL_LIMIT,
+          principal.isAdmin
+        );
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
@@ -668,7 +805,7 @@ async function createApp(): Promise<express.Express> {
       }
     }
 
-    if (isStrictCreditLockActive()) {
+    if (isStrictCreditLockActive() && !principal.isAdmin) {
       res.status(423).json({
         error: 'STRICT_CREDIT_LOCK is active on the server. Cached and archived lookups remain unlimited.'
       });
@@ -686,7 +823,13 @@ async function createApp(): Promise<express.Express> {
     });
 
     if (!scopeResult.allowed) {
-      const currentQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
+      const currentQuota = getUserDailyQuotaStatus(
+        dailyQuotaLedger,
+        principal.allKeys,
+        Date.now(),
+        DAILY_NEW_FULL_PULL_LIMIT,
+        principal.isAdmin
+      );
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
@@ -707,8 +850,14 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    // 2) HARD DAILY LIMIT: MAX 2 NEW FULL PULLS PER USER PER UTC DAY
-    const quotaAttempt = consumeDailyPull(dailyQuotaLedger, principal.allKeys);
+    // 2) HARD DAILY LIMIT: MAX 2 NEW FULL PULLS PER USER PER UTC DAY (UNLIMITED FOR VERIFIED ADMIN)
+    const quotaAttempt = consumeDailyPull(
+      dailyQuotaLedger,
+      principal.allKeys,
+      Date.now(),
+      DAILY_NEW_FULL_PULL_LIMIT,
+      principal.isAdmin
+    );
     if (!quotaAttempt.allowed) {
       res.status(429).json({
         error: `Daily limit of ${DAILY_NEW_FULL_PULL_LIMIT} new full pulls reached for today. Cached & archived assets remain unlimited (0 credits). Resets at 00:00 UTC.`,
@@ -718,12 +867,14 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    const rate = checkIpRateLimit(req, 'audit', 12);
-    if (!rate.allowed) {
-      res.status(429).json({
-        error: `Rate limit reached for live full audits. Please retry in ${rate.retryAfterSec}s.`
-      });
-      return;
+    if (!principal.isAdmin) {
+      const rate = checkIpRateLimit(req, 'audit', 12);
+      if (!rate.allowed) {
+        res.status(429).json({
+          error: `Rate limit reached for live full audits. Please retry in ${rate.retryAfterSec}s.`
+        });
+        return;
+      }
     }
 
     let ai: GoogleGenAI;
@@ -734,9 +885,11 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    // Commit daily quota slot only once we are actually invoking Gemini
-    dailyQuotaLedger = quotaAttempt.nextLedger;
-    persistDailyQuotaLedger();
+    // Commit daily quota slot only once we are actually invoking Gemini (never consume ledger for admin)
+    if (!principal.isAdmin) {
+      dailyQuotaLedger = quotaAttempt.nextLedger;
+      persistDailyQuotaLedger();
+    }
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -850,7 +1003,13 @@ async function createApp(): Promise<express.Express> {
         persistServerCacheToDisk();
       }
 
-      const updatedQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
+      const updatedQuota = getUserDailyQuotaStatus(
+        dailyQuotaLedger,
+        principal.allKeys,
+        Date.now(),
+        DAILY_NEW_FULL_PULL_LIMIT,
+        principal.isAdmin
+      );
       sendEvent({
         type: 'done',
         audit: builtAudit,
@@ -862,12 +1021,20 @@ async function createApp(): Promise<express.Express> {
       res.end();
     } catch (err) {
       // Refund daily quota slot if upstream audit failed before delivering a valid payload
-      dailyQuotaLedger = refundDailyPull(dailyQuotaLedger, principal.allKeys);
-      persistDailyQuotaLedger();
+      if (!principal.isAdmin) {
+        dailyQuotaLedger = refundDailyPull(dailyQuotaLedger, principal.allKeys);
+        persistDailyQuotaLedger();
+      }
       sendEvent({
         type: 'error',
         message: formatGeminiErrorMessage(err),
-        quota: getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys)
+        quota: getUserDailyQuotaStatus(
+          dailyQuotaLedger,
+          principal.allKeys,
+          Date.now(),
+          DAILY_NEW_FULL_PULL_LIMIT,
+          principal.isAdmin
+        )
       });
       res.end();
     }
@@ -909,19 +1076,22 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    if (isStrictCreditLockActive()) {
+    const principal = await resolveVerifiedRequestPrincipal(req);
+    if (isStrictCreditLockActive() && !principal.isAdmin) {
       res.status(423).json({
         error: 'STRICT_CREDIT_LOCK is active on the server. Cached reads remain unlimited.'
       });
       return;
     }
 
-    const rate = checkIpRateLimit(req, 'invariant', 40);
-    if (!rate.allowed) {
-      res.status(429).json({
-        error: `Rate limit reached for invariant operations. Please retry in ${rate.retryAfterSec}s.`
-      });
-      return;
+    if (!principal.isAdmin) {
+      const rate = checkIpRateLimit(req, 'invariant', 40);
+      if (!rate.allowed) {
+        res.status(429).json({
+          error: `Rate limit reached for invariant operations. Please retry in ${rate.retryAfterSec}s.`
+        });
+        return;
+      }
     }
 
     let ai: GoogleGenAI;

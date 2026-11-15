@@ -44,6 +44,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Trash2,
   TrendingUp,
   Unlock,
   Upload,
@@ -80,12 +81,16 @@ import {
   type InvariantData,
   type InvariantLogEntry
 } from './data/rubricSpec.ts';
+import { PRIMARY_ADMIN_EMAIL } from './data/adminAccess.ts';
 import {
   OperationType,
   collection,
+  deleteAuditDocumentFromFirestore,
   firebaseAuth,
   firestoreDb,
+  getFirebaseIdToken,
   handleFirestoreError,
+  isVerifiedAdminUser,
   persistAuditDocumentToFirestore,
   signInWithGoogleArchive,
   signOutArchive,
@@ -379,6 +384,9 @@ function ThermodynamicAuditApp() {
   // Shared Persistent Archive & API Credit Shield State
   const [archiveUser, setArchiveUser] = useState<User | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [serverIsAdmin, setServerIsAdmin] = useState(false);
+  const [adminActionBusy, setAdminActionBusy] = useState<string | null>(null);
+  const isAdminSession = Boolean(archiveUser && (isVerifiedAdminUser(archiveUser) || serverIsAdmin));
   const [archiveStatus, setArchiveStatus] = useState<'CONNECTING' | 'SYNCED' | 'SESSION_ARCHIVE'>(
     firestoreDb ? 'CONNECTING' : 'SESSION_ARCHIVE'
   );
@@ -668,43 +676,47 @@ function ThermodynamicAuditApp() {
     }
   }, [invLogs]);
 
-  // Hydrate server config (STRICT_CREDIT_LOCK, daily quota) and persistent server disk cache (/api/cache)
+  const syncServerConfigAndQuota = useCallback(async (userOverride?: User | null) => {
+    const clientId = getOrCreateClientQuotaId();
+    const idToken = userOverride !== null ? await getFirebaseIdToken() : null;
+    try {
+      const res = await fetch('/api/config', {
+        headers: {
+          'x-truth-client-id': clientId,
+          ...(userOverride?.uid ? { 'x-truth-user-id': userOverride.uid } : {}),
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        }
+      });
+      if (!res.ok) return;
+      const cfg = (await res.json()) as {
+        strictCreditLock?: boolean;
+        isAdmin?: boolean;
+        dailyQuota?: QuotaStatus;
+        donate?: {
+          kasAddress?: string;
+          btcAddress?: string;
+          ethAddress?: string;
+          solAddress?: string;
+        };
+      } | null;
+      if (!cfg) return;
+      setServerIsAdmin(Boolean(cfg.isAdmin));
+      setStrictCreditLock(Boolean(cfg.strictCreditLock));
+      if (cfg.dailyQuota) {
+        setDailyQuota(cfg.dailyQuota);
+      }
+      if (cfg.donate) {
+        setDonateConfig(cfg.donate);
+      }
+    } catch {
+      // Ignore transient offline config fetch failure
+    }
+  }, []);
+
+  // Hydrate server config (STRICT_CREDIT_LOCK, admin capability, daily quota) and persistent server disk cache (/api/cache)
   useEffect(() => {
     let active = true;
-    const clientId = getOrCreateClientQuotaId();
-    fetch('/api/config', {
-      headers: {
-        'x-truth-client-id': clientId,
-        ...(archiveUser?.uid ? { 'x-truth-user-id': archiveUser.uid } : {})
-      }
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(
-        (
-          cfg: {
-            strictCreditLock?: boolean;
-            dailyQuota?: QuotaStatus;
-            donate?: {
-              kasAddress?: string;
-              btcAddress?: string;
-              ethAddress?: string;
-              solAddress?: string;
-            };
-          } | null
-        ) => {
-          if (!active || !cfg) return;
-          if (cfg.strictCreditLock) {
-            setStrictCreditLock(true);
-          }
-          if (cfg.dailyQuota) {
-            setDailyQuota(cfg.dailyQuota);
-          }
-          if (cfg.donate) {
-            setDonateConfig(cfg.donate);
-          }
-        }
-      )
-      .catch(() => {});
+    void syncServerConfigAndQuota(firebaseAuth?.currentUser || undefined);
 
     fetch('/api/cache')
       .then((res) => (res.ok ? res.json() : null))
@@ -742,30 +754,20 @@ function ThermodynamicAuditApp() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [syncServerConfigAndQuota]);
 
-  // Observe Google Auth state for verified Firestore Cloud Archive writes & refresh daily pull quota
+  // Observe Google Auth state for verified Firestore Cloud Archive writes & admin / daily pull quota
   useEffect(() => {
     if (!firebaseAuth) return undefined;
     const unsub = onAuthStateChanged(firebaseAuth, (u) => {
       setArchiveUser(u);
-      const clientId = getOrCreateClientQuotaId();
-      fetch('/api/quota', {
-        headers: {
-          'x-truth-client-id': clientId,
-          ...(u?.uid ? { 'x-truth-user-id': u.uid } : {})
-        }
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((payload: { dailyQuota?: QuotaStatus } | null) => {
-          if (payload?.dailyQuota) {
-            setDailyQuota(payload.dailyQuota);
-          }
-        })
-        .catch(() => {});
+      if (!u) {
+        setServerIsAdmin(false);
+      }
+      void syncServerConfigAndQuota(u);
     });
     return () => unsub();
-  }, []);
+  }, [syncServerConfigAndQuota]);
 
   // Public 0-Credit Firestore Archive Listener + Reachability Check
   useEffect(() => {
@@ -921,14 +923,24 @@ function ThermodynamicAuditApp() {
     try {
       if (archiveUser) {
         await signOutArchive();
+        setServerIsAdmin(false);
         flashArchiveToast('Signed out of Cloud Archive Sync (Public Read-Only active)', 'hit');
       } else {
         const signedIn = await signInWithGoogleArchive();
         if (signedIn) {
-          flashArchiveToast(
-            `Google Cloud Sync Active (${signedIn.email || 'Verified'})`,
-            'saved'
-          );
+          setAuditError(null);
+          await syncServerConfigAndQuota(signedIn);
+          if (isVerifiedAdminUser(signedIn)) {
+            flashArchiveToast(
+              `Admin Access Active (${signedIn.email}) • Unlimited Pulls Unlocked`,
+              'saved'
+            );
+          } else {
+            flashArchiveToast(
+              `Google Cloud Sync Active (${signedIn.email || 'Verified'})`,
+              'saved'
+            );
+          }
         }
       }
     } catch (err) {
@@ -938,6 +950,124 @@ function ThermodynamicAuditApp() {
       );
     } finally {
       setAuthBusy(false);
+    }
+  };
+
+  const handleAdminClearQuota = async () => {
+    if (!isAdminSession || adminActionBusy) return;
+    setAdminActionBusy('clear-quota');
+    try {
+      const idToken = await getFirebaseIdToken(true);
+      if (!idToken) throw new Error('Verified Google Admin session required.');
+      const res = await fetch('/api/admin/clear-quota', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        }
+      });
+      const payload = (await res.json().catch(() => null)) as {
+        dailyQuota?: QuotaStatus;
+        error?: string;
+      } | null;
+      if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+      if (payload?.dailyQuota) setDailyQuota(payload.dailyQuota);
+      flashArchiveToast('Admin: Daily quota ledger & IP rate limits cleared', 'saved');
+    } catch (err) {
+      flashArchiveToast(
+        err instanceof Error ? err.message : 'Failed to clear server quotas.',
+        'warn'
+      );
+    } finally {
+      setAdminActionBusy(null);
+    }
+  };
+
+  const handleAdminPurgeCache = async () => {
+    if (!isAdminSession || adminActionBusy) return;
+    setAdminActionBusy('purge-cache');
+    try {
+      const idToken = await getFirebaseIdToken(true);
+      if (!idToken) throw new Error('Verified Google Admin session required.');
+      const res = await fetch('/api/admin/purge-cache', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        }
+      });
+      const payload = (await res.json().catch(() => null)) as {
+        cachedCount?: number;
+        error?: string;
+      } | null;
+      if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+      flashArchiveToast(
+        `Admin: Server vault re-synced (${payload?.cachedCount ?? sortedTickers.length} assets)`,
+        'saved'
+      );
+    } catch (err) {
+      flashArchiveToast(
+        err instanceof Error ? err.message : 'Failed to re-sync server cache.',
+        'warn'
+      );
+    } finally {
+      setAdminActionBusy(null);
+    }
+  };
+
+  const handleAdminDeleteAudit = async (ticker: string) => {
+    if (!isAdminSession || adminActionBusy) return;
+    const cleanTk = String(ticker || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]/g, '');
+    if (!cleanTk) return;
+
+    setAdminActionBusy(`delete:${cleanTk}`);
+    try {
+      const idToken = await getFirebaseIdToken(true);
+      if (!idToken) throw new Error('Verified Google Admin session required.');
+      const res = await fetch('/api/admin/delete-audit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ ticker: cleanTk })
+      });
+      const payload = (await res.json().catch(() => null)) as {
+        restoredBaseline?: boolean;
+        error?: string;
+      } | null;
+      if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
+
+      await deleteAuditDocumentFromFirestore(cleanTk);
+
+      setAudits((prev) => {
+        const next = { ...prev };
+        if (PRELOADED_AUDITS[cleanTk]) {
+          next[cleanTk] = PRELOADED_AUDITS[cleanTk];
+        } else {
+          delete next[cleanTk];
+        }
+        return canonicalizeAuditsCollection(next);
+      });
+      if (!PRELOADED_AUDITS[cleanTk]) {
+        setPinnedKeys((prev) => prev.filter((k) => k !== cleanTk));
+        setActiveKey((prev) => (prev === cleanTk ? null : prev));
+      }
+      flashArchiveToast(
+        PRELOADED_AUDITS[cleanTk]
+          ? `Admin: Reset $${cleanTk} to deterministic baseline`
+          : `Admin: Deleted $${cleanTk} from Vault`,
+        'saved'
+      );
+    } catch (err) {
+      flashArchiveToast(
+        err instanceof Error ? err.message : `Failed to delete $${cleanTk}.`,
+        'warn'
+      );
+    } finally {
+      setAdminActionBusy(null);
     }
   };
 
@@ -1595,12 +1725,14 @@ function ThermodynamicAuditApp() {
     const clientId = getOrCreateClientQuotaId();
 
     const streamPromise = (async () => {
+      const idToken = await getFirebaseIdToken();
       const response = await fetch('/api/audit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-truth-client-id': clientId,
-          ...(archiveUser?.uid ? { 'x-truth-user-id': archiveUser.uid } : {})
+          ...(archiveUser?.uid ? { 'x-truth-user-id': archiveUser.uid } : {}),
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
         },
         body: JSON.stringify({
           query: rawQuery,
@@ -1784,9 +1916,12 @@ function ThermodynamicAuditApp() {
       setSearchInput('');
       triggerScanPulse();
 
-      const quotaSuffix = tracker.quota
-        ? ` • ${tracker.quota.remaining}/${tracker.quota.limit} daily pulls left`
-        : '';
+      const quotaSuffix =
+        tracker.quota?.unlimited || isAdminSession
+          ? ' • ∞ Admin Unlimited Pulls'
+          : tracker.quota
+          ? ` • ${tracker.quota.remaining}/${tracker.quota.limit} daily pulls left`
+          : '';
 
       if (tracker.sandbox) {
         flashArchiveToast(
@@ -1818,7 +1953,7 @@ function ThermodynamicAuditApp() {
     const targetObj = (targetKey && audits[targetKey]) || currentAudit;
     if (!targetObj || isAuditing || singleInvBusy) return;
 
-    if (strictCreditLock) {
+    if (strictCreditLock && !isAdminSession) {
       flashArchiveToast(
         'Strict Credit Shield is LOCKED — unlock in Archive menu to run full 6-invariant refreshes.',
         'warn'
@@ -1977,7 +2112,7 @@ function ThermodynamicAuditApp() {
   // ACTION 1: Low-Token Single-Invariant Fresh Re-Audit (POST /api/invariant mode=REAUDIT -> gemini-4-hydrogen)
   const handleSingleInvariantReaudit = async (invId: string) => {
     if (isAuditing || singleInvBusy) return;
-    if (strictCreditLock) {
+    if (strictCreditLock && !isAdminSession) {
       setSingleInvNotice({
         type: 'warn',
         text: 'Strict Credit Shield is active — unlock in the Archive menu to run live fresh pulls.'
@@ -1995,9 +2130,13 @@ function ThermodynamicAuditApp() {
     setSingleInvBusy({ key: logKey, mode: 'REAUDIT' });
 
     try {
+      const idToken = await getFirebaseIdToken();
       const response = await fetch('/api/invariant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
         body: JSON.stringify({
           mode: 'REAUDIT',
           targetAudit,
@@ -2119,7 +2258,7 @@ function ThermodynamicAuditApp() {
       return;
     }
 
-    if (strictCreditLock) {
+    if (strictCreditLock && !isAdminSession) {
       setSingleInvNotice({
         type: 'warn',
         text: 'Strict Credit Shield is active — unlock in the Archive menu to adjudicate new challenges.'
@@ -2131,9 +2270,13 @@ function ThermodynamicAuditApp() {
     setSingleInvBusy({ key: logKey, mode: 'CHALLENGE' });
 
     try {
+      const idToken = await getFirebaseIdToken();
       const response = await fetch('/api/invariant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
         body: JSON.stringify({
           mode: 'CHALLENGE',
           targetAudit,
@@ -2315,7 +2458,7 @@ function ThermodynamicAuditApp() {
       return;
     }
 
-    if (strictCreditLock) {
+    if (strictCreditLock && !isAdminSession) {
       setSingleInvNotice({
         type: 'warn',
         text: 'Strict Credit Shield is active — unlock in the Archive menu to generate new AI breakdowns.'
@@ -2327,9 +2470,13 @@ function ThermodynamicAuditApp() {
     setSingleInvBusy({ key: logKey, mode: 'BREAKDOWN' });
 
     try {
+      const idToken = await getFirebaseIdToken();
       const response = await fetch('/api/invariant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
         body: JSON.stringify({
           mode: 'BREAKDOWN',
           targetAudit,
@@ -3379,12 +3526,21 @@ function ThermodynamicAuditApp() {
               className="color-glide px-3 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
               title="Thermodynamic Archive & API Credit Shield — Pulls cached & community-audited tokens at 0 API credits"
             >
-              {strictCreditLock ? (
+              {strictCreditLock && !isAdminSession ? (
                 <Lock className="w-3.5 h-3.5 color-glide" style={{ color: accent.secondary }} />
               ) : (
                 <Database className="w-3.5 h-3.5 color-glide" style={{ color: accent.secondary }} />
               )}
               <span>Archive ({sortedTickers.length})</span>
+              {isAdminSession && (
+                <span
+                  data-testid="header-admin-badge"
+                  className="animate-card-fade px-1.5 py-0.2 rounded-full text-[9.5px] font-bold bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45"
+                  title={`Admin Access Active (${archiveUser?.email || PRIMARY_ADMIN_EMAIL}) — Unlimited Audit Pulls`}
+                >
+                  ADMIN ∞
+                </span>
+              )}
               {zeroTokenHits > 0 && (
                 <span
                   className="animate-card-fade color-glide px-1.5 py-0.2 rounded-full text-[9.5px] font-bold"
@@ -3781,24 +3937,36 @@ function ThermodynamicAuditApp() {
                 {auditError && (
                   <div className="pointer-events-auto animate-card-fade w-full">
                     <div
-                      className="px-4 py-2.5 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono flex items-center justify-between gap-3 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
+                      className="px-4 py-2.5 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono flex flex-wrap items-center justify-between gap-3 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
                       style={{
                         border: `1px solid ${accent.secondaryBorder}`,
                         color: accent.secondary
                       }}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
                         <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: accent.primary }} />
                         <span>{auditError}</span>
                       </div>
-                      <button
-                        type="button"
-                        aria-label="Dismiss audit error"
-                        onClick={() => setAuditError(null)}
-                        className="text-neutral-400 hover:text-white"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {firebaseAuth && !archiveUser && /Daily limit|Authentication required/i.test(auditError) && (
+                          <button
+                            type="button"
+                            disabled={authBusy}
+                            onClick={handleGoogleArchiveAuth}
+                            className="px-2.5 py-1 rounded-full bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45 hover:bg-[#49EACB]/25 text-[10.5px] font-bold transition disabled:opacity-50"
+                          >
+                            {authBusy ? 'Signing In...' : 'Google Sign-In'}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          aria-label="Dismiss audit error"
+                          onClick={() => setAuditError(null)}
+                          className="text-neutral-400 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -6662,12 +6830,21 @@ function ThermodynamicAuditApp() {
                   </div>
                   <div
                     className="font-display text-2xl font-bold mt-1"
-                    style={{ color: dailyQuota.remaining > 0 ? '#49EACB' : '#FACC15' }}
+                    style={{
+                      color:
+                        dailyQuota.unlimited || isAdminSession || dailyQuota.remaining > 0
+                          ? '#49EACB'
+                          : '#FACC15'
+                    }}
                   >
-                    {dailyQuota.remaining} / {dailyQuota.limit}
+                    {dailyQuota.unlimited || isAdminSession
+                      ? '∞ UNLIMITED'
+                      : `${dailyQuota.remaining} / ${dailyQuota.limit}`}
                   </div>
                   <div className="font-mono text-[10px] text-neutral-400 mt-0.5">
-                    Metals &amp; all networks • Resets 00:00 UTC
+                    {dailyQuota.unlimited || isAdminSession
+                      ? `Admin Provision (${archiveUser?.email || PRIMARY_ADMIN_EMAIL})`
+                      : 'Metals & all networks • Resets 00:00 UTC'}
                   </div>
                 </div>
 
@@ -6701,17 +6878,32 @@ function ThermodynamicAuditApp() {
 
               {/* Verified Google Cloud Archive Sync Control */}
               {firebaseAuth && (
-                <div className="p-4 rounded-2xl bg-[#0B0C0E] border border-white/[0.08] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div
+                  className={`p-4 rounded-2xl bg-[#0B0C0E] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border ${
+                    isAdminSession ? 'border-[#49EACB]/35' : 'border-white/[0.08]'
+                  }`}
+                >
                   <div className="space-y-1">
-                    <div className="font-mono text-xs font-bold text-white">
-                      {archiveUser
-                        ? `Verified Writer: ${archiveUser.email || archiveUser.uid}`
-                        : 'Public Cloud Vault (Read-Only Until Signed In)'}
+                    <div className="font-mono text-xs font-bold text-white flex flex-wrap items-center gap-2">
+                      <span>
+                        {isAdminSession
+                          ? `Verified Admin: ${archiveUser?.email || PRIMARY_ADMIN_EMAIL}`
+                          : archiveUser
+                          ? `Verified Writer: ${archiveUser.email || archiveUser.uid}`
+                          : 'Public Cloud Vault (Read-Only Until Signed In)'}
+                      </span>
+                      {isAdminSession && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45 text-[10px] font-bold">
+                          ADMIN • UNLIMITED PULLS
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
-                      {archiveUser
+                      {isAdminSession
+                        ? 'Admin session active: daily 2-pull quota, IP rate limits, and server credit locks are bypassed. All new audits auto-publish to Firestore and Vault moderation controls are unlocked below.'
+                        : archiveUser
                         ? 'New custom audits, contest verdicts, and imported snapshots automatically publish to the shared Firestore Archive.'
-                        : 'Sign in with a verified Google account to publish new audits and adjudicated challenges into the shared Firestore Vault.'}
+                        : 'Sign in with a verified Google account to publish new audits into the shared Firestore Vault (or unlock unlimited admin access for authorized accounts).'}
                     </p>
                   </div>
 
@@ -6734,26 +6926,67 @@ function ThermodynamicAuditApp() {
                 </div>
               )}
 
+              {/* Verified Admin Vault Moderation Controls */}
+              {isAdminSession && (
+                <div
+                  data-testid="admin-controls-panel"
+                  className="p-4 rounded-2xl bg-[#0B0C0E] border border-[#49EACB]/30 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-xs font-bold text-[#49EACB] flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Admin Vault &amp; Quota Controls</span>
+                      </div>
+                      <div className="font-mono text-[11px] text-neutral-400 mt-0.5">
+                        Verified Bearer session for {archiveUser?.email || PRIMARY_ADMIN_EMAIL}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={Boolean(adminActionBusy)}
+                        onClick={handleAdminClearQuota}
+                        className="px-3 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/15 font-mono text-xs text-neutral-200 transition disabled:opacity-50"
+                      >
+                        {adminActionBusy === 'clear-quota' ? 'Clearing...' : 'Reset Daily Quotas'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(adminActionBusy)}
+                        onClick={handleAdminPurgeCache}
+                        className="px-3 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/15 font-mono text-xs text-[#49EACB] transition disabled:opacity-50"
+                      >
+                        {adminActionBusy === 'purge-cache' ? 'Re-syncing...' : 'Re-Sync Server Cache'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Strict Credit Lock Toggle */}
               <div className="p-4 rounded-2xl bg-[#0B0C0E] border border-white/[0.08] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="font-mono text-xs font-bold text-white flex items-center gap-2">
-                    {strictCreditLock ? (
+                    {strictCreditLock && !isAdminSession ? (
                       <Lock className="w-4 h-4 text-[#FACC15]" />
                     ) : (
                       <Unlock className="w-4 h-4 text-[#49EACB]" />
                     )}
                     <span>
-                      {strictCreditLock
+                      {strictCreditLock && !isAdminSession
                         ? 'Strict Credit Lock: ON (0 API Credits Allowed)'
+                        : isAdminSession
+                        ? 'Archive-First Shield: ADMIN UNLIMITED BYPASS'
                         : 'Archive-First Shield: ACTIVE (Default)'}
                     </span>
                   </div>
                   <p className="text-xs text-neutral-400 leading-relaxed">
                     Every searched token checks the Preloaded + Shared Cloud Archive first (0
-                    credits). Live uncached full pulls are limited to{' '}
+                    credits). Live uncached full pulls are{' '}
                     <strong className="text-neutral-200">
-                      {dailyQuota.limit} per user/day
+                      {isAdminSession ? 'unlimited for your admin account' : `limited to ${dailyQuota.limit} per user/day`}
                     </strong>{' '}
                     across all physical metals, Layer-1 networks, L2s, and overlays (zero CMC rank
                     cutoffs). Toggle <strong className="text-neutral-200">Strict Lock</strong> during
@@ -6766,7 +6999,7 @@ function ThermodynamicAuditApp() {
                   type="button"
                   onClick={() => setStrictCreditLock((prev) => !prev)}
                   className={`px-4 py-2 rounded-full font-mono text-xs font-bold shrink-0 transition border ${
-                    strictCreditLock
+                    strictCreditLock && !isAdminSession
                       ? 'bg-[#FACC15]/15 text-[#FACC15] border-[#FACC15]/50 hover:bg-[#FACC15]/25'
                       : 'bg-[#121418] text-neutral-200 border-white/15 hover:bg-[#1A1E26]'
                   }`}
@@ -6864,34 +7097,54 @@ function ThermodynamicAuditApp() {
                       Boolean(item.archivedAtLabel) ||
                       Boolean(item.lastFreshAuditAt);
                     return (
-                      <button
+                      <div
                         key={tk}
-                        type="button"
-                        onClick={() => {
-                          setIsArchiveModalOpen(false);
-                          void performArchivePullAudit(tk);
-                        }}
-                        className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-white/[0.07] text-left transition flex flex-col justify-between gap-1"
+                        className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-white/[0.07] transition flex items-start justify-between gap-1.5"
                       >
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="font-mono text-xs font-bold text-white truncate">
-                            ${item.ticker}
-                          </span>
-                          <span
-                            className="font-mono text-xs font-bold"
-                            style={{ color: itemAcc.primary }}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsArchiveModalOpen(false);
+                            void performArchivePullAudit(tk);
+                          }}
+                          className="flex-1 min-w-0 text-left flex flex-col justify-between gap-1"
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-mono text-xs font-bold text-white truncate">
+                              ${item.ticker}
+                            </span>
+                            <span
+                              className="font-mono text-xs font-bold shrink-0"
+                              style={{ color: itemAcc.primary }}
+                            >
+                              {item.grade} ({formatScore(item.totalScore)})
+                            </span>
+                          </div>
+                          <div className="font-mono text-[9.5px] text-neutral-500 truncate">
+                            {isSandboxItem
+                              ? 'Sandbox • Local Only'
+                              : isCustomOrUpdated
+                              ? `Live AI • ${item.archivedAtLabel || item.lastFreshAuditAt || 'Vault'}`
+                              : 'Deterministic Reference'}
+                          </div>
+                        </button>
+                        {isAdminSession && isCustomOrUpdated && !isSandboxItem && (
+                          <button
+                            type="button"
+                            disabled={adminActionBusy === `delete:${tk}`}
+                            onClick={() => void handleAdminDeleteAudit(tk)}
+                            title={
+                              PRELOADED_AUDITS[tk]
+                                ? `Reset $${item.ticker} to baseline`
+                                : `Delete $${item.ticker} from Vault`
+                            }
+                            aria-label={`Delete $${item.ticker} from archive`}
+                            className="shrink-0 p-1 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                           >
-                            {item.grade} ({formatScore(item.totalScore)})
-                          </span>
-                        </div>
-                        <div className="font-mono text-[9.5px] text-neutral-500 truncate">
-                          {isSandboxItem
-                            ? 'Sandbox • Local Only'
-                            : isCustomOrUpdated
-                            ? `Live AI • ${item.archivedAtLabel || item.lastFreshAuditAt || 'Vault'}`
-                            : 'Deterministic Reference'}
-                        </div>
-                      </button>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -6906,31 +7159,56 @@ function ThermodynamicAuditApp() {
                         const item = audits[tk];
                         if (!item) return null;
                         const itemAcc = getGradeAccent(item.grade);
+                        const isSandboxItem = sandboxTickerSet.has(tk);
+                        const isCustomOrUpdated =
+                          Boolean(item.isCustom) ||
+                          Boolean(item.archivedAtLabel) ||
+                          Boolean(item.lastFreshAuditAt);
                         return (
-                          <button
+                          <div
                             key={tk}
-                            type="button"
-                            onClick={() => {
-                              setIsArchiveModalOpen(false);
-                              void performArchivePullAudit(tk);
-                            }}
-                            className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-indigo-400/20 text-left transition flex flex-col justify-between gap-1"
+                            className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-indigo-400/20 transition flex items-start justify-between gap-1.5"
                           >
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="font-mono text-xs font-bold text-white truncate">
-                                ${item.ticker}
-                              </span>
-                              <span
-                                className="font-mono text-xs font-bold"
-                                style={{ color: itemAcc.primary }}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsArchiveModalOpen(false);
+                                void performArchivePullAudit(tk);
+                              }}
+                              className="flex-1 min-w-0 text-left flex flex-col justify-between gap-1"
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-mono text-xs font-bold text-white truncate">
+                                  ${item.ticker}
+                                </span>
+                                <span
+                                  className="font-mono text-xs font-bold shrink-0"
+                                  style={{ color: itemAcc.primary }}
+                                >
+                                  {item.grade} ({formatScore(item.totalScore)})
+                                </span>
+                              </div>
+                              <div className="font-mono text-[9.5px] text-indigo-300/80 truncate">
+                                Ecosystem / Overlays
+                              </div>
+                            </button>
+                            {isAdminSession && isCustomOrUpdated && !isSandboxItem && (
+                              <button
+                                type="button"
+                                disabled={adminActionBusy === `delete:${tk}`}
+                                onClick={() => void handleAdminDeleteAudit(tk)}
+                                title={
+                                  PRELOADED_AUDITS[tk]
+                                    ? `Reset $${item.ticker} to baseline`
+                                    : `Delete $${item.ticker} from Vault`
+                                }
+                                aria-label={`Delete $${item.ticker} from archive`}
+                                className="shrink-0 p-1 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition disabled:opacity-50"
                               >
-                                {item.grade} ({formatScore(item.totalScore)})
-                              </span>
-                            </div>
-                            <div className="font-mono text-[9.5px] text-indigo-300/80 truncate">
-                              Ecosystem / Overlays
-                            </div>
-                          </button>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>

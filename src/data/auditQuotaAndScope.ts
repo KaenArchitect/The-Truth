@@ -25,6 +25,8 @@ export interface QuotaStatus {
   used: number;
   remaining: number;
   allowed: boolean;
+  unlimited?: boolean;
+  isAdmin?: boolean;
   dayKey: string;
   resetAtUtc: string;
 }
@@ -339,10 +341,24 @@ export function getUserDailyQuotaStatus(
   ledger: DailyQuotaLedger,
   keys: string[],
   nowMs = Date.now(),
-  limit = DAILY_NEW_FULL_PULL_LIMIT
+  limit = DAILY_NEW_FULL_PULL_LIMIT,
+  isAdmin = false
 ): QuotaStatus {
   const dayKey = getUtcDayKey(nowMs);
   const resetAtUtc = getNextUtcMidnightIso(nowMs);
+
+  if (isAdmin) {
+    return {
+      limit,
+      used: 0,
+      remaining: limit,
+      allowed: true,
+      unlimited: true,
+      isAdmin: true,
+      dayKey,
+      resetAtUtc
+    };
+  }
 
   let maxUsed = 0;
   for (const key of keys) {
@@ -358,6 +374,8 @@ export function getUserDailyQuotaStatus(
     used: maxUsed,
     remaining,
     allowed: remaining > 0,
+    unlimited: false,
+    isAdmin: false,
     dayKey,
     resetAtUtc
   };
@@ -367,9 +385,18 @@ export function consumeDailyPull(
   ledger: DailyQuotaLedger,
   keys: string[],
   nowMs = Date.now(),
-  limit = DAILY_NEW_FULL_PULL_LIMIT
+  limit = DAILY_NEW_FULL_PULL_LIMIT,
+  isAdmin = false
 ): { allowed: boolean; status: QuotaStatus; nextLedger: DailyQuotaLedger } {
-  const current = getUserDailyQuotaStatus(ledger, keys, nowMs, limit);
+  const current = getUserDailyQuotaStatus(ledger, keys, nowMs, limit, isAdmin);
+  if (isAdmin) {
+    return {
+      allowed: true,
+      status: current,
+      nextLedger: ledger
+    };
+  }
+
   if (!current.allowed) {
     return {
       allowed: false,
@@ -392,7 +419,7 @@ export function consumeDailyPull(
     };
   }
 
-  const nextStatus = getUserDailyQuotaStatus(nextLedger, keys, nowMs, limit);
+  const nextStatus = getUserDailyQuotaStatus(nextLedger, keys, nowMs, limit, false);
   return {
     allowed: true,
     status: nextStatus,

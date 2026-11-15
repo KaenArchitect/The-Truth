@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  deleteDoc,
   query,
   where,
   onSnapshot,
@@ -22,6 +23,7 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import type { AuditData, InvariantLogEntry } from '../data/rubricSpec.ts';
+import { isAdminEmail } from '../data/adminAccess.ts';
 import {
   formatCohortTimestampLabel,
   sanitizeGainsCohortRecord,
@@ -131,6 +133,20 @@ export async function signOutArchive(): Promise<void> {
   await signOut(firebaseAuth);
 }
 
+export async function getFirebaseIdToken(forceRefresh = false): Promise<string | null> {
+  if (!firebaseAuth?.currentUser) return null;
+  try {
+    return await firebaseAuth.currentUser.getIdToken(forceRefresh);
+  } catch {
+    return null;
+  }
+}
+
+export function isVerifiedAdminUser(user: User | null | undefined): boolean {
+  if (!user) return false;
+  return isAdminEmail(user.email, user.emailVerified);
+}
+
 export function sanitizeForArchive<T>(val: T): T {
   if (val === undefined) return null as unknown as T;
   if (val === null || typeof val !== 'object') return val;
@@ -223,6 +239,29 @@ export async function persistAuditDocumentToFirestore(
     return true;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, docPath);
+    return false;
+  }
+}
+
+export async function deleteAuditDocumentFromFirestore(ticker: string): Promise<boolean> {
+  if (!firestoreDb || !firebaseAuth?.currentUser) return false;
+  const user = firebaseAuth.currentUser;
+  if (!user.emailVerified) return false;
+
+  const tk = String(ticker || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '')
+    .slice(0, 16);
+  if (!tk) return false;
+
+  const docPath = `archived_audits/${tk}`;
+  const docRef = doc(firestoreDb, 'archived_audits', tk);
+
+  try {
+    await deleteDoc(docRef);
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, docPath);
     return false;
   }
 }

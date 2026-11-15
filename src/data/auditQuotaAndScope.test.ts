@@ -162,3 +162,36 @@ test('Physical commodities always map to short canonical elemental/ISO tickers',
   assert.equal(resolvePhysicalCommodityQuery('Lithium')?.symbol, 'LI');
 });
 
+test('Verified admin user gets unlimited audit pulls without consuming or being blocked by daily quota', () => {
+  const t0 = Date.UTC(2026, 10, 15, 19, 0, 0);
+  const principal = resolveQuotaPrincipalKeys({
+    userId: 'admin-bardazon-uid',
+    clientId: 'browser-xyz',
+    ip: '198.51.100.42'
+  });
+
+  // Exhaust 2/2 quota on the same IP/browser before signing in as admin
+  let ledger = {};
+  ledger = consumeDailyPull(ledger, ['ip:198.51.100.42', 'client:browser-xyz'], t0).nextLedger;
+  ledger = consumeDailyPull(ledger, ['ip:198.51.100.42', 'client:browser-xyz'], t0 + 1000).nextLedger;
+
+  const nonAdminStatus = getUserDailyQuotaStatus(ledger, principal.allKeys, t0 + 2000, 2, false);
+  assert.equal(nonAdminStatus.allowed, false);
+  assert.equal(nonAdminStatus.unlimited, false);
+
+  // Admin status & consumption bypasses limit cleanly and leaves ledger unchanged
+  const adminStatus = getUserDailyQuotaStatus(ledger, principal.allKeys, t0 + 2000, 2, true);
+  assert.equal(adminStatus.allowed, true);
+  assert.equal(adminStatus.unlimited, true);
+  assert.equal(adminStatus.isAdmin, true);
+
+  for (let i = 0; i < 10; i++) {
+    const attempt = consumeDailyPull(ledger, principal.allKeys, t0 + 3000 + i * 100, 2, true);
+    assert.equal(attempt.allowed, true);
+    assert.equal(attempt.status.unlimited, true);
+    assert.equal(attempt.status.isAdmin, true);
+    assert.equal(attempt.nextLedger, ledger);
+  }
+});
+
+
