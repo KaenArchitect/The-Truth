@@ -11,28 +11,38 @@ import type { PinOrientationMode } from '../data/constellationOrientation.ts';
 
 export interface WaveLut {
   steps: number;
-  cos1: Float32Array;
-  sin1: Float32Array;
-  sinFA: Float32Array;
-  cosFA: Float32Array;
-  cosFB: Float32Array;
-  sinFB: Float32Array;
-  sinFC: Float32Array;
-  cosFC: Float32Array;
+  cos1: Float64Array;
+  sin1: Float64Array;
+  sinFA: Float64Array;
+  cosFA: Float64Array;
+  cosFB: Float64Array;
+  sinFB: Float64Array;
+  sinFC: Float64Array;
+  cosFC: Float64Array;
+  i0: Int32Array;
+  i2: Int32Array;
+  i3: Int32Array;
+  xs: Float64Array;
+  ys: Float64Array;
+  parts: string[];
 }
 
 export function createWaveLut(steps: number, fA: number, fB: number, fC: number): WaveLut {
-  const cos1 = new Float32Array(steps + 1);
-  const sin1 = new Float32Array(steps + 1);
-  const sinFA = new Float32Array(steps + 1);
-  const cosFA = new Float32Array(steps + 1);
-  const cosFB = new Float32Array(steps + 1);
-  const sinFB = new Float32Array(steps + 1);
-  const sinFC = new Float32Array(steps + 1);
-  const cosFC = new Float32Array(steps + 1);
+  const n = Math.max(16, steps | 0);
+  const cos1 = new Float64Array(n);
+  const sin1 = new Float64Array(n);
+  const sinFA = new Float64Array(n);
+  const cosFA = new Float64Array(n);
+  const cosFB = new Float64Array(n);
+  const sinFB = new Float64Array(n);
+  const sinFC = new Float64Array(n);
+  const cosFC = new Float64Array(n);
+  const i0 = new Int32Array(n);
+  const i2 = new Int32Array(n);
+  const i3 = new Int32Array(n);
 
-  for (let i = 0; i <= steps; i++) {
-    const theta = (i / steps) * Math.PI * 2;
+  for (let i = 0; i < n; i++) {
+    const theta = (i / n) * Math.PI * 2;
     cos1[i] = Math.cos(theta);
     sin1[i] = Math.sin(theta);
     sinFA[i] = Math.sin(fA * theta);
@@ -41,22 +51,62 @@ export function createWaveLut(steps: number, fA: number, fB: number, fC: number)
     sinFB[i] = Math.sin(fB * theta);
     sinFC[i] = Math.sin(fC * theta);
     cosFC[i] = Math.cos(fC * theta);
+    i0[i] = (i - 1 + n) % n;
+    i2[i] = (i + 1) % n;
+    i3[i] = (i + 2) % n;
   }
 
-  return { steps, cos1, sin1, sinFA, cosFA, cosFB, sinFB, sinFC, cosFC };
+  return {
+    steps: n,
+    cos1,
+    sin1,
+    sinFA,
+    cosFA,
+    cosFB,
+    sinFB,
+    sinFC,
+    cosFC,
+    i0,
+    i2,
+    i3,
+    xs: new Float64Array(n),
+    ys: new Float64Array(n),
+    parts: new Array<string>(n + 2)
+  };
 }
 
-export const MINI_LUT_MAIN = createWaveLut(32, 6, 3, 9);
-export const MINI_LUT_ECHO = createWaveLut(28, 6, 4, 8);
-export const MINI_LUT_INNER = createWaveLut(24, 6, 3, 12);
+function fmtWaveCoord(v: number): string {
+  const n = Math.round(v * 100);
+  if (n < 0) {
+    const a = -n;
+    const whole = (a / 100) | 0;
+    const frac = a - whole * 100;
+    return frac === 0
+      ? `-${whole}`
+      : frac < 10
+      ? `-${whole}.0${frac}`
+      : `-${whole}.${frac}`;
+  }
+  const whole = (n / 100) | 0;
+  const frac = n - whole * 100;
+  return frac === 0
+    ? `${whole}`
+    : frac < 10
+    ? `${whole}.0${frac}`
+    : `${whole}.${frac}`;
+}
 
-export const NUCLEUS_LUT_MAIN = createWaveLut(72, 6, 3, 9);
-export const NUCLEUS_LUT_ECHO = createWaveLut(64, 6, 4, 8);
-export const NUCLEUS_LUT_INNER = createWaveLut(56, 6, 3, 12);
+export const MINI_LUT_MAIN = createWaveLut(40, 6, 3, 9);
+export const MINI_LUT_ECHO = createWaveLut(36, 6, 4, 8);
+export const MINI_LUT_INNER = createWaveLut(36, 6, 3, 12);
 
-export const SAT_LUT_MAIN = createWaveLut(48, 5, 3, 8);
-export const SAT_LUT_ECHO = createWaveLut(44, 5, 4, 7);
-export const SAT_LUT_INNER = createWaveLut(40, 5, 3, 10);
+export const NUCLEUS_LUT_MAIN = createWaveLut(84, 6, 3, 9);
+export const NUCLEUS_LUT_ECHO = createWaveLut(76, 6, 4, 8);
+export const NUCLEUS_LUT_INNER = createWaveLut(72, 6, 3, 12);
+
+export const SAT_LUT_MAIN = createWaveLut(56, 5, 3, 8);
+export const SAT_LUT_ECHO = createWaveLut(48, 5, 4, 7);
+export const SAT_LUT_INNER = createWaveLut(48, 5, 3, 10);
 
 export function buildFastWavePath(
   lut: WaveLut,
@@ -68,12 +118,14 @@ export function buildFastWavePath(
   mulB = 0.82,
   mulC = 1.35
 ): string {
-  const { steps, cos1, sin1, sinFA, cosFA, cosFB, sinFB, sinFC, cosFC } = lut;
+  const { steps, cos1, sin1, sinFA, cosFA, cosFB, sinFB, sinFC, cosFC, i0, i2, i3, xs, ys, parts } =
+    lut;
   if (amp <= 0.005) {
-    const r = baseR.toFixed(1);
-    return `M ${(cx + baseR).toFixed(1)} ${cy.toFixed(1)} A ${r} ${r} 0 1 1 ${(cx - baseR).toFixed(
-      1
-    )} ${cy.toFixed(1)} A ${r} ${r} 0 1 1 ${(cx + baseR).toFixed(1)} ${cy.toFixed(1)} Z`;
+    const r = fmtWaveCoord(baseR);
+    const rightX = fmtWaveCoord(cx + baseR);
+    const leftX = fmtWaveCoord(cx - baseR);
+    const centerY = fmtWaveCoord(cy);
+    return `M ${rightX} ${centerY} A ${r} ${r} 0 1 1 ${leftX} ${centerY} A ${r} ${r} 0 1 1 ${rightX} ${centerY} Z`;
   }
 
   const cP1 = Math.cos(ph);
@@ -85,15 +137,33 @@ export function buildFastWavePath(
   const cP3 = Math.cos(p3);
   const sP3 = Math.sin(p3);
 
-  const parts = new Array<string>(steps + 2);
-  for (let i = 0; i <= steps; i++) {
+  for (let i = 0; i < steps; i++) {
     const termA = sinFA[i] * cP1 + cosFA[i] * sP1;
     const termB = cosFB[i] * cP2 + sinFB[i] * sP2;
     const termC = sinFC[i] * cP3 + cosFC[i] * sP3;
     const r = baseR + amp * (0.54 * termA + 0.31 * termB + 0.15 * termC);
-    const x = ((cx + cos1[i] * r) * 10 | 0) * 0.1;
-    const y = ((cy + sin1[i] * r) * 10 | 0) * 0.1;
-    parts[i] = i === 0 ? `M${x} ${y}` : `L${x} ${y}`;
+    xs[i] = cx + cos1[i] * r;
+    ys[i] = cy + sin1[i] * r;
+  }
+
+  parts[0] = `M${fmtWaveCoord(xs[0])} ${fmtWaveCoord(ys[0])}`;
+  const k = 1 / 6;
+  for (let i = 0; i < steps; i++) {
+    const idx0 = i0[i];
+    const idx2 = i2[i];
+    const idx3 = i3[i];
+
+    const x1 = xs[i];
+    const y1 = ys[i];
+    const x2 = xs[idx2];
+    const y2 = ys[idx2];
+
+    const cp1x = fmtWaveCoord(x1 + (x2 - xs[idx0]) * k);
+    const cp1y = fmtWaveCoord(y1 + (y2 - ys[idx0]) * k);
+    const cp2x = fmtWaveCoord(x2 - (xs[idx3] - x1) * k);
+    const cp2y = fmtWaveCoord(y2 - (ys[idx3] - y1) * k);
+
+    parts[i + 1] = `C${cp1x} ${cp1y} ${cp2x} ${cp2y} ${fmtWaveCoord(x2)} ${fmtWaveCoord(y2)}`;
   }
   parts[steps + 1] = 'Z';
   return parts.join('');
@@ -120,10 +190,19 @@ let sharedWaveRafId: number | null = null;
 let sharedWavePaused = false;
 let lastSharedFrameMs = 0;
 
+function isReducedMotionPreferred(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
 function runSharedWaveLoop(now: number): void {
   if (
     waveSubscribers.size === 0 ||
     sharedWavePaused ||
+    isReducedMotionPreferred() ||
     (typeof document !== 'undefined' && document.hidden)
   ) {
     sharedWaveRafId = null;
@@ -146,6 +225,7 @@ function ensureSharedWaveLoop(): void {
   if (
     sharedWaveRafId === null &&
     !sharedWavePaused &&
+    !isReducedMotionPreferred() &&
     waveSubscribers.size > 0 &&
     (typeof document === 'undefined' || !document.hidden)
   ) {
@@ -216,7 +296,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   const itemAccent = getGradeAccent(item?.grade);
   const isHighlighted = isSelected || isPinnedItem;
   const effectiveSize = Math.max(60, Math.round(sizePx || 68));
-  const svgOutsetPx = Math.round(effectiveSize * (10 / 68));
+  const svgOutsetPx = (effectiveSize * 10) / 68;
+  const haloInsetPx = (effectiveSize * 4) / 68;
 
   useEffect(() => {
     if (isZeroFlat) return undefined;
@@ -224,7 +305,11 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
     let phase = seedIndex * 0.95;
     // +25% harmonic wave amplitude upgrade (1.25x crest multiplier); E=0 remains flatlined (0)
     const amp = 1.25 * (1.6 + Math.pow(rawScore / 6.0, 1.12) * 5.0);
-    const speed = (0.018 + (rawScore / 6.0) * 0.028) * 1.85;
+    const speed = (0.018 + (rawScore / 6.0) * 0.028) * 1.15;
+
+    if (!isHighlighted && innerPathRef.current) {
+      innerPathRef.current.setAttribute('d', DEFAULT_MINI_INNER_D);
+    }
 
     const renderMini = (ph: number) => {
       if (mainPathRef.current) {
@@ -251,19 +336,23 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
     return subscribeSharedWave((dt) => {
       phase += speed * Math.min(1.5, dt);
       renderMini(phase);
-    }, 12);
+    }, isHighlighted ? 20 : 14);
   }, [rawScore, isZeroFlat, isHighlighted, seedIndex]);
 
   return (
     <div className="group relative inline-flex items-center justify-center">
       <span
-        className="pointer-events-none absolute inset-[4px] rounded-full transition-all duration-300 ease-out"
+        className="pointer-events-none absolute rounded-full transition-all duration-300 ease-out"
         style={{
+          inset: `${haloInsetPx.toFixed(2)}px`,
           boxShadow: isHighlighted
-            ? `0 8px 18px rgba(0,0,0,0.85), 0 0 16px ${itemAccent.glow}`
+            ? `0 8px 18px rgba(0,0,0,0.85), 0 0 18px ${itemAccent.glow}`
             : '0 6px 14px rgba(0,0,0,0.68)',
-          border: isHighlighted ? `1px solid ${itemAccent.border}` : '1px solid transparent',
-          transform: isHighlighted ? 'scale(1.16)' : 'scale(1)'
+          border:
+            isHighlighted && isZeroFlat
+              ? `1px solid ${itemAccent.border}`
+              : '1px solid transparent',
+          transform: isHighlighted ? 'scale(1.12)' : 'scale(1)'
         }}
       />
 
@@ -280,13 +369,14 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
       >
         <svg
           viewBox="0 0 88 88"
+          shapeRendering="geometricPrecision"
           style={{
-            left: `-${svgOutsetPx}px`,
-            top: `-${svgOutsetPx}px`,
-            width: `${effectiveSize + svgOutsetPx * 2}px`,
-            height: `${effectiveSize + svgOutsetPx * 2}px`
+            left: `-${svgOutsetPx.toFixed(2)}px`,
+            top: `-${svgOutsetPx.toFixed(2)}px`,
+            width: `${(effectiveSize + svgOutsetPx * 2).toFixed(2)}px`,
+            height: `${(effectiveSize + svgOutsetPx * 2).toFixed(2)}px`
           }}
-          className="absolute pointer-events-none"
+          className="absolute pointer-events-none overflow-visible"
         >
           <defs>
             <radialGradient id={`projBubbleGrad-${item.ticker}`} cx="50%" cy="50%" r="50%">
@@ -341,6 +431,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
                 stroke={itemAccent.secondary}
                 strokeWidth="1"
                 strokeOpacity={isHighlighted ? 0.52 : 0.3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
               <path
                 ref={mainPathRef}
@@ -349,6 +441,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
                 stroke={`url(#projRingGrad-${item.ticker})`}
                 strokeOpacity={isHighlighted ? 1 : 0.8}
                 strokeWidth={isHighlighted ? '2.1' : '1.55'}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
               <path
                 ref={innerPathRef}
@@ -358,6 +452,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
                 strokeWidth="0.85"
                 strokeDasharray="3 3"
                 strokeOpacity={isHighlighted ? 0.32 : 0.18}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </>
           )}
@@ -677,7 +773,7 @@ export interface PinnedOrbitalNodeProps {
   seedOffset?: number;
 }
 
-export function PinnedOrbitalNode({
+export const PinnedOrbitalNode = memo(function PinnedOrbitalNode({
   auditObj,
   x,
   y,
@@ -934,7 +1030,8 @@ export function PinnedOrbitalNode({
 
               <svg
                 viewBox="0 0 140 140"
-                className="absolute inset-[-24px] w-[calc(100%+48px)] h-[calc(100%+48px)] pointer-events-none"
+                shapeRendering="geometricPrecision"
+                className="absolute inset-[-24px] w-[calc(100%+48px)] h-[calc(100%+48px)] pointer-events-none overflow-visible"
               >
                 <defs>
                   <radialGradient id={satGradId} cx="50%" cy="50%" r="50%">
@@ -957,6 +1054,8 @@ export function PinnedOrbitalNode({
                   stroke={invStyle.color}
                   strokeWidth="1.05"
                   strokeOpacity={isSplit && hasEnergy ? (isHovered ? 0.58 : 0.34) : 0}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
 
                 <path
@@ -968,6 +1067,8 @@ export function PinnedOrbitalNode({
                   stroke={invStyle.color}
                   strokeOpacity={isHovered ? 1 : hasEnergy ? 0.92 : 0.5}
                   strokeWidth={isHovered ? '2.3' : '1.65'}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
 
                 <path
@@ -980,6 +1081,8 @@ export function PinnedOrbitalNode({
                   strokeWidth="0.85"
                   strokeDasharray="3 3"
                   strokeOpacity={isSplit && hasEnergy ? 0.25 : 0.09}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
               </svg>
 
@@ -1039,7 +1142,8 @@ export function PinnedOrbitalNode({
           >
             <svg
               viewBox="0 0 280 280"
-              className="absolute inset-[-34px] w-[calc(100%+68px)] h-[calc(100%+68px)] pointer-events-none"
+              shapeRendering="geometricPrecision"
+              className="absolute inset-[-34px] w-[calc(100%+68px)] h-[calc(100%+68px)] pointer-events-none overflow-visible"
             >
               <defs>
                 <radialGradient
@@ -1075,6 +1179,8 @@ export function PinnedOrbitalNode({
                 stroke={nodeAccent.secondary}
                 strokeWidth="1.2"
                 strokeOpacity={!isSplit && Number(auditObj.totalScore) > 0 ? 0.38 : 0}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
 
               <path
@@ -1083,6 +1189,8 @@ export function PinnedOrbitalNode({
                 fill={`url(#pinNucleusGrad-${isExiting ? 'ghost-' : ''}${auditObj.ticker})`}
                 stroke={`url(#pinRingGrad-${isExiting ? 'ghost-' : ''}${auditObj.ticker})`}
                 strokeWidth={isFocused ? '2.7' : '2.1'}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
 
               <path
@@ -1093,6 +1201,8 @@ export function PinnedOrbitalNode({
                 strokeWidth="1"
                 strokeDasharray="4 4"
                 strokeOpacity={!isSplit && Number(auditObj.totalScore) > 0 ? 0.24 : 0.1}
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
             </svg>
 
@@ -1146,4 +1256,4 @@ export function PinnedOrbitalNode({
       </div>
     </div>
   );
-}
+});

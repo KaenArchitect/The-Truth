@@ -204,6 +204,78 @@ export function evaluateChaosWaveBand(
   };
 }
 
+interface CircularChaosGridCache {
+  cosTheta: Float64Array;
+  sinTheta: Float64Array;
+  tArr: Float64Array;
+  i0: Int32Array;
+  i2: Int32Array;
+  i3: Int32Array;
+  xs: Float64Array;
+  ys: Float64Array;
+  parts: string[];
+}
+
+const chaosGridCache = new Map<number, CircularChaosGridCache>();
+
+function getCircularChaosGrid(steps: number): CircularChaosGridCache {
+  let cached = chaosGridCache.get(steps);
+  if (cached) return cached;
+
+  const cosTheta = new Float64Array(steps);
+  const sinTheta = new Float64Array(steps);
+  const tArr = new Float64Array(steps);
+  const i0 = new Int32Array(steps);
+  const i2 = new Int32Array(steps);
+  const i3 = new Int32Array(steps);
+
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    const theta = t * Math.PI * 2;
+    tArr[i] = t;
+    cosTheta[i] = Math.cos(theta);
+    sinTheta[i] = Math.sin(theta);
+    i0[i] = (i - 1 + steps) % steps;
+    i2[i] = (i + 1) % steps;
+    i3[i] = (i + 2) % steps;
+  }
+
+  cached = {
+    cosTheta,
+    sinTheta,
+    tArr,
+    i0,
+    i2,
+    i3,
+    xs: new Float64Array(steps),
+    ys: new Float64Array(steps),
+    parts: new Array<string>(steps + 2)
+  };
+  chaosGridCache.set(steps, cached);
+  return cached;
+}
+
+function fmtChaosCoord(v: number): string {
+  const n = Math.round(v * 100);
+  if (n < 0) {
+    const a = -n;
+    const whole = (a / 100) | 0;
+    const frac = a - whole * 100;
+    return frac === 0
+      ? `-${whole}`
+      : frac < 10
+      ? `-${whole}.0${frac}`
+      : `-${whole}.${frac}`;
+  }
+  const whole = (n / 100) | 0;
+  const frac = n - whole * 100;
+  return frac === 0
+    ? `${whole}`
+    : frac < 10
+    ? `${whole}.0${frac}`
+    : `${whole}.${frac}`;
+}
+
 /**
  * Generates a C1-smooth closed cubic Bezier circular SVG path around `(cx, cy)`
  * at `baseRadius + waveOffset` across `steps` evenly spaced angles.
@@ -216,46 +288,41 @@ export function buildCircularChaosWavePath(
   phase: number,
   chaosLevel: number,
   settled: SettledHarmonyProfile,
-  steps = 120
+  steps = 224
 ): { d: string; opacity: number } {
-  const xs = new Float64Array(steps);
-  const ys = new Float64Array(steps);
+  const n = Math.max(24, steps | 0);
+  const { cosTheta, sinTheta, tArr, i0, i2, i3, xs, ys, parts } = getCircularChaosGrid(n);
   let opacitySample = 0;
 
-  for (let i = 0; i < steps; i++) {
-    const t = i / steps;
-    const theta = t * Math.PI * 2;
-    const sample = evaluateChaosWaveBand(bandIndex, t, phase, chaosLevel, settled);
+  for (let i = 0; i < n; i++) {
+    const sample = evaluateChaosWaveBand(bandIndex, tArr[i], phase, chaosLevel, settled);
     if (i === 0) opacitySample = sample.opacity;
     const r = baseRadius + sample.offset;
-    xs[i] = cx + Math.cos(theta) * r;
-    ys[i] = cy + Math.sin(theta) * r;
+    xs[i] = cx + cosTheta[i] * r;
+    ys[i] = cy + sinTheta[i] * r;
   }
 
-  const r1 = (v: number) => Math.round(v * 10) * 0.1;
-  const parts = new Array<string>(steps + 2);
-  parts[0] = `M${r1(xs[0]).toFixed(1)} ${r1(ys[0]).toFixed(1)}`;
+  parts[0] = `M${fmtChaosCoord(xs[0])} ${fmtChaosCoord(ys[0])}`;
 
   const k = 1 / 6;
-  for (let i = 0; i < steps; i++) {
-    const i0 = (i - 1 + steps) % steps;
-    const i1 = i;
-    const i2 = (i + 1) % steps;
-    const i3 = (i + 2) % steps;
+  for (let i = 0; i < n; i++) {
+    const idx0 = i0[i];
+    const idx2 = i2[i];
+    const idx3 = i3[i];
 
-    const x1 = xs[i1];
-    const y1 = ys[i1];
-    const x2 = xs[i2];
-    const y2 = ys[i2];
+    const x1 = xs[i];
+    const y1 = ys[i];
+    const x2 = xs[idx2];
+    const y2 = ys[idx2];
 
-    const cp1x = r1(x1 + (x2 - xs[i0]) * k).toFixed(1);
-    const cp1y = r1(y1 + (y2 - ys[i0]) * k).toFixed(1);
-    const cp2x = r1(x2 - (xs[i3] - x1) * k).toFixed(1);
-    const cp2y = r1(y2 - (ys[i3] - y1) * k).toFixed(1);
+    const cp1x = fmtChaosCoord(x1 + (x2 - xs[idx0]) * k);
+    const cp1y = fmtChaosCoord(y1 + (y2 - ys[idx0]) * k);
+    const cp2x = fmtChaosCoord(x2 - (xs[idx3] - x1) * k);
+    const cp2y = fmtChaosCoord(y2 - (ys[idx3] - y1) * k);
 
-    parts[i + 1] = `C${cp1x} ${cp1y} ${cp2x} ${cp2y} ${r1(x2).toFixed(1)} ${r1(y2).toFixed(1)}`;
+    parts[i + 1] = `C${cp1x} ${cp1y} ${cp2x} ${cp2y} ${fmtChaosCoord(x2)} ${fmtChaosCoord(y2)}`;
   }
 
-  parts[steps + 1] = 'Z';
+  parts[n + 1] = 'Z';
   return { d: parts.join(''), opacity: opacitySample };
 }

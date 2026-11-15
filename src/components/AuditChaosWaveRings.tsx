@@ -42,7 +42,7 @@ export function AuditChaosWaveRings({
   const initialPaths = useMemo(() => {
     const initialSettled = resolveSettledHarmonyProfile(projectedGrade, projectedTotal);
     return AUDIT_CHAOS_BANDS.map((_, idx) =>
-      buildCircularChaosWavePath(idx, CENTER, CENTER, SPHERE_RADIUS, 0, 1, initialSettled, 128)
+      buildCircularChaosWavePath(idx, CENTER, CENTER, SPHERE_RADIUS, 0, 1, initialSettled, 224)
     );
   }, []);
 
@@ -75,7 +75,7 @@ export function AuditChaosWaveRings({
           phasesRef.current[i] || 0,
           chaosNow,
           settled,
-          128
+          224
         );
 
         const el = pathRefs.current[i];
@@ -97,6 +97,7 @@ export function AuditChaosWaveRings({
       data-testid="audit-chaos-waves"
       aria-hidden="true"
       viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
+      shapeRendering="geometricPrecision"
       className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[340px] h-[340px] z-[19] overflow-visible"
     >
       {AUDIT_CHAOS_BANDS.map((band, idx) => (

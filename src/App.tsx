@@ -3339,8 +3339,7 @@ function ThermodynamicAuditApp() {
           }
         }
         .animate-stage-enter {
-          animation: stageCrossfade 360ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
-          will-change: transform, opacity;
+          animation: stageCrossfade 360ms cubic-bezier(0.22, 1, 0.36, 1) 40ms backwards;
         }
         @keyframes syncExpandDown {
           0% {
@@ -3498,18 +3497,22 @@ function ThermodynamicAuditApp() {
           animation: geniusMathFloat var(--math-dur, 24s) ease-in-out infinite;
           animation-delay: var(--math-delay, 0s);
           backface-visibility: hidden;
-          will-change: transform;
         }
         @media (prefers-reduced-motion: reduce) {
+          .bg-field-pulse,
+          .bg-core-breath,
+          .bg-halo-wave,
           .genius-vortex-spin,
-          .genius-math-float,
+          .genius-math-float {
+            animation: none !important;
+          }
           .animate-stage-enter,
           .animate-pin-enter,
           .animate-card-fade,
           .animate-sync-expand-down,
           .animate-modal-backdrop,
           .animate-modal-sheet {
-            animation: none;
+            animation: none !important;
             opacity: 1;
             transform: none;
           }
@@ -4152,7 +4155,7 @@ function ThermodynamicAuditApp() {
               </span>
             </button>
 
-            <div className="w-full overflow-y-auto no-scrollbar px-1 py-2 space-y-2.5">
+            <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
               <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
                 {corePassedTickers.map((tk, idx) => (
                   <HarmonicProjectBubble
@@ -4227,7 +4230,7 @@ function ThermodynamicAuditApp() {
               </span>
             </button>
 
-            <div className="w-full overflow-y-auto no-scrollbar px-1 py-2 space-y-2.5">
+            <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
               <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
                 {coreFailedTickers.map((tk, idx) => (
                   <HarmonicProjectBubble
@@ -4482,7 +4485,7 @@ function ThermodynamicAuditApp() {
                   style={{ height: `${scaledArenaHeight}px` }}
                 >
                   <div
-                    className="relative shrink-0 transition-all duration-500 ease-out"
+                    className="relative shrink-0 transition-[width,height] duration-500 ease-out"
                     style={{
                       width: `${layout.width}px`,
                       height: `${layout.height}px`,
@@ -5092,7 +5095,7 @@ function ThermodynamicAuditApp() {
                       setIsArenaHovered(false);
                       setHoveredInvId(null);
                     }}
-                    className="relative flex items-center justify-center select-none transition-transform"
+                    className="relative flex items-center justify-center select-none"
                     style={{
                       width: `${stageSize}px`,
                       height: `${stageSize}px`,
@@ -5187,7 +5190,8 @@ function ThermodynamicAuditApp() {
 
                     <svg
                       viewBox="0 0 140 140"
-                      className="absolute inset-[-24px] w-[calc(100%+48px)] h-[calc(100%+48px)] pointer-events-none"
+                      shapeRendering="geometricPrecision"
+                      className="absolute inset-[-24px] w-[calc(100%+48px)] h-[calc(100%+48px)] pointer-events-none overflow-visible"
                     >
                       <defs>
                         <radialGradient id={`satWaveGrad-${inv.id}`} cx="50%" cy="50%" r="50%">
@@ -5210,6 +5214,8 @@ function ThermodynamicAuditApp() {
                         stroke={invStyle.color}
                         strokeWidth="1.05"
                         strokeOpacity={isSplitOpen && hasEnergy ? (isHovered ? 0.55 : 0.34) : 0}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
 
                       <path
@@ -5221,6 +5227,8 @@ function ThermodynamicAuditApp() {
                         stroke={invStyle.color}
                         strokeOpacity={isHovered ? 1 : hasEnergy ? 0.92 : 0.48}
                         strokeWidth={isHovered ? '2.2' : '1.65'}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
 
                       <path
@@ -5233,6 +5241,8 @@ function ThermodynamicAuditApp() {
                         strokeWidth="0.85"
                         strokeDasharray="3 3"
                         strokeOpacity={isSplitOpen && hasEnergy ? 0.25 : 0.09}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
                     </svg>
 
@@ -5384,7 +5394,8 @@ function ThermodynamicAuditApp() {
                     />
                     <svg
                       viewBox="0 0 280 280"
-                      className="absolute inset-[-34px] w-[calc(100%+68px)] h-[calc(100%+68px)] pointer-events-none"
+                      shapeRendering="geometricPrecision"
+                      className="absolute inset-[-34px] w-[calc(100%+68px)] h-[calc(100%+68px)] pointer-events-none overflow-visible"
                     >
                       <defs>
                         <radialGradient id="nucleusWaveGrad" cx="50%" cy="50%" r="50%">
@@ -5408,6 +5419,8 @@ function ThermodynamicAuditApp() {
                         strokeOpacity={
                           !isSplitOpen && Number(currentAudit.totalScore) > 0 ? 0.38 : 0
                         }
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
 
                       <path
@@ -5416,6 +5429,8 @@ function ThermodynamicAuditApp() {
                         fill="url(#nucleusWaveGrad)"
                         stroke="url(#nucleusRingGrad)"
                         strokeWidth="2.3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
 
                       <path
@@ -5428,6 +5443,8 @@ function ThermodynamicAuditApp() {
                         strokeOpacity={
                           !isSplitOpen && Number(currentAudit.totalScore) > 0 ? 0.24 : 0.11
                         }
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                       />
                     </svg>
                   </>

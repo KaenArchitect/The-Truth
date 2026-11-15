@@ -318,6 +318,13 @@ export function GeniusUniverseBackground({
     lastTimeRef.current = performance.now();
 
     const tick = (nowMs: number) => {
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ) {
+        return;
+      }
       rafId = window.requestAnimationFrame(tick);
       if (document.hidden) {
         lastTimeRef.current = nowMs;
@@ -394,7 +401,7 @@ export function GeniusUniverseBackground({
       {/* Ambient galactic core rotation aura (hidden/motionless on Grade F) */}
       <div
         className={`genius-vortex-spin absolute left-1/2 top-1/2 w-[780px] h-[780px] sm:w-[1160px] sm:h-[1160px] rounded-full transition-opacity duration-700 ${
-          paused || isZeroMotion ? 'bg-anim-paused' : ''
+          !active || paused || isZeroMotion ? 'bg-anim-paused' : ''
         }`}
         style={{
           opacity: isZeroMotion ? 0 : Math.min(0.46, 0.24 * telemetry.nebulaIntensity + 0.1),
@@ -425,7 +432,7 @@ export function GeniusUniverseBackground({
               key={sprite.id}
               className={`genius-math-float absolute select-none whitespace-nowrap font-mono italic tracking-wide text-[11px] sm:text-[13px] transition-colors duration-700 ${
                 sprite.showOnMobile ? 'block' : 'hidden md:block'
-              } ${paused || isZeroMotion ? 'bg-anim-paused' : ''}`}
+              } ${!active || paused || isZeroMotion ? 'bg-anim-paused' : ''}`}
               style={{
                 left: `${sprite.xPct}%`,
                 top: `${sprite.yPct}%`,

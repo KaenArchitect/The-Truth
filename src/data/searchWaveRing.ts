@@ -211,6 +211,88 @@ export function evaluateWaveOutwardOffset(
   return spec.outwardOffset + spec.amplitude * ampMultiplier * offsetScale * wave;
 }
 
+interface StadiumTrigLut {
+  sinMain: Float64Array;
+  cosMain: Float64Array;
+  cosSub: Float64Array;
+  sinSub: Float64Array;
+  sinHarm: Float64Array;
+  cosHarm: Float64Array;
+  i0: Int32Array;
+  i2: Int32Array;
+  i3: Int32Array;
+  xs: Float64Array;
+  ys: Float64Array;
+  parts: string[];
+}
+
+const stadiumLutCache = new WeakMap<StadiumSamplePoint[], Map<string, StadiumTrigLut>>();
+
+function getStadiumTrigLut(samples: StadiumSamplePoint[], spec: GradeWaveSpec): StadiumTrigLut {
+  let bySpec = stadiumLutCache.get(samples);
+  if (!bySpec) {
+    bySpec = new Map<string, StadiumTrigLut>();
+    stadiumLutCache.set(samples, bySpec);
+  }
+  const key = `${spec.cyclesMain}:${spec.cyclesSub}:${spec.cyclesHarmonic}`;
+  let lut = bySpec.get(key);
+  if (lut) return lut;
+
+  const n = samples.length;
+  const sinMain = new Float64Array(n);
+  const cosMain = new Float64Array(n);
+  const cosSub = new Float64Array(n);
+  const sinSub = new Float64Array(n);
+  const sinHarm = new Float64Array(n);
+  const cosHarm = new Float64Array(n);
+  const i0 = new Int32Array(n);
+  const i2 = new Int32Array(n);
+  const i3 = new Int32Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const theta = samples[i].t * Math.PI * 2;
+    sinMain[i] = Math.sin(spec.cyclesMain * theta);
+    cosMain[i] = Math.cos(spec.cyclesMain * theta);
+    cosSub[i] = Math.cos(spec.cyclesSub * theta);
+    sinSub[i] = Math.sin(spec.cyclesSub * theta);
+    sinHarm[i] = Math.sin(spec.cyclesHarmonic * theta);
+    cosHarm[i] = Math.cos(spec.cyclesHarmonic * theta);
+    i0[i] = (i - 1 + n) % n;
+    i2[i] = (i + 1) % n;
+    i3[i] = (i + 2) % n;
+  }
+
+  lut = {
+    sinMain,
+    cosMain,
+    cosSub,
+    sinSub,
+    sinHarm,
+    cosHarm,
+    i0,
+    i2,
+    i3,
+    xs: new Float64Array(n),
+    ys: new Float64Array(n),
+    parts: new Array<string>(n + 2)
+  };
+  bySpec.set(key, lut);
+  return lut;
+}
+
+function fmtStadiumCoord(v: number): string {
+  const n = Math.round(v * 10);
+  if (n < 0) {
+    const a = -n;
+    const whole = (a / 10) | 0;
+    const frac = a - whole * 10;
+    return frac === 0 ? `-${whole}.0` : `-${whole}.${frac}`;
+  }
+  const whole = (n / 10) | 0;
+  const frac = n - whole * 10;
+  return frac === 0 ? `${whole}.0` : `${whole}.${frac}`;
+}
+
 /**
  * Generates a C1-smooth closed cubic Bezier SVG path string for one
  * pure-wavelength harmonic wave orbiting strictly outside the search pill.
@@ -225,37 +307,54 @@ export function buildStadiumWavePath(
   const n = samples.length;
   if (n < 3) return '';
 
-  const xs = new Float64Array(n);
-  const ys = new Float64Array(n);
+  const { sinMain, cosMain, cosSub, sinSub, sinHarm, cosHarm, i0, i2, i3, xs, ys, parts } =
+    getStadiumTrigLut(samples, spec);
+
+  const p1 = phase * spec.phaseDir;
+  const p2 = -p1 * 0.85;
+  const p3 = p1 * 1.3;
+  const cP1 = Math.cos(p1);
+  const sP1 = Math.sin(p1);
+  const cP2 = Math.cos(p2);
+  const sP2 = Math.sin(p2);
+  const cP3 = Math.cos(p3);
+  const sP3 = Math.sin(p3);
+
+  const baseOff = spec.outwardOffset;
+  const ampScale = spec.amplitude * ampMultiplier * offsetScale;
+
   for (let i = 0; i < n; i++) {
     const pt = samples[i];
-    const offset = evaluateWaveOutwardOffset(spec, pt.t, phase, ampMultiplier, offsetScale);
+    const carrier = 0.5 + 0.5 * (sinMain[i] * cP1 + cosMain[i] * sP1);
+    const subWave = 0.5 + 0.5 * (cosSub[i] * cP2 - sinSub[i] * sP2);
+    const harmonicRipple = 0.5 + 0.5 * (sinHarm[i] * cP3 + cosHarm[i] * sP3);
+    const wave = carrier * (0.58 + 0.28 * subWave + 0.14 * harmonicRipple);
+    const offset = baseOff + ampScale * wave;
     xs[i] = pt.x + pt.nx * offset;
     ys[i] = pt.y + pt.ny * offset;
   }
 
-  const r1 = (v: number) => Math.round(v * 10) * 0.1;
-  const parts = new Array<string>(n + 2);
-  parts[0] = `M${r1(xs[0]).toFixed(1)} ${r1(ys[0]).toFixed(1)}`;
+  parts[0] = `M${fmtStadiumCoord(xs[0])} ${fmtStadiumCoord(ys[0])}`;
 
   const k = 1 / 6;
   for (let i = 0; i < n; i++) {
-    const i0 = (i - 1 + n) % n;
-    const i1 = i;
-    const i2 = (i + 1) % n;
-    const i3 = (i + 2) % n;
+    const idx0 = i0[i];
+    const idx2 = i2[i];
+    const idx3 = i3[i];
 
-    const x1 = xs[i1];
-    const y1 = ys[i1];
-    const x2 = xs[i2];
-    const y2 = ys[i2];
+    const x1 = xs[i];
+    const y1 = ys[i];
+    const x2 = xs[idx2];
+    const y2 = ys[idx2];
 
-    const cp1x = r1(x1 + (x2 - xs[i0]) * k).toFixed(1);
-    const cp1y = r1(y1 + (y2 - ys[i0]) * k).toFixed(1);
-    const cp2x = r1(x2 - (xs[i3] - x1) * k).toFixed(1);
-    const cp2y = r1(y2 - (ys[i3] - y1) * k).toFixed(1);
+    const cp1x = fmtStadiumCoord(x1 + (x2 - xs[idx0]) * k);
+    const cp1y = fmtStadiumCoord(y1 + (y2 - ys[idx0]) * k);
+    const cp2x = fmtStadiumCoord(x2 - (xs[idx3] - x1) * k);
+    const cp2y = fmtStadiumCoord(y2 - (ys[idx3] - y1) * k);
 
-    parts[i + 1] = `C${cp1x} ${cp1y} ${cp2x} ${cp2y} ${r1(x2).toFixed(1)} ${r1(y2).toFixed(1)}`;
+    parts[i + 1] = `C${cp1x} ${cp1y} ${cp2x} ${cp2y} ${fmtStadiumCoord(x2)} ${fmtStadiumCoord(
+      y2
+    )}`;
   }
 
   parts[n + 1] = 'Z';
