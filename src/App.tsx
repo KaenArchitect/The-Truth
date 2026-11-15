@@ -30,8 +30,10 @@ import {
   Download,
   ExternalLink,
   Flame,
+  FlaskConical,
   Globe,
   Heart,
+  Info,
   Layers,
   Lock,
   Pin,
@@ -127,9 +129,17 @@ import {
 import { resolvePinOrientationMode } from './data/constellationOrientation.ts';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
-  MAX_CMC_RANK_SCOPE,
   type QuotaStatus
 } from './data/auditQuotaAndScope.ts';
+import {
+  CORE_REFERENCE_TICKERS,
+  ECOSYSTEM_OVERLAY_TICKERS,
+  classifyAuditQueryForSandbox,
+  getAuditProvenance,
+  getAuditRevisionAnalysis,
+  isSandboxUrlEnabled,
+  partitionTickersByEcosystem
+} from './data/auditProvenance.ts';
 
 const INVARIANT_ICONS: Record<string, LucideIcon> = {
   '01': ShieldCheck,
@@ -141,6 +151,7 @@ const INVARIANT_ICONS: Record<string, LucideIcon> = {
 };
 
 const LOCAL_AUDITS_STORAGE_KEY = 'truth_custom_audits_v1';
+const SANDBOX_AUDITS_STORAGE_KEY = 'truth_sandbox_audits_v1';
 const LOCAL_LOGS_STORAGE_KEY = 'truth_inv_logs_v1';
 const LOCAL_QUOTA_CLIENT_ID_KEY = 'truth_quota_client_id_v1';
 
@@ -191,6 +202,7 @@ interface AuditStreamTracker {
   error: Error | null;
   result: AuditData | null;
   quota: QuotaStatus | null;
+  sandbox: boolean;
   unlockedCount: number;
   colors: Record<number, string>;
   scores: Record<number, number>;
@@ -203,6 +215,7 @@ interface AuditSseEvent {
   text?: string;
   audit?: AuditData | null;
   outOfScope?: boolean;
+  sandbox?: boolean;
   maxRank?: number;
   detectedRank?: number | null;
   cachedHit?: boolean;
@@ -244,6 +257,28 @@ function loadLocalAuditsSnapshot(): Record<string, AuditData> {
   }
 }
 
+function loadSandboxAuditsSnapshot(): Record<string, AuditData> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(SANDBOX_AUDITS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, AuditData>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const valid: Record<string, AuditData> = {};
+    Object.entries(parsed).forEach(([k, val]) => {
+      if (val && typeof val === 'object' && Array.isArray(val.invariants) && val.invariants.length >= 6) {
+        const tk = String(val.ticker || k)
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '');
+        if (tk) valid[tk] = enforceEnergyArbitrageLawOnAudit({ ...val, ticker: tk });
+      }
+    });
+    return valid;
+  } catch {
+    return {};
+  }
+}
+
 function loadLocalLogsSnapshot(): Record<string, InvariantLogEntry[]> {
   if (typeof window === 'undefined') return {};
   try {
@@ -256,10 +291,83 @@ function loadLocalLogsSnapshot(): Record<string, InvariantLogEntry[]> {
   }
 }
 
+function ProvenanceBadgesStrip({
+  audit,
+  isSandbox,
+  compact = false
+}: {
+  audit: AuditData;
+  isSandbox: boolean;
+  compact?: boolean;
+}) {
+  const prov = getAuditProvenance(audit, {
+    preloadedTickers: new Set(Object.keys(PRELOADED_AUDITS)),
+    isSandbox
+  });
+
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-center gap-1.5 ${
+        compact ? 'text-[9.5px]' : 'text-[10px]'
+      } font-mono`}
+    >
+      <span
+        tabIndex={0}
+        title={prov.methodologyTooltip}
+        className={`group relative inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full border cursor-help ${
+          prov.isDeterministicReference
+            ? 'bg-[#49EACB]/10 text-[#49EACB] border-[#49EACB]/35'
+            : 'bg-[#FACC15]/10 text-[#FACC15] border-[#FACC15]/35'
+        }`}
+      >
+        <span
+          className="w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: prov.isDeterministicReference ? '#49EACB' : '#FACC15' }}
+        />
+        <span className="font-semibold">{prov.provenanceBadge}</span>
+        <Info className="w-2.5 h-2.5 opacity-75 shrink-0" />
+        <span
+          role="tooltip"
+          className="pointer-events-none opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50 w-64 sm:w-72 p-2.5 rounded-xl bg-[#07080A] border border-white/15 text-[10px] leading-relaxed text-neutral-200 text-left shadow-[0_12px_30px_rgba(0,0,0,0.85)] font-normal"
+        >
+          {prov.methodologyTooltip}
+        </span>
+      </span>
+
+      {prov.categoryBadge && (
+        <span
+          title="Ecosystem application, L2 rollup, or channel overlay anchored to a base Layer-1 settlement carrier."
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/12 text-indigo-300 border border-indigo-400/35 font-semibold"
+        >
+          <Layers className="w-2.5 h-2.5 shrink-0" />
+          <span>{prov.categoryBadge}</span>
+        </span>
+      )}
+
+      {prov.isSandbox && (
+        <span
+          title="Sandbox / Local Preview audit stored strictly in browser localStorage and excluded from the public archive."
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/12 text-amber-300 border border-amber-400/40 font-semibold"
+        >
+          <FlaskConical className="w-2.5 h-2.5 shrink-0" />
+          <span>Sandbox • Local Only</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ThermodynamicAuditApp() {
+  const [sandboxTickers, setSandboxTickers] = useState<string[]>(() =>
+    Object.keys(loadSandboxAuditsSnapshot())
+  );
+  const [isSandboxMode, setIsSandboxMode] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? isSandboxUrlEnabled(window.location.search) : false
+  );
   const [audits, setAudits] = useState<Record<string, AuditData>>(() => ({
     ...PRELOADED_AUDITS,
-    ...loadLocalAuditsSnapshot()
+    ...loadLocalAuditsSnapshot(),
+    ...loadSandboxAuditsSnapshot()
   }));
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
@@ -326,6 +434,11 @@ function ThermodynamicAuditApp() {
   // Modal Sheet State & Wartime Simulator Anchor Refs
   const [modalInvId, setModalInvId] = useState<string | null>(null);
   const [essayViewMode, setEssayViewMode] = useState(false);
+  const [showScoreConditions, setShowScoreConditions] = useState(false);
+  const isModalOpen = Boolean(modalInvId);
+  useEffect(() => {
+    setShowScoreConditions(false);
+  }, [isModalOpen, activeKey]);
   const modalBodyRef = useRef<HTMLDivElement | null>(null);
   const simAnchorRef = useRef<HTMLDivElement | null>(null);
   const syncComparisonAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -464,6 +577,19 @@ function ThermodynamicAuditApp() {
     const a = audits[tk];
     return a && (Number(a.totalScore) <= 1.0 || String(a.grade || '').toUpperCase() === 'F');
   });
+  const { coreTickers: corePassedTickers, ecosystemTickers: ecosystemPassedTickers } = useMemo(
+    () => partitionTickersByEcosystem(passedTickers, audits),
+    [passedTickers, audits]
+  );
+  const { coreTickers: coreFailedTickers, ecosystemTickers: ecosystemFailedTickers } = useMemo(
+    () => partitionTickersByEcosystem(failedTickers, audits),
+    [failedTickers, audits]
+  );
+  const { coreTickers: coreDirectoryTickers, ecosystemTickers: ecosystemDirectoryTickers } = useMemo(
+    () => partitionTickersByEcosystem(sortedTickers, audits),
+    [sortedTickers, audits]
+  );
+  const sandboxTickerSet = useMemo(() => new Set(sandboxTickers), [sandboxTickers]);
 
   const basketGainsSummary = useMemo(() => {
     const synced = buildBasketSyncedCohortRecord(audits);
@@ -496,21 +622,25 @@ function ThermodynamicAuditApp() {
     return () => clearTimeout(t);
   }, [archiveToast]);
 
-  // Persist custom/updated audits & invariant logs locally as zero-credit browser backup
+  // Persist custom/updated audits & sandbox previews separately so sandbox tests never leak into shared vaults
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const customOrUpdated: Record<string, AuditData> = {};
+      const sandboxSnapshot: Record<string, AuditData> = {};
       Object.entries(audits).forEach(([k, val]) => {
-        if (!PRELOADED_AUDITS[k] || val.lastFreshAuditAt || val.archivedAtLabel) {
+        if (sandboxTickerSet.has(k) && !PRELOADED_AUDITS[k]) {
+          sandboxSnapshot[k] = val;
+        } else if (!PRELOADED_AUDITS[k] || val.lastFreshAuditAt || val.archivedAtLabel) {
           customOrUpdated[k] = val;
         }
       });
       window.localStorage.setItem(LOCAL_AUDITS_STORAGE_KEY, JSON.stringify(customOrUpdated));
+      window.localStorage.setItem(SANDBOX_AUDITS_STORAGE_KEY, JSON.stringify(sandboxSnapshot));
     } catch {
       // Ignore storage quota errors
     }
-  }, [audits]);
+  }, [audits, sandboxTickerSet]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1293,6 +1423,16 @@ function ThermodynamicAuditApp() {
   ) => {
     if (!rawQuery || isAuditing) return;
 
+    const sandboxDecision = classifyAuditQueryForSandbox(
+      rawQuery,
+      typeof window !== 'undefined' ? window.location.search : '',
+      isSandboxMode,
+      new Set(Object.keys(PRELOADED_AUDITS))
+    );
+    const effectiveSandbox = existingBaseline
+      ? isSandboxMode || sandboxTickerSet.has(existingBaseline.ticker)
+      : sandboxDecision.isSandbox;
+
     const normalized = rawQuery
       .replace(/^\$/, '')
       .toUpperCase()
@@ -1313,6 +1453,8 @@ function ThermodynamicAuditApp() {
     setAuditStatusMsg(
       existingBaseline
         ? `Re-auditing $${displayTarget} via Live Google Search...`
+        : effectiveSandbox
+        ? `Sandbox Preview: scanning ${rawQuery.toUpperCase()} (local only)...`
         : `Pulling fresh GitHub & consensus intel for ${rawQuery.toUpperCase()}...`
     );
 
@@ -1324,6 +1466,7 @@ function ThermodynamicAuditApp() {
       error: null,
       result: null,
       quota: null,
+      sandbox: effectiveSandbox,
       unlockedCount: 0,
       colors: {},
       scores: {},
@@ -1345,6 +1488,7 @@ function ThermodynamicAuditApp() {
           query: rawQuery,
           existingBaseline,
           bypassCache: Boolean(existingBaseline),
+          sandbox: effectiveSandbox,
           clientId,
           userId: archiveUser?.uid || null
         })
@@ -1405,11 +1549,12 @@ function ThermodynamicAuditApp() {
                 tracker.outOfScope = true;
                 tracker.outOfScopeMessage =
                   evt.message ||
-                  `Returned null: "${rawQuery}" is outside the Top ${
-                    evt.maxRank || MAX_CMC_RANK_SCOPE
-                  } CMC rankings (0 API credits spent).`;
+                  `Returned null: "${rawQuery}" could not be resolved to a valid asset or physical commodity.`;
                 tracker.done = true;
               } else if (evt.type === 'done' && evt.audit) {
+                if (typeof evt.sandbox === 'boolean') {
+                  tracker.sandbox = tracker.sandbox || evt.sandbox;
+                }
                 const enforced = enforceEnergyArbitrageLawOnAudit({
                   ...evt.audit,
                   freshSources: evt.sources || evt.audit.freshSources || tracker.freshSources
@@ -1492,7 +1637,7 @@ function ThermodynamicAuditApp() {
       if (tracker.outOfScope) {
         setAuditError(
           tracker.outOfScopeMessage ||
-            `Returned null: "${rawQuery}" is outside the Top ${MAX_CMC_RANK_SCOPE} CMC rankings (0 API credits spent).`
+            `Returned null: "${rawQuery}" could not be resolved to a valid asset or physical commodity.`
         );
         return;
       }
@@ -1503,6 +1648,9 @@ function ThermodynamicAuditApp() {
       const builtAudit = tracker.result;
       const cleanTicker = builtAudit.ticker;
 
+      if (tracker.sandbox && !PRELOADED_AUDITS[cleanTicker]) {
+        setSandboxTickers((prev) => (prev.includes(cleanTicker) ? prev : [...prev, cleanTicker]));
+      }
       setScanTargetTicker(cleanTicker);
       setAudits((prev) => ({ ...prev, [cleanTicker]: builtAudit }));
       setPinnedKeys((prev) => {
@@ -1518,16 +1666,24 @@ function ThermodynamicAuditApp() {
       setSearchInput('');
       triggerScanPulse();
 
-      const savedRemotely = await persistAuditToArchive(builtAudit, invLogs, [rawQuery, normalized]);
       const quotaSuffix = tracker.quota
         ? ` • ${tracker.quota.remaining}/${tracker.quota.limit} daily pulls left`
         : '';
-      flashArchiveToast(
-        savedRemotely
-          ? `Archived $${cleanTicker} to Shared Vault — future lookups cost 0 credits${quotaSuffix}`
-          : `Archived $${cleanTicker} in Session Vault — future lookups cost 0 credits${quotaSuffix}`,
-        'saved'
-      );
+
+      if (tracker.sandbox) {
+        flashArchiveToast(
+          `Sandbox Preview ($${cleanTicker}) saved locally in browser only — excluded from public archive${quotaSuffix}`,
+          'warn'
+        );
+      } else {
+        const savedRemotely = await persistAuditToArchive(builtAudit, invLogs, [rawQuery, normalized]);
+        flashArchiveToast(
+          savedRemotely
+            ? `Archived $${cleanTicker} to Shared Vault — future lookups cost 0 credits${quotaSuffix}`
+            : `Archived $${cleanTicker} in Session Vault — future lookups cost 0 credits${quotaSuffix}`,
+          'saved'
+        );
+      }
     } catch (err) {
       setAuditError(
         `Unable to complete fresh grounded audit for "${rawQuery}" (${
@@ -1783,8 +1939,12 @@ function ThermodynamicAuditApp() {
         [logKey]: [entry, ...filteredPrior]
       };
       setInvLogs(nextLogsMap);
-      await persistAuditToArchive(outcome.updatedAudit, nextLogsMap);
-      flashArchiveToast(`Archived updated #${invId} on $${targetAudit.ticker}`, 'saved');
+      if (!isSandboxMode && !sandboxTickerSet.has(targetAudit.ticker)) {
+        await persistAuditToArchive(outcome.updatedAudit, nextLogsMap);
+        flashArchiveToast(`Archived updated #${invId} on $${targetAudit.ticker}`, 'saved');
+      } else {
+        flashArchiveToast(`Sandbox updated #${invId} locally (not saved to public vault)`, 'warn');
+      }
     } catch (err) {
       setSingleInvNotice({
         type: 'error',
@@ -1984,8 +2144,12 @@ function ThermodynamicAuditApp() {
       if (overrideClaim === null) {
         setInvPromptInputs((prev) => ({ ...prev, [logKey]: '' }));
       }
-      await persistAuditToArchive(resultingAuditForArchive, nextLogsMap);
-      flashArchiveToast(`Contest verdict archived for $${targetAudit.ticker} #${invId}`, 'saved');
+      if (!isSandboxMode && !sandboxTickerSet.has(targetAudit.ticker)) {
+        await persistAuditToArchive(resultingAuditForArchive, nextLogsMap);
+        flashArchiveToast(`Contest verdict archived for $${targetAudit.ticker} #${invId}`, 'saved');
+      } else {
+        flashArchiveToast(`Sandbox contest logged locally for $${targetAudit.ticker} #${invId}`, 'warn');
+      }
     } catch (err) {
       setSingleInvNotice({
         type: 'error',
@@ -2101,7 +2265,9 @@ function ThermodynamicAuditApp() {
       if (userQuestion && overrideQuestion === null) {
         setInvPromptInputs((prev) => ({ ...prev, [logKey]: '' }));
       }
-      await persistAuditToArchive(targetAudit, nextLogsMap);
+      if (!isSandboxMode && !sandboxTickerSet.has(targetAudit.ticker)) {
+        await persistAuditToArchive(targetAudit, nextLogsMap);
+      }
     } catch (err) {
       setSingleInvNotice({
         type: 'error',
@@ -2703,41 +2869,59 @@ function ThermodynamicAuditApp() {
             </span>
           </button>
 
-          <div
-            data-tutorial-id="mode-controls"
-            className="pointer-events-auto p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[11px] shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
-            role="group"
-            aria-label="Audit Depth Mode Switch"
-          >
+          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+            <div
+              data-tutorial-id="mode-controls"
+              className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[11px] shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
+              role="group"
+              aria-label="Audit Depth Mode Switch"
+            >
+              <button
+                type="button"
+                onClick={() => setIsGeniusMode(false)}
+                className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
+                  !isGeniusMode
+                    ? 'bg-[#1D212A] text-white font-semibold shadow-sm'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <span>NORMIE</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsGeniusMode(true)}
+                className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
+                  isGeniusMode ? 'font-bold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+                style={
+                  isGeniusMode
+                    ? {
+                        backgroundColor: accent.softBg,
+                        color: accent.primary,
+                        border: `1px solid ${accent.border}`
+                      }
+                    : { border: '1px solid transparent' }
+                }
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>GENIUS</span>
+              </button>
+            </div>
+
             <button
               type="button"
-              onClick={() => setIsGeniusMode(false)}
-              className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
-                !isGeniusMode
-                  ? 'bg-[#1D212A] text-white font-semibold shadow-sm'
-                  : 'text-neutral-400 hover:text-neutral-200'
+              data-testid="sandbox-toggle-btn"
+              onClick={() => setIsSandboxMode((prev) => !prev)}
+              aria-pressed={isSandboxMode}
+              title="Sandbox / Local Preview: stores test & unverified lookups strictly in your browser localStorage instead of persisting them to the shared public archive."
+              className={`color-glide px-3 py-1 rounded-full border font-mono text-[10.5px] flex items-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)] ${
+                isSandboxMode
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-400/50 font-semibold'
+                  : 'bg-[#121418] text-neutral-400 hover:text-neutral-200 border-white/10'
               }`}
             >
-              <span>NORMIE</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsGeniusMode(true)}
-              className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
-                isGeniusMode ? 'font-bold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
-              }`}
-              style={
-                isGeniusMode
-                  ? {
-                      backgroundColor: accent.softBg,
-                      color: accent.primary,
-                      border: `1px solid ${accent.border}`
-                    }
-                  : { border: '1px solid transparent' }
-              }
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>GENIUS</span>
+              <FlaskConical className="w-3 h-3 shrink-0" />
+              <span>{isSandboxMode ? 'Sandbox: Local Preview' : 'Sandbox Preview'}</span>
             </button>
           </div>
 
@@ -2894,20 +3078,44 @@ function ThermodynamicAuditApp() {
               </span>
             </button>
 
-            <div className="w-full overflow-y-auto no-scrollbar flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5 px-1 py-2">
-              {passedTickers.map((tk, idx) => (
-                <HarmonicProjectBubble
-                  key={tk}
-                  item={audits[tk]}
-                  isSelected={activeKey === tk}
-                  isPinnedItem={
-                    isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                  }
-                  onSelectTicker={stableSelectTicker}
-                  onTogglePin={stableTogglePin}
-                  seedIndex={idx}
-                />
-              ))}
+            <div className="w-full overflow-y-auto no-scrollbar px-1 py-2 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
+                {corePassedTickers.map((tk, idx) => (
+                  <HarmonicProjectBubble
+                    key={tk}
+                    item={audits[tk]}
+                    isSelected={activeKey === tk}
+                    isPinnedItem={
+                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                    }
+                    onSelectTicker={stableSelectTicker}
+                    onTogglePin={stableTogglePin}
+                    seedIndex={idx}
+                  />
+                ))}
+              </div>
+              {ecosystemPassedTickers.length > 0 && (
+                <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                  <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
+                    Ecosystem / Overlays ({ecosystemPassedTickers.length})
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
+                    {ecosystemPassedTickers.map((tk, idx) => (
+                      <HarmonicProjectBubble
+                        key={tk}
+                        item={audits[tk]}
+                        isSelected={activeKey === tk}
+                        isPinnedItem={
+                          isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                        }
+                        onSelectTicker={stableSelectTicker}
+                        onTogglePin={stableTogglePin}
+                        seedIndex={idx + 30}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </aside>
 
@@ -2935,20 +3143,44 @@ function ThermodynamicAuditApp() {
               </span>
             </button>
 
-            <div className="w-full overflow-y-auto no-scrollbar flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5 px-1 py-2">
-              {failedTickers.map((tk, idx) => (
-                <HarmonicProjectBubble
-                  key={tk}
-                  item={audits[tk]}
-                  isSelected={activeKey === tk}
-                  isPinnedItem={
-                    isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                  }
-                  onSelectTicker={stableSelectTicker}
-                  onTogglePin={stableTogglePin}
-                  seedIndex={idx + 50}
-                />
-              ))}
+            <div className="w-full overflow-y-auto no-scrollbar px-1 py-2 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
+                {coreFailedTickers.map((tk, idx) => (
+                  <HarmonicProjectBubble
+                    key={tk}
+                    item={audits[tk]}
+                    isSelected={activeKey === tk}
+                    isPinnedItem={
+                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                    }
+                    onSelectTicker={stableSelectTicker}
+                    onTogglePin={stableTogglePin}
+                    seedIndex={idx + 50}
+                  />
+                ))}
+              </div>
+              {ecosystemFailedTickers.length > 0 && (
+                <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                  <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
+                    Ecosystem / Overlays ({ecosystemFailedTickers.length})
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
+                    {ecosystemFailedTickers.map((tk, idx) => (
+                      <HarmonicProjectBubble
+                        key={tk}
+                        item={audits[tk]}
+                        isSelected={activeKey === tk}
+                        isPinnedItem={
+                          isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                        }
+                        onSelectTicker={stableSelectTicker}
+                        onTogglePin={stableTogglePin}
+                        seedIndex={idx + 80}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </aside>
         </>
@@ -3519,6 +3751,13 @@ function ThermodynamicAuditApp() {
                                         </div>
                                         <div className="font-mono text-[11px] text-neutral-400 truncate mt-0.5">
                                           {item.name}
+                                        </div>
+                                        <div className="mt-1.5 flex justify-start">
+                                          <ProvenanceBadgesStrip
+                                            audit={item}
+                                            isSandbox={sandboxTickerSet.has(item.ticker)}
+                                            compact
+                                          />
                                         </div>
                                       </div>
 
@@ -4248,6 +4487,10 @@ function ThermodynamicAuditApp() {
                   key={`stage-prompt-${currentAudit.ticker}-${isPinned}`}
                   className="animate-card-fade text-center space-y-2.5 pt-2"
                 >
+                  <ProvenanceBadgesStrip
+                    audit={currentAudit}
+                    isSandbox={sandboxTickerSet.has(currentAudit.ticker)}
+                  />
                   {currentAudit.lastFreshAuditAt && (
                     <div className="flex justify-center">
                       <span
@@ -4420,20 +4663,44 @@ function ThermodynamicAuditApp() {
                 </span>
               </button>
 
-              <div className="flex flex-wrap items-center justify-center gap-3 py-1">
-                {passedTickers.map((tk, idx) => (
-                  <HarmonicProjectBubble
-                    key={tk}
-                    item={audits[tk]}
-                    isSelected={activeKey === tk}
-                    isPinnedItem={
-                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                    }
-                    onSelectTicker={stableSelectTicker}
-                    onTogglePin={stableTogglePin}
-                    seedIndex={idx}
-                  />
-                ))}
+              <div className="w-full space-y-2.5 py-1">
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {corePassedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={
+                        isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                      }
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx}
+                    />
+                  ))}
+                </div>
+                {ecosystemPassedTickers.length > 0 && (
+                  <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                    <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
+                      Ecosystem / Overlays ({ecosystemPassedTickers.length})
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      {ecosystemPassedTickers.map((tk, idx) => (
+                        <HarmonicProjectBubble
+                          key={tk}
+                          item={audits[tk]}
+                          isSelected={activeKey === tk}
+                          isPinnedItem={
+                            isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                          }
+                          onSelectTicker={stableSelectTicker}
+                          onTogglePin={stableTogglePin}
+                          seedIndex={idx + 30}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </aside>
 
@@ -4463,20 +4730,44 @@ function ThermodynamicAuditApp() {
                 </span>
               </button>
 
-              <div className="flex flex-wrap items-center justify-center gap-3 py-1">
-                {failedTickers.map((tk, idx) => (
-                  <HarmonicProjectBubble
-                    key={tk}
-                    item={audits[tk]}
-                    isSelected={activeKey === tk}
-                    isPinnedItem={
-                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                    }
-                    onSelectTicker={stableSelectTicker}
-                    onTogglePin={stableTogglePin}
-                    seedIndex={idx + 50}
-                  />
-                ))}
+              <div className="w-full space-y-2.5 py-1">
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {coreFailedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={
+                        isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                      }
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx + 50}
+                    />
+                  ))}
+                </div>
+                {ecosystemFailedTickers.length > 0 && (
+                  <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                    <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
+                      Ecosystem / Overlays ({ecosystemFailedTickers.length})
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3">
+                      {ecosystemFailedTickers.map((tk, idx) => (
+                        <HarmonicProjectBubble
+                          key={tk}
+                          item={audits[tk]}
+                          isSelected={activeKey === tk}
+                          isPinnedItem={
+                            isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
+                          }
+                          onSelectTicker={stableSelectTicker}
+                          onTogglePin={stableTogglePin}
+                          seedIndex={idx + 80}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </aside>
           </div>
@@ -4571,6 +4862,12 @@ function ThermodynamicAuditApp() {
                   ${currentAudit.ticker} • {currentAudit.grade} (
                   {formatScore(currentAudit.totalScore)}/6.0)
                 </span>
+
+                <ProvenanceBadgesStrip
+                  audit={currentAudit}
+                  isSandbox={sandboxTickerSet.has(currentAudit.ticker)}
+                  compact
+                />
               </div>
 
               <div className="w-full flex flex-nowrap items-center justify-between gap-2">
@@ -5140,6 +5437,134 @@ function ThermodynamicAuditApp() {
                 </div>
               )}
 
+              {(() => {
+                const prov = getAuditProvenance(currentAudit, {
+                  preloadedTickers: new Set(Object.keys(PRELOADED_AUDITS)),
+                  isSandbox: sandboxTickerSet.has(currentAudit.ticker)
+                });
+                const revision = getAuditRevisionAnalysis(currentAudit, prov.isDeterministicReference);
+                return (
+                  <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.07] overflow-hidden">
+                    <button
+                      type="button"
+                      data-testid="score-conditions-toggle"
+                      aria-expanded={showScoreConditions}
+                      onClick={() => setShowScoreConditions((prev) => !prev)}
+                      className="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-[#11141B] transition"
+                    >
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <Scale className="w-3.5 h-3.5 shrink-0" style={{ color: accent.primary }} />
+                        <span className="font-mono text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider">
+                          Score Conditions &amp; Rubric Brackets
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-mono text-[9.5px] font-semibold border ${
+                            prov.isDeterministicReference
+                              ? 'bg-[#49EACB]/10 text-[#49EACB] border-[#49EACB]/30'
+                              : 'bg-[#FACC15]/10 text-[#FACC15] border-[#FACC15]/30'
+                          }`}
+                        >
+                          {revision.provenanceMode}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px] text-neutral-400">
+                        <span className="hidden sm:inline">
+                          {showScoreConditions ? 'Hide Details' : 'What Changes This Score'}
+                        </span>
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                            showScoreConditions ? 'rotate-180 text-white' : ''
+                          }`}
+                        />
+                      </div>
+                    </button>
+
+                    {showScoreConditions && (
+                      <div
+                        data-testid="score-conditions-panel"
+                        className="px-4 pb-4 pt-2 border-t border-white/[0.06] space-y-3.5 bg-[#08090B]"
+                      >
+                        <p className="text-[11.5px] text-neutral-400 leading-relaxed">
+                          {revision.methodologySummary}
+                        </p>
+
+                        <div className="space-y-1.5">
+                          <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
+                            Mainnet Score Revision &amp; Re-Audit Triggers
+                          </div>
+                          <div className="space-y-1.5">
+                            {revision.triggers.map((trig, idx) => {
+                              const badgeColor =
+                                trig.direction === 'UPGRADE'
+                                  ? '#4ADE80'
+                                  : trig.direction === 'DOWNGRADE'
+                                  ? '#F87171'
+                                  : '#FACC15';
+                              return (
+                                <div
+                                  key={`${trig.invariantId}-${idx}`}
+                                  className="rounded-xl bg-[#0D0F13] border border-white/[0.06] px-3 py-2 flex items-start gap-2"
+                                >
+                                  <span
+                                    className="font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5"
+                                    style={{
+                                      color: badgeColor,
+                                      backgroundColor: `${badgeColor}18`,
+                                      border: `1px solid ${badgeColor}40`
+                                    }}
+                                  >
+                                    #{trig.invariantId} {trig.direction}
+                                  </span>
+                                  <p className="text-[11.5px] text-neutral-300 leading-relaxed">
+                                    {trig.condition}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
+                            Matched 6-Invariant Rubric Brackets
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {revision.brackets.map((b) => {
+                              const bStyle = getHarmonizedScoreStyle(b.score, accent);
+                              return (
+                                <div
+                                  key={b.id}
+                                  className="rounded-xl bg-[#0D0F13] border border-white/[0.06] p-2.5 space-y-1"
+                                >
+                                  <div className="flex items-center justify-between gap-1.5 font-mono text-[10px]">
+                                    <span className="font-bold text-white truncate">
+                                      {b.id} {b.shortName}
+                                    </span>
+                                    <span
+                                      className="px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                                      style={{
+                                        color: bStyle.color,
+                                        backgroundColor: bStyle.bg,
+                                        border: `1px solid ${bStyle.border}`
+                                      }}
+                                    >
+                                      {formatScore(b.score)} [{b.bracketRange}]
+                                    </span>
+                                  </div>
+                                  <p className="text-[10.5px] text-neutral-400 leading-snug">
+                                    {b.bracketSummary}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {currentAudit.freshSources && currentAudit.freshSources.length > 0 && (
                 <div className="p-4 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-2.5">
                   <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
@@ -5388,8 +5813,14 @@ function ThermodynamicAuditApp() {
                     {sortedTickers.length}
                   </div>
                   <div className="font-mono text-[10px] text-[#49EACB] mt-0.5">
-                    23 Core + {Math.max(0, sortedTickers.length - 23)} Community ({archivedCloudCount}{' '}
-                    Cloud)
+                    {CORE_REFERENCE_TICKERS.size} Core + {ECOSYSTEM_OVERLAY_TICKERS.size} Ecosystem +{' '}
+                    {Math.max(
+                      0,
+                      sortedTickers.length -
+                        CORE_REFERENCE_TICKERS.size -
+                        ECOSYSTEM_OVERLAY_TICKERS.size
+                    )}{' '}
+                    Custom ({archivedCloudCount} Cloud)
                   </div>
                 </div>
 
@@ -5416,7 +5847,7 @@ function ThermodynamicAuditApp() {
                     {dailyQuota.remaining} / {dailyQuota.limit}
                   </div>
                   <div className="font-mono text-[10px] text-neutral-400 mt-0.5">
-                    Top {MAX_CMC_RANK_SCOPE} CMC scope • Resets 00:00 UTC
+                    Metals &amp; all networks • Resets 00:00 UTC
                   </div>
                 </div>
 
@@ -5500,18 +5931,14 @@ function ThermodynamicAuditApp() {
                   </div>
                   <p className="text-xs text-neutral-400 leading-relaxed">
                     Every searched token checks the Preloaded + Shared Cloud Archive first (0
-                    credits). Live uncached full pulls are strictly limited to{' '}
+                    credits). Live uncached full pulls are limited to{' '}
                     <strong className="text-neutral-200">
                       {dailyQuota.limit} per user/day
                     </strong>{' '}
-                    and gated to the{' '}
-                    <strong className="text-neutral-200">
-                      Top {MAX_CMC_RANK_SCOPE} CMC
-                    </strong>{' '}
-                    rankings (plus physical metals)—queries outside that range return{' '}
-                    <code className="text-neutral-300">null</code> at zero API credit cost. Toggle{' '}
-                    <strong className="text-neutral-200">Strict Lock</strong> during traffic spikes
-                    to block all live AI calls completely.
+                    across all physical metals, Layer-1 networks, L2s, and overlays (zero CMC rank
+                    cutoffs). Toggle <strong className="text-neutral-200">Strict Lock</strong> during
+                    traffic spikes or enable <strong className="text-neutral-200">Sandbox Preview</strong>{' '}
+                    to isolate test queries strictly in local browser storage.
                   </p>
                 </div>
 
@@ -5602,15 +6029,16 @@ function ThermodynamicAuditApp() {
               </div>
 
               {/* Directory of All Archived Assets */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500">
-                  Archived Ledger Directory (Click Any Asset for Instant 0-Credit Load)
+                  Core Sovereign &amp; Physical Commodity Benchmarks (0-Credit Instant Load)
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-60 overflow-y-auto pr-1">
-                  {sortedTickers.map((tk) => {
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-52 overflow-y-auto pr-1">
+                  {coreDirectoryTickers.map((tk) => {
                     const item = audits[tk];
                     if (!item) return null;
                     const itemAcc = getGradeAccent(item.grade);
+                    const isSandboxItem = sandboxTickerSet.has(tk);
                     const isCustomOrUpdated =
                       Boolean(item.isCustom) ||
                       Boolean(item.archivedAtLabel) ||
@@ -5637,14 +6065,57 @@ function ThermodynamicAuditApp() {
                           </span>
                         </div>
                         <div className="font-mono text-[9.5px] text-neutral-500 truncate">
-                          {isCustomOrUpdated
-                            ? `Updated ${item.archivedAtLabel || item.lastFreshAuditAt || 'Vault'}`
-                            : 'Core Baseline • 0 Credits'}
+                          {isSandboxItem
+                            ? 'Sandbox • Local Only'
+                            : isCustomOrUpdated
+                            ? `Live AI • ${item.archivedAtLabel || item.lastFreshAuditAt || 'Vault'}`
+                            : 'Deterministic Reference'}
                         </div>
                       </button>
                     );
                   })}
                 </div>
+
+                {ecosystemDirectoryTickers.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-white/[0.07]">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-indigo-300">
+                      Ecosystem / Overlays ({ecosystemDirectoryTickers.length})
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                      {ecosystemDirectoryTickers.map((tk) => {
+                        const item = audits[tk];
+                        if (!item) return null;
+                        const itemAcc = getGradeAccent(item.grade);
+                        return (
+                          <button
+                            key={tk}
+                            type="button"
+                            onClick={() => {
+                              selectCachedAudit(tk);
+                              setIsArchiveModalOpen(false);
+                            }}
+                            className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-indigo-400/20 text-left transition flex flex-col justify-between gap-1"
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-mono text-xs font-bold text-white truncate">
+                                ${item.ticker}
+                              </span>
+                              <span
+                                className="font-mono text-xs font-bold"
+                                style={{ color: itemAcc.primary }}
+                              >
+                                {item.grade} ({formatScore(item.totalScore)})
+                              </span>
+                            </div>
+                            <div className="font-mono text-[9.5px] text-indigo-300/80 truncate">
+                              Ecosystem / Overlays
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

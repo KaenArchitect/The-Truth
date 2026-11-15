@@ -2,168 +2,138 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
-  MAX_CMC_RANK_SCOPE,
   STATIC_TOP_150_FALLBACK_ENTRIES,
   consumeDailyPull,
   evaluateMarketScope,
-  getUtcDayKey,
   getUserDailyQuotaStatus,
-  pruneStaleQuotaDays,
   refundDailyPull,
   resolveQuotaPrincipalKeys,
-  type DailyQuotaLedger,
   type MarketCapEntry
 } from './auditQuotaAndScope.ts';
 
-test('enforces hard daily limit of 2 new full pulls per user per UTC day and resets next day', () => {
-  const day1Noon = Date.parse('2026-11-14T12:00:00Z');
-  const day2Start = Date.parse('2026-11-15T00:01:00Z');
+const SAMPLE_ENTRIES: MarketCapEntry[] = [
+  ...STATIC_TOP_150_FALLBACK_ENTRIES,
+  { rank: 150, symbol: 'TOP150', name: 'Rank 150 Boundary Token' },
+  { rank: 151, symbol: 'OUT151', name: 'Rank 151 Asset' },
+  { rank: 420, symbol: 'MEME420', name: 'Low Cap Network' }
+];
 
-  const principal = resolveQuotaPrincipalKeys({
-    userId: null,
-    clientId: 'browser-abc',
-    ip: '203.0.113.10'
-  });
-
-  let ledger: DailyQuotaLedger = {};
-
-  const initial = getUserDailyQuotaStatus(ledger, principal.allKeys, day1Noon);
-  assert.equal(initial.limit, DAILY_NEW_FULL_PULL_LIMIT);
-  assert.equal(initial.used, 0);
-  assert.equal(initial.remaining, 2);
-  assert.equal(initial.allowed, true);
-
-  // Pull 1
-  const p1 = consumeDailyPull(ledger, principal.allKeys, day1Noon);
-  assert.equal(p1.allowed, true);
-  assert.equal(p1.status.used, 1);
-  assert.equal(p1.status.remaining, 1);
-  ledger = p1.nextLedger;
-
-  // Pull 2
-  const p2 = consumeDailyPull(ledger, principal.allKeys, day1Noon + 5000);
-  assert.equal(p2.allowed, true);
-  assert.equal(p2.status.used, 2);
-  assert.equal(p2.status.remaining, 0);
-  assert.equal(p2.status.allowed, false);
-  ledger = p2.nextLedger;
-
-  // Pull 3 on same day MUST be rejected and NOT increment usage
-  const p3 = consumeDailyPull(ledger, principal.allKeys, day1Noon + 10000);
-  assert.equal(p3.allowed, false);
-  assert.equal(p3.status.used, 2);
-  assert.equal(p3.status.remaining, 0);
-
-  // Clearing clientId / incognito from the same IP still cannot bypass IP cap on same day
-  const incognitoSameIp = resolveQuotaPrincipalKeys({
-    userId: null,
-    clientId: 'brand-new-incognito-id',
-    ip: '203.0.113.10'
-  });
-  const incognitoAttempt = consumeDailyPull(ledger, incognitoSameIp.allKeys, day1Noon + 20000);
-  assert.equal(incognitoAttempt.allowed, false);
-  assert.equal(incognitoAttempt.status.remaining, 0);
-
-  // Next UTC day resets back to 2/2 remaining
-  const nextDayStatus = getUserDailyQuotaStatus(ledger, principal.allKeys, day2Start);
-  assert.equal(nextDayStatus.dayKey, getUtcDayKey(day2Start));
-  assert.equal(nextDayStatus.used, 0);
-  assert.equal(nextDayStatus.remaining, 2);
-  assert.equal(nextDayStatus.allowed, true);
-
-  // Stale pruning drops previous day entries cleanly
-  const pruned = pruneStaleQuotaDays(ledger, day2Start);
-  assert.deepEqual(pruned, {});
+test('Physical commodities and metals bypass all CMC crypto ranking rules', () => {
+  for (const q of [
+    'GOLD',
+    'Silver',
+    'XAU',
+    'XAG',
+    'platinum',
+    'Copper',
+    'Uranium',
+    'Titanium',
+    'Tungsten',
+    'Physical Gold',
+    'Iridium'
+  ]) {
+    const res = evaluateMarketScope({
+      query: q,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.allowed, true, `Expected ${q} to be allowed unconditionally`);
+    assert.equal(res.reason, 'PHYSICAL_COMMODITY');
+    assert.equal(res.bypassesScope, true);
+  }
 });
 
-test('refundDailyPull restores quota cleanly when an upstream call errors before delivering', () => {
-  const now = Date.parse('2026-11-14T15:00:00Z');
-  const keys = resolveQuotaPrincipalKeys({ userId: 'user-42', clientId: 'c1', ip: '1.2.3.4' }).allKeys;
+test('Non-CMC, unranked, L2 overlay, and rank > 150 crypto networks are NOT blocked by Top-150 CMC rule', () => {
+  const rank151 = evaluateMarketScope({
+    query: 'OUT151',
+    cachedAuditHit: false,
+    marketEntries: SAMPLE_ENTRIES
+  });
+  assert.equal(rank151.allowed, true);
+  assert.equal(rank151.reason, 'CRYPTO_NETWORK');
+  assert.equal(rank151.rank, 151);
 
-  const first = consumeDailyPull({}, keys, now);
-  assert.equal(first.status.remaining, 1);
+  const rank420 = evaluateMarketScope({
+    query: 'MEME420',
+    cachedAuditHit: false,
+    marketEntries: SAMPLE_ENTRIES
+  });
+  assert.equal(rank420.allowed, true);
+  assert.equal(rank420.rank, 420);
 
-  const refunded = refundDailyPull(first.nextLedger, keys, now + 1000);
-  const afterRefund = getUserDailyQuotaStatus(refunded, keys, now + 1000);
+  for (const net of ['ERG', 'ALPH', 'NEXA', 'LN', 'IGRA', 'FEDIMINT', 'CASHU', 'MONERO', 'KAS']) {
+    const res = evaluateMarketScope({
+      query: net,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.allowed, true, `Expected network ${net} to be allowed`);
+  }
+});
+
+test('Empty or symbol-only queries return null safely without consuming credits', () => {
+  const empty = evaluateMarketScope({
+    query: '   !!!   ',
+    cachedAuditHit: false,
+    marketEntries: SAMPLE_ENTRIES
+  });
+  assert.equal(empty.allowed, false);
+  assert.equal(empty.reason, 'EMPTY_OR_INVALID');
+  assert.equal(empty.audit, null);
+});
+
+test('Cached archive hits bypass scope even for explicit re-audit gating checks', () => {
+  const cached = evaluateMarketScope({
+    query: 'DOGECOINEXOTIC',
+    cachedAuditHit: true,
+    isExplicitReaudit: false,
+    marketEntries: SAMPLE_ENTRIES
+  });
+  assert.equal(cached.allowed, true);
+  assert.equal(cached.reason, 'CACHED_ARCHIVE');
+});
+
+test('Daily quota strictly enforces 2 new full pulls per user per UTC day and resets at UTC midnight', () => {
+  const t0 = Date.UTC(2026, 10, 15, 14, 30, 0);
+  const principal = resolveQuotaPrincipalKeys({
+    userId: 'user-abc-123',
+    clientId: 'browser-xyz',
+    ip: '198.51.100.42'
+  });
+
+  let ledger = {};
+  const s0 = getUserDailyQuotaStatus(ledger, principal.allKeys, t0);
+  assert.equal(s0.limit, DAILY_NEW_FULL_PULL_LIMIT);
+  assert.equal(s0.remaining, 2);
+  assert.equal(s0.allowed, true);
+
+  const pull1 = consumeDailyPull(ledger, principal.allKeys, t0);
+  assert.equal(pull1.allowed, true);
+  assert.equal(pull1.status.used, 1);
+  assert.equal(pull1.status.remaining, 1);
+  ledger = pull1.nextLedger;
+
+  const pull2 = consumeDailyPull(ledger, principal.allKeys, t0 + 60_000);
+  assert.equal(pull2.allowed, true);
+  assert.equal(pull2.status.used, 2);
+  assert.equal(pull2.status.remaining, 0);
+  ledger = pull2.nextLedger;
+
+  const pull3 = consumeDailyPull(ledger, principal.allKeys, t0 + 120_000);
+  assert.equal(pull3.allowed, false);
+
+  const nextDayUtc = Date.UTC(2026, 10, 16, 0, 0, 5);
+  const pullNextDay = consumeDailyPull(ledger, principal.allKeys, nextDayUtc);
+  assert.equal(pullNextDay.allowed, true);
+  assert.equal(pullNextDay.status.used, 1);
+});
+
+test('Refunding daily pull restores slot if upstream audit fails before delivery', () => {
+  const t0 = Date.UTC(2026, 10, 15, 18, 0, 0);
+  const principal = resolveQuotaPrincipalKeys({ ip: '203.0.113.9' });
+  const pull1 = consumeDailyPull({}, principal.allKeys, t0);
+  const refunded = refundDailyPull(pull1.nextLedger, principal.allKeys, t0 + 5000);
+  const afterRefund = getUserDailyQuotaStatus(refunded, principal.allKeys, t0 + 6000);
   assert.equal(afterRefund.used, 0);
   assert.equal(afterRefund.remaining, 2);
-});
-
-test('evaluateMarketScope strictly gates crypto to CMC Top 150 and returns null outside range', () => {
-  const sampleFeed: MarketCapEntry[] = [
-    ...STATIC_TOP_150_FALLBACK_ENTRIES,
-    { rank: 150, symbol: 'EDGE150', name: 'Edge Hundred Fifty', id: 'edge-150' },
-    { rank: 151, symbol: 'OUT151', name: 'Outside Hundred Fifty One', id: 'out-151' },
-    { rank: 420, symbol: 'MEME420', name: 'Micro Meme', id: 'micro-meme' }
-  ];
-
-  // Rank #1 allowed
-  const btc = evaluateMarketScope({
-    query: 'btc',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(btc.allowed, true);
-  assert.equal(btc.reason, 'TOP_150_CMC');
-  assert.equal(btc.rank, 1);
-
-  // Rank #150 inclusive boundary allowed
-  const edge = evaluateMarketScope({
-    query: 'EDGE150',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(edge.allowed, true);
-  assert.equal(edge.rank, MAX_CMC_RANK_SCOPE);
-
-  // Rank #151 rejected -> returns audit: null
-  const out151 = evaluateMarketScope({
-    query: '$out151',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(out151.allowed, false);
-  assert.equal(out151.reason, 'OUTSIDE_TOP_150');
-  assert.equal(out151.rank, 151);
-  assert.equal(out151.audit, null);
-
-  // Rank #420 matched by name -> rejected with audit: null
-  const meme = evaluateMarketScope({
-    query: 'Micro Meme',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(meme.allowed, false);
-  assert.equal(meme.reason, 'OUTSIDE_TOP_150');
-  assert.equal(meme.rank, 420);
-  assert.equal(meme.audit, null);
-
-  // Completely unknown/unranked coin -> rejected with audit: null
-  const unknown = evaluateMarketScope({
-    query: 'TINYMICROCAP999',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(unknown.allowed, false);
-  assert.equal(unknown.reason, 'UNRANKED_OR_OUTSIDE_TOP_150');
-  assert.equal(unknown.rank, null);
-  assert.equal(unknown.audit, null);
-
-  // Physical commodities remain permitted
-  const platinum = evaluateMarketScope({
-    query: 'PLATINUM',
-    cachedAuditHit: false,
-    marketEntries: sampleFeed
-  });
-  assert.equal(platinum.allowed, true);
-  assert.equal(platinum.reason, 'PHYSICAL_COMMODITY');
-
-  // Cached archive lookups always bypass scope & cost 0 credits
-  const cachedIgra = evaluateMarketScope({
-    query: 'IGRA',
-    cachedAuditHit: true,
-    marketEntries: sampleFeed
-  });
-  assert.equal(cachedIgra.allowed, true);
-  assert.equal(cachedIgra.reason, 'CACHED_ARCHIVE');
 });

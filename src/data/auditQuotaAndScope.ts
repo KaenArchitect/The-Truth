@@ -1,5 +1,5 @@
 // ============================================================================
-// DAILY FULL-PULL QUOTA (2 / USER / DAY) & CMC TOP-150 MARKET SCOPE GATE
+// DAILY FULL-PULL QUOTA (2 / USER / DAY) & UNRESTRICTED ASSET / METAL SCOPE
 // ============================================================================
 
 export const DAILY_NEW_FULL_PULL_LIMIT = 2;
@@ -40,9 +40,8 @@ export interface MarketScopeResult {
   reason:
     | 'CACHED_ARCHIVE'
     | 'PHYSICAL_COMMODITY'
-    | 'TOP_150_CMC'
-    | 'OUTSIDE_TOP_150'
-    | 'UNRANKED_OR_OUTSIDE_TOP_150';
+    | 'CRYPTO_NETWORK'
+    | 'EMPTY_OR_INVALID';
   rank: number | null;
   maxRank: number;
   matchedSymbol: string | null;
@@ -53,28 +52,65 @@ export interface MarketScopeResult {
 }
 
 export const PHYSICAL_COMMODITY_ALLOWLIST: Record<string, { symbol: string; name: string }> = {
-  GOLD: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
-  XAU: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
-  GOLDXAU: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
-  SILVER: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
-  XAG: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
-  SILVERXAG: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
-  PLATINUM: { symbol: 'PLATINUM', name: 'Platinum (Physical XPT)' },
-  XPT: { symbol: 'PLATINUM', name: 'Platinum (Physical XPT)' },
-  PALLADIUM: { symbol: 'PALLADIUM', name: 'Palladium (Physical XPD)' },
-  XPD: { symbol: 'PLATINUM', name: 'Palladium (Physical XPD)' },
-  COPPER: { symbol: 'COPPER', name: 'Copper (Physical Cu)' },
-  RHODIUM: { symbol: 'RHODIUM', name: 'Rhodium (Physical Rh)' },
+  GOLD: { symbol: 'GOLD', name: 'Gold (Physical Au-79)' },
+  XAU: { symbol: 'GOLD', name: 'Gold (Physical Au-79)' },
+  GOLDXAU: { symbol: 'GOLD', name: 'Gold (Physical Au-79)' },
+  PHYSICALGOLD: { symbol: 'GOLD', name: 'Gold (Physical Au-79)' },
+  GOLDMETAL: { symbol: 'GOLD', name: 'Gold (Physical Au-79)' },
+  BULLION: { symbol: 'GOLD', name: 'Gold Bullion (Physical Au-79)' },
+  SILVER: { symbol: 'SILVER', name: 'Silver (Physical Ag-47)' },
+  XAG: { symbol: 'SILVER', name: 'Silver (Physical Ag-47)' },
+  SILVERXAG: { symbol: 'SILVER', name: 'Silver (Physical Ag-47)' },
+  PHYSICALSILVER: { symbol: 'SILVER', name: 'Silver (Physical Ag-47)' },
+  SILVERMETAL: { symbol: 'SILVER', name: 'Silver (Physical Ag-47)' },
+  PLATINUM: { symbol: 'PLATINUM', name: 'Platinum (Physical Pt-78)' },
+  XPT: { symbol: 'PLATINUM', name: 'Platinum (Physical Pt-78)' },
+  PHYSICALPLATINUM: { symbol: 'PLATINUM', name: 'Platinum (Physical Pt-78)' },
+  PALLADIUM: { symbol: 'PALLADIUM', name: 'Palladium (Physical Pd-46)' },
+  XPD: { symbol: 'PALLADIUM', name: 'Palladium (Physical Pd-46)' },
+  PHYSICALPALLADIUM: { symbol: 'PALLADIUM', name: 'Palladium (Physical Pd-46)' },
+  COPPER: { symbol: 'COPPER', name: 'Copper (Physical Cu-29)' },
+  PHYSICALCOPPER: { symbol: 'COPPER', name: 'Copper (Physical Cu-29)' },
+  RHODIUM: { symbol: 'RHODIUM', name: 'Rhodium (Physical Rh-45)' },
   URANIUM: { symbol: 'URANIUM', name: 'Uranium (Physical U3O8)' },
-  NICKEL: { symbol: 'NICKEL', name: 'Nickel (Physical Ni)' },
-  ALUMINUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al)' },
-  ALUMINIUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al)' }
+  U3O8: { symbol: 'URANIUM', name: 'Uranium (Physical U3O8)' },
+  YELLOWCAKE: { symbol: 'URANIUM', name: 'Uranium (Physical U3O8)' },
+  NICKEL: { symbol: 'NICKEL', name: 'Nickel (Physical Ni-28)' },
+  ALUMINUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al-13)' },
+  ALUMINIUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al-13)' },
+  TITANIUM: { symbol: 'TITANIUM', name: 'Titanium (Physical Ti-22)' },
+  TUNGSTEN: { symbol: 'TUNGSTEN', name: 'Tungsten (Physical W-74)' },
+  WOLFRAM: { symbol: 'TUNGSTEN', name: 'Tungsten (Physical W-74)' },
+  IRIDIUM: { symbol: 'IRIDIUM', name: 'Iridium (Physical Ir-77)' },
+  OSMIUM: { symbol: 'OSMIUM', name: 'Osmium (Physical Os-76)' },
+  RUTHENIUM: { symbol: 'RUTHENIUM', name: 'Ruthenium (Physical Ru-44)' },
+  COBALT: { symbol: 'COBALT', name: 'Cobalt (Physical Co-27)' },
+  LITHIUM: { symbol: 'LITHIUM', name: 'Lithium (Physical Li-3)' },
+  ZINC: { symbol: 'ZINC', name: 'Zinc (Physical Zn-30)' },
+  TIN: { symbol: 'TIN', name: 'Tin (Physical Sn-50)' },
+  LEAD: { symbol: 'LEAD', name: 'Lead (Physical Pb-82)' },
+  IRON: { symbol: 'IRON', name: 'Iron (Physical Fe-26)' },
+  STEEL: { symbol: 'STEEL', name: 'Steel (Industrial Fe-C)' },
+  CHROMIUM: { symbol: 'CHROMIUM', name: 'Chromium (Physical Cr-24)' },
+  MERCURY: { symbol: 'MERCURY', name: 'Mercury (Physical Hg-80)' },
+  GALLIUM: { symbol: 'GALLIUM', name: 'Gallium (Physical Ga-31)' },
+  INDIUM: { symbol: 'INDIUM', name: 'Indium (Physical In-49)' },
+  MOLYBDENUM: { symbol: 'MOLYBDENUM', name: 'Molybdenum (Physical Mo-42)' },
+  TANTALUM: { symbol: 'TANTALUM', name: 'Tantalum (Physical Ta-73)' },
+  BISMUTH: { symbol: 'BISMUTH', name: 'Bismuth (Physical Bi-83)' },
+  ANTIMONY: { symbol: 'ANTIMONY', name: 'Antimony (Physical Sb-51)' },
+  MAGNESIUM: { symbol: 'MAGNESIUM', name: 'Magnesium (Physical Mg-12)' },
+  MANGANESE: { symbol: 'MANGANESE', name: 'Manganese (Physical Mn-25)' },
+  VANADIUM: { symbol: 'VANADIUM', name: 'Vanadium (Physical V-23)' },
+  RAREEARTH: { symbol: 'RAREEARTH', name: 'Rare Earth Metals' },
+  PAXG: { symbol: 'PAXG', name: 'PAX Gold (Tokenized Vault Gold)' },
+  XAUT: { symbol: 'XAUT', name: 'Tether Gold (Tokenized Vault Gold)' }
 };
 
-// Fix XPD symbol cleanly in case referenced directly
-PHYSICAL_COMMODITY_ALLOWLIST.XPD = { symbol: 'PALLADIUM', name: 'Palladium (Physical XPD)' };
+const COMMODITY_PHRASE_REGEX =
+  /\b(GOLD|SILVER|PLATINUM|PALLADIUM|COPPER|RHODIUM|URANIUM|NICKEL|ALUMINUM|ALUMINIUM|TITANIUM|TUNGSTEN|IRIDIUM|OSMIUM|RUTHENIUM|COBALT|LITHIUM|ZINC|CHROMIUM|MOLYBDENUM|TANTALUM|BISMUTH|ANTIMONY|MAGNESIUM|MANGANESE|VANADIUM|RARE\s+EARTH|BULLION)\b/i;
 
-// Static fallback snapshot of major Top-150 crypto tickers used ONLY when all live public feeds are unreachable
+// Static fallback snapshot of major crypto tickers used as informational market directory when offline
 export const STATIC_TOP_150_FALLBACK_ENTRIES: MarketCapEntry[] = [
   { rank: 1, symbol: 'BTC', name: 'Bitcoin', id: 'bitcoin' },
   { rank: 2, symbol: 'ETH', name: 'Ethereum', id: 'ethereum' },
@@ -183,6 +219,28 @@ export function normalizeMarketQuery(raw: string): string {
     .replace(/^\$/, '')
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
+}
+
+export function resolvePhysicalCommodityQuery(
+  rawQuery: string,
+  normQuery = normalizeMarketQuery(rawQuery)
+): { symbol: string; name: string } | null {
+  if (!normQuery) return null;
+  if (PHYSICAL_COMMODITY_ALLOWLIST[normQuery]) {
+    return PHYSICAL_COMMODITY_ALLOWLIST[normQuery];
+  }
+  const match = COMMODITY_PHRASE_REGEX.exec(String(rawQuery || ''));
+  if (match) {
+    const key = normalizeMarketQuery(match[1]);
+    if (PHYSICAL_COMMODITY_ALLOWLIST[key]) {
+      return PHYSICAL_COMMODITY_ALLOWLIST[key];
+    }
+    return {
+      symbol: key || normQuery,
+      name: `${String(match[1]).trim()} (Physical Commodity)`
+    };
+  }
+  return null;
 }
 
 export function getUtcDayKey(nowMs = Date.now()): string {
@@ -358,7 +416,22 @@ export function evaluateMarketScope(input: {
     };
   }
 
-  const commodity = PHYSICAL_COMMODITY_ALLOWLIST[norm];
+  if (!norm) {
+    return {
+      allowed: false,
+      reason: 'EMPTY_OR_INVALID',
+      rank: null,
+      maxRank,
+      matchedSymbol: null,
+      matchedName: null,
+      bypassesScope: false,
+      audit: null,
+      message: 'Asset query is empty or contains no alphanumeric ticker characters (0 API credits used).'
+    };
+  }
+
+  // Physical metals & commodities are never bounded by cryptocurrency ranking rules
+  const commodity = resolvePhysicalCommodityQuery(input.query, norm);
   if (commodity) {
     return {
       allowed: true,
@@ -369,21 +442,7 @@ export function evaluateMarketScope(input: {
       matchedName: commodity.name,
       bypassesScope: true,
       audit: undefined,
-      message: `Physical commodity ${commodity.name} is permitted.`
-    };
-  }
-
-  if (!norm) {
-    return {
-      allowed: false,
-      reason: 'UNRANKED_OR_OUTSIDE_TOP_150',
-      rank: null,
-      maxRank,
-      matchedSymbol: null,
-      matchedName: null,
-      bypassesScope: false,
-      audit: null,
-      message: `Asset query is empty or outside Top ${maxRank} CMC scope (returned null; 0 API credits used).`
+      message: `Physical commodity ${commodity.name} is permitted unconditionally (unbounded by crypto CMC rank).`
     };
   }
 
@@ -400,43 +459,17 @@ export function evaluateMarketScope(input: {
     }
   }
 
-  if (bestMatch && bestMatch.rank <= maxRank) {
-    return {
-      allowed: true,
-      reason: 'TOP_150_CMC',
-      rank: bestMatch.rank,
-      maxRank,
-      matchedSymbol: bestMatch.symbol.toUpperCase(),
-      matchedName: bestMatch.name,
-      bypassesScope: false,
-      audit: undefined,
-      message: `Verified #${bestMatch.rank} within Top ${maxRank} CMC scope.`
-    };
-  }
-
-  if (bestMatch && bestMatch.rank > maxRank) {
-    return {
-      allowed: false,
-      reason: 'OUTSIDE_TOP_150',
-      rank: bestMatch.rank,
-      maxRank,
-      matchedSymbol: bestMatch.symbol.toUpperCase(),
-      matchedName: bestMatch.name,
-      bypassesScope: false,
-      audit: null,
-      message: `Returned null: ${bestMatch.name} ($${bestMatch.symbol.toUpperCase()}) is ranked #${bestMatch.rank}, outside the Top ${maxRank} CMC audit scope (0 API credits spent).`
-    };
-  }
-
   return {
-    allowed: false,
-    reason: 'UNRANKED_OR_OUTSIDE_TOP_150',
-    rank: null,
+    allowed: true,
+    reason: 'CRYPTO_NETWORK',
+    rank: bestMatch ? bestMatch.rank : null,
     maxRank,
-    matchedSymbol: null,
-    matchedName: null,
-    bypassesScope: false,
-    audit: null,
-    message: `Returned null: "${input.query.trim()}" is not within the Top ${maxRank} CMC rankings (0 API credits spent).`
+    matchedSymbol: bestMatch ? bestMatch.symbol.toUpperCase() : norm,
+    matchedName: bestMatch ? bestMatch.name : input.query.trim(),
+    bypassesScope: true,
+    audit: undefined,
+    message: bestMatch
+      ? `Permitted for live audit (${bestMatch.name} • informational market rank #${bestMatch.rank}).`
+      : `Permitted for live audit ("${input.query.trim()}" is not restricted by CMC rank rules).`
   };
 }

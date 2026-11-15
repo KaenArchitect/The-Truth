@@ -24,7 +24,6 @@ import {
 } from './src/data/rubricSpec.ts';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
-  MAX_CMC_RANK_SCOPE,
   consumeDailyPull,
   evaluateMarketScope,
   getUserDailyQuotaStatus,
@@ -40,6 +39,7 @@ import {
   savePersistedGainsCohort,
   syncLivePricesAndPersistGainsCohort
 } from './src/server/gainsCohortStore.ts';
+import { classifyAuditQueryForSandbox } from './src/data/auditProvenance.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -445,7 +445,7 @@ async function createApp(): Promise<express.Express> {
     res.json({
       strictCreditLock: isStrictCreditLockActive(),
       dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
-      maxCmcRankScope: MAX_CMC_RANK_SCOPE,
+      unrestrictedMetalsAndNetworks: true,
       dailyQuota,
       models: {
         audit: 'gemini-4-hydrogen',
@@ -466,7 +466,7 @@ async function createApp(): Promise<express.Express> {
     const dailyQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
     res.json({
       dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
-      maxCmcRankScope: MAX_CMC_RANK_SCOPE,
+      unrestrictedMetalsAndNetworks: true,
       dailyQuota
     });
   });
@@ -529,6 +529,7 @@ async function createApp(): Promise<express.Express> {
       query?: string;
       existingBaseline?: AuditData | null;
       bypassCache?: boolean;
+      sandbox?: boolean;
       userId?: string | null;
       clientId?: string | null;
     };
@@ -545,6 +546,15 @@ async function createApp(): Promise<express.Express> {
         ? body.existingBaseline
         : null;
     const bypassCache = Boolean(body.bypassCache) || Boolean(existingBaseline);
+    const sandboxClassification = classifyAuditQueryForSandbox(
+      rawQuery,
+      '',
+      Boolean(body.sandbox),
+      PRELOADED_AUDITS[normalizeLookupKey(rawQuery)]
+        ? new Set([normalizeLookupKey(rawQuery)])
+        : new Set()
+    );
+    const isSandboxRequest = Boolean(body.sandbox) || (!existingBaseline && sandboxClassification.isSandbox);
 
     if (!bypassCache) {
       const hit = lookupCachedAudit(rawQuery);
@@ -559,6 +569,7 @@ async function createApp(): Promise<express.Express> {
             audit: hit,
             sources: hit.freshSources || hit.sources || [],
             cachedHit: true,
+            sandbox: Boolean(body.sandbox),
             quota: currentQuota
           })}\n\n`
         );
@@ -574,28 +585,15 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    // 1) ZERO-CREDIT TOP-150 CMC SCOPE GATE (executed BEFORE quota deduction or any Gemini API call)
+    // 1) UNRESTRICTED METALS & NETWORKS SCOPE VALIDATION (only rejects empty/invalid inputs)
     const scopeQuery = existingBaseline ? existingBaseline.ticker || rawQuery : rawQuery;
     const marketDir = await getMarketCapDirectory();
-    let scopeResult = evaluateMarketScope({
+    const scopeResult = evaluateMarketScope({
       query: scopeQuery,
       cachedAuditHit: false,
       isExplicitReaudit: Boolean(existingBaseline),
-      marketEntries: marketDir.entries,
-      maxRank: MAX_CMC_RANK_SCOPE
+      marketEntries: marketDir.entries
     });
-    if (!scopeResult.allowed && existingBaseline?.name) {
-      const byName = evaluateMarketScope({
-        query: existingBaseline.name,
-        cachedAuditHit: false,
-        isExplicitReaudit: true,
-        marketEntries: marketDir.entries,
-        maxRank: MAX_CMC_RANK_SCOPE
-      });
-      if (byName.allowed) {
-        scopeResult = byName;
-      }
-    }
 
     if (!scopeResult.allowed) {
       const currentQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
@@ -749,8 +747,10 @@ async function createApp(): Promise<express.Express> {
         Boolean(PRELOADED_AUDITS[cleanTickerGuess])
       );
 
-      indexAuditAliases(builtAudit);
-      persistServerCacheToDisk();
+      if (!isSandboxRequest) {
+        indexAuditAliases(builtAudit);
+        persistServerCacheToDisk();
+      }
 
       const updatedQuota = getUserDailyQuotaStatus(dailyQuotaLedger, principal.allKeys);
       sendEvent({
@@ -758,6 +758,7 @@ async function createApp(): Promise<express.Express> {
         audit: builtAudit,
         sources: freshBundle.sources,
         cachedHit: false,
+        sandbox: isSandboxRequest,
         quota: updatedQuota
       });
       res.end();
@@ -1048,6 +1049,35 @@ ${
     }
   });
 
+  const resolvePublicOrigin = (req: Request): string => {
+    const xfHost = String(req.headers['x-forwarded-host'] || '')
+      .split(',')[0]
+      .trim();
+    const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
+    const rawHost = xfHost || req.get('host') || '';
+    const isLocal = /^localhost(?::|$)|^127\.0\.0\.1(?::|$)|^0\.0\.0\.0(?::|$)/.test(rawHost);
+    if (!xfHost && configured) return configured;
+    const host = rawHost;
+    if (!host) return configured || 'https://the-truth.ai.studio';
+    const xfProto = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim();
+    const proto = xfProto || (isLocal ? req.protocol || 'http' : 'https');
+    return `${proto}://${host}`;
+  };
+
+  const injectSocialOrigin = (html: string, req: Request): string => {
+    const origin = resolvePublicOrigin(req);
+    return html.replace(/https:\/\/the-truth\.ai\.studio/g, origin);
+  };
+
+  app.get('/robots.txt', (_req: Request, res: Response) => {
+    res
+      .status(200)
+      .setHeader('Content-Type', 'text/plain; charset=utf-8')
+      .send('User-agent: *\nAllow: /\n\nUser-agent: Twitterbot\nAllow: /\n');
+  });
+
   // Frontend Hosting (Vite middleware in dev; dist static in prod)
   if (!IS_PROD) {
     const vite = await import('vite');
@@ -1065,7 +1095,8 @@ ${
       try {
         const indexPath = path.resolve(process.cwd(), 'index.html');
         const template = fs.readFileSync(indexPath, 'utf8');
-        const html = await viteServer.transformIndexHtml(req.originalUrl, template);
+        const transformed = await viteServer.transformIndexHtml(req.originalUrl, template);
+        const html = injectSocialOrigin(transformed, req);
         res.status(200).setHeader('Content-Type', 'text/html').end(html);
       } catch (err) {
         viteServer.ssrFixStacktrace(err as Error);
@@ -1074,9 +1105,20 @@ ${
     });
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req: Request, res: Response) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    app.use(express.static(distDir, { index: false }));
+    app.get('*', (req: Request, res: Response, next) => {
+      if (req.path.startsWith('/api')) {
+        next();
+        return;
+      }
+      try {
+        const indexPath = path.join(distDir, 'index.html');
+        const template = fs.readFileSync(indexPath, 'utf8');
+        const html = injectSocialOrigin(template, req);
+        res.status(200).setHeader('Content-Type', 'text/html').end(html);
+      } catch {
+        res.sendFile(path.join(distDir, 'index.html'));
+      }
     });
   }
 

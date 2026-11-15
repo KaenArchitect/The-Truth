@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Columns, GitMerge, Pause, Play, Scissors, Wifi } from 'lucide-react';
+import { Columns, GitMerge, Pause, Play, Scissors, ShieldAlert, Wifi } from 'lucide-react';
 import type { AuditData, GradeAccent } from '../data/rubricSpec.ts';
+import { isEcosystemOverlayAudit } from '../data/auditProvenance.ts';
 
 export type PartitionPhase = 'PEACE' | 'WARTIME' | 'SPLICE';
+export type SimScenarioMode = 'CABLE_CUT' | 'MERCENARY_HASH';
 
 export const PARTITION_PRESETS = [
   { label: '50 / 50 Symmetric', west: 50, tag: 'Even Split' },
@@ -13,10 +15,306 @@ export const PARTITION_PRESETS = [
 ];
 
 export const DURATION_OPTIONS = [
-  { mins: 15, label: '15m Cut' },
-  { mins: 60, label: '60m Cut' },
-  { mins: 240, label: '4h Cut' },
-  { mins: 2880, label: '48h War' }
+  { mins: 15, label: '15m <1h' },
+  { mins: 45, label: '45m <1h' },
+  { mins: 240, label: '4h 1-12h' },
+  { mins: 2880, label: '48h >12h' }
+];
+
+export const DAGKNIGHT_ROADMAP_TAG = '[Roadmap / KIP-2 Proposed — In Testnet-13 Review]';
+
+export type KaspaConsensusRegimeId = 'A' | 'B' | 'C';
+
+export interface KaspaConsensusRegime {
+  id: KaspaConsensusRegimeId;
+  durationBand: string;
+  estimatedBlocks: number;
+  statusBadge: string;
+  shortMetricValue: string;
+  color: string;
+  mechanicsCopy: string;
+}
+
+/**
+ * Post-Crescendo (10 BPS = 600 blocks/min) rusty-kaspa partition bounds:
+ * - Regime A (< 1h): < 36,000 blocks, inside merge_depth = 36,000
+ * - Regime B (1-12h): 36,000 to 432,000 blocks, past merge_depth inside finality_depth
+ * - Regime C (> 12h): > 432,000 blocks, past finality_depth = 432,000 (pruning_depth = 1,080,000 at 30h)
+ */
+export function getKaspaConsensusRegime(durationMins: number): KaspaConsensusRegime {
+  const safeMins = Math.max(1, Number(durationMins) || 45);
+  const estimatedBlocks = Math.round(safeMins * 600);
+
+  if (safeMins < 60) {
+    return {
+      id: 'A',
+      durationBand: '< 1 Hour (< 36,000 blocks • inside merge_depth = 36,000)',
+      estimatedBlocks,
+      statusBadge: '100% DAG Convergence (Zero-Orphan Merge)',
+      shortMetricValue: '100% Merge (<36k blks)',
+      color: '#49EACB',
+      mechanicsCopy:
+        'Both isolated partitions continue mining and dynamically ramp toward 10.0 BPS via KIP-14’s per-block Sampled DAA (~44-minute / 26,410-DAA-block window). Upon resplice, parallel blocks within merge_depth = 36,000 weave cleanly back into a unified BlockDAG (mergeset_size_limit = 248, k = 124), preserving all non-conflicting UTXO commerce (marking high-anticone side blocks red while retaining valid non-conflicting transactions).'
+    };
+  }
+
+  if (safeMins <= 720) {
+    return {
+      id: 'B',
+      durationBand: '1–12 Hours (36,000–432,000 blocks • past merge_depth = 36,000)',
+      estimatedBlocks,
+      statusBadge: 'Heavier Blue-Work Reorg (Bounded Merge Depth Exceeded)',
+      shortMetricValue: 'Blue-Work Reorg (>36k)',
+      color: '#FACC15',
+      mechanicsCopy:
+        'Past merge_depth = 36,000 (~1 hour at 10 BPS), rusty-kaspa rejects cross-merging older tips (ViolatingBoundedMergeDepth) to bound node memory. Nodes automatically reorganize onto whichever partition accumulated greater cumulative Blue Work, returning non-conflicting minority transactions to the mempool.'
+    };
+  }
+
+  return {
+    id: 'C',
+    durationBand: '> 12 Hours (> 432,000 blocks • past finality_depth; pruning_depth = 1,080,000 at 30h)',
+    estimatedBlocks,
+    statusBadge: 'Finality Lock Triggered (Manual Coordination Required)',
+    shortMetricValue: 'FinalityConflict Lock',
+    color: '#F97316',
+    mechanicsCopy:
+      'Past 12 hours (finality_depth = 432,000; pruning_depth = 1,080,000 at 30h), nodes trigger a FinalityConflict protection lock and refuse automatic deep reorganization over finalized history without explicit operator --override-params intervention.'
+  };
+}
+
+export interface WartimeDaaKpiMetrics {
+  minorityPct: number;
+  kaspaWindowLabel: string;
+  kaspaRecoveryRate: string;
+  bitcoinEpochLabel: string;
+  bitcoinSlowBlockMins: number;
+  bitcoinMinorityEpochWeeks: string;
+  bitcoinBenchmarkCopy: string;
+}
+
+export function getWartimeDaaKpiMetrics(westShare: number): WartimeDaaKpiMetrics {
+  const clampedWest = Math.max(10, Math.min(90, Number(westShare) || 50));
+  const eastShare = 100 - clampedWest;
+  const minorityPct = Math.min(clampedWest, eastShare);
+  const ratio = minorityPct / 100;
+  const bitcoinSlowBlockMins = Math.round(10 / ratio);
+  // Rigid 2,016-block epoch (~1 week remaining average / ~10 weeks at 10% partition hashrate)
+  const bitcoinMinorityEpochWeeks =
+    minorityPct <= 10 ? '~10' : (10 / (minorityPct / 10)).toFixed(1);
+
+  return {
+    minorityPct,
+    kaspaWindowLabel: 'Every 1 Block (KIP-14 Sampled DAA • ~44m / 26,410 blocks)',
+    kaspaRecoveryRate: '10.0 BPS within hours (even @ 10% shard)',
+    bitcoinEpochLabel: 'Rigid 2,016-Block Epoch (PowTargetTimespan = 1,209,600s)',
+    bitcoinSlowBlockMins,
+    bitcoinMinorityEpochWeeks,
+    bitcoinBenchmarkCopy:
+      '10% isolated Bitcoin partition slows from 10-minute blocks to 100-minute blocks, crawling for ~10 weeks before reaching its next difficulty adjustment while local mempools choke.'
+  };
+}
+
+export interface Kip14ShardTrajectory {
+  minorityPct: number;
+  initialShardBps: number;
+  initialBlockIntervalMs: number;
+  daaWindowLabel: string;
+  restoredBps: number;
+  recoveryHoursLabel: string;
+  bitcoinSlowBlockMins: number;
+  bitcoinMinorityEpochWeeks: string;
+  trajectoryNote: string;
+}
+
+export function getKip14ShardTrajectory(westShare: number): Kip14ShardTrajectory {
+  const kpi = getWartimeDaaKpiMetrics(westShare);
+  const initialShardBps = Number(((10 * kpi.minorityPct) / 100).toFixed(1));
+  const initialBlockIntervalMs = Math.round(1000 / Math.max(0.5, initialShardBps));
+
+  return {
+    minorityPct: kpi.minorityPct,
+    initialShardBps,
+    initialBlockIntervalMs,
+    daaWindowLabel: '44m Sampled DAA (26,410 blocks)',
+    restoredBps: 10.0,
+    recoveryHoursLabel: kpi.minorityPct <= 15 ? '~1.5–3h full recovery' : '~45m–1.5h full recovery',
+    bitcoinSlowBlockMins: kpi.bitcoinSlowBlockMins,
+    bitcoinMinorityEpochWeeks: kpi.bitcoinMinorityEpochWeeks,
+    trajectoryNote: `At instant of split, a ${kpi.minorityPct}% shard starts at ${initialShardBps.toFixed(
+      1
+    )} BPS (~${initialBlockIntervalMs}ms spacing) and dampens block emission momentarily before KIP-14’s per-block Sampled DAA smoothly converges back to 10.0 BPS within hours—while a ${
+      kpi.minorityPct
+    }% Bitcoin shard stays frozen at ~${kpi.bitcoinSlowBlockMins}m blocks for ~${
+      kpi.bitcoinMinorityEpochWeeks
+    } weeks.`
+  };
+}
+
+export interface MercenaryAttackTelemetry {
+  ticker: string;
+  verdictBadge: string;
+  verdictColor: string;
+  hardwareProfile: string;
+  rentableRisk: string;
+  attackPrecedentOrCost: string;
+  reorgContainment: string;
+  summaryCopy: string;
+}
+
+export function getMercenaryAttackTelemetry(auditObj: AuditData): MercenaryAttackTelemetry {
+  const tk = String(auditObj?.ticker || '').toUpperCase().trim();
+  const fam = auditObj?.consensusFamily || 'ZERO_JOULE_BFT';
+
+  if (tk === 'KAS') {
+    return {
+      ticker: 'KAS',
+      verdictBadge: 'DEDICATED ASIC BARRIER (IMMUNE TO GPU/CPU BURSTS)',
+      verdictColor: '#49EACB',
+      hardwareProfile: '>95% Dedicated Optical kHeavyHash ASIC Fleet',
+      rentableRisk: 'Low (Zero Cloud GPU / Botnet Parity)',
+      attackPrecedentOrCost: '0 Historical 51% Reorgs • Physical Capex + MW Floor',
+      reorgContainment: 'Live GHOSTDAG k = 124 merges honest parallel work cleanly at 10 BPS',
+      summaryCopy:
+        'Attacking Kaspa requires physically manufacturing and energizing more purpose-built optical kHeavyHash ASIC silicon than the entire global network (>95% dedicated fleet). Cloud CPU/GPU rental spikes cannot surge hash power overnight, and live GHOSTDAG (k = 124, merge_depth = 36,000) absorbs non-conflicting concurrency without linear orphan amplification.'
+    };
+  }
+
+  if (tk === 'BTC') {
+    return {
+      ticker: 'BTC',
+      verdictBadge: 'EXTERNAL HASH IMMUNE • POOL TEMPLATE CENTRALIZATION',
+      verdictColor: '#4ADE80',
+      hardwareProfile: '>99% Global SHA-256d Fleet Dominant',
+      rentableRisk: 'Immune Externally • >55% Foundry+AntPool Stratum v1 Surface',
+      attackPrecedentOrCost: 'Multibillion $ Dedicated ASIC Wall (Only ~3–5% Sv2 Job Declaration)',
+      reorgContainment: 'bitcoind nChainWork overrides smaller branches automatically on resync',
+      summaryCopy:
+        'No external SHA-256d coin can spillover-51% attack Bitcoin (>99% fleet dominance). Its practical adversarial surface is political/regulatory template censorship across Foundry USA + AntPool (>55% Stratum v1) until >50% of miners run Stratum v2 Job Declaration.'
+    };
+  }
+
+  if (tk === 'XMR') {
+    return {
+      ticker: 'XMR',
+      verdictBadge: 'RENTABLE CPU VULNERABILITY (AUG 2025 QUBIC PRECEDENT)',
+      verdictColor: '#EF4444',
+      hardwareProfile: 'RandomX (rx/0) Multipurpose x86/ARM CPUs + X5/X9 ASICs',
+      rentableRisk: 'High (Cloud CPUs & Incentive Pools Can Surge Without ASIC Capex)',
+      attackPrecedentOrCost: 'Aug 11–12, 2025 Qubic Surge: 63 / 122 Blocks (>51%), 6-Blk Reorg',
+      reorgContainment: 'Single-chain selfish mining + 16-decoy RingCT invalidation (pre-FCMP++)',
+      summaryCopy:
+        'General-purpose RandomX CPUs carry zero dedicated-silicon lock-in, enabling mercenary compute swarms like Qubic (Aug 2025: 63/122 blocks) to rent or incentivize temporary >51% surges—executing sequential selfish-mining reorgs and invalidating 60-block coinbase chains & pre-FCMP++ RingCT decoys.'
+    };
+  }
+
+  if (tk === 'BCH') {
+    return {
+      ticker: 'BCH',
+      verdictBadge: 'CRITICAL EXTERNAL SHA-256d SPILLOVER RISK (<1% FLEET)',
+      verdictColor: '#EF4444',
+      hardwareProfile: '<1% Minority Share of Global SHA-256d ASIC Fleet',
+      rentableRisk: 'Extreme (Rentable / Diverted BTC SHA-256d Hashrate)',
+      attackPrecedentOrCost: 'Fraction of 1% Global SHA-256d + ASERT Instant Divergence',
+      reorgContainment: 'Collides with BCHN -maxreorgdepth=10 (permanently splits nodes at 10 blks)',
+      summaryCopy:
+        'Sharing the identical SHA-256d algorithm as Bitcoin while holding <1% of global hashrate means a minuscule diversion of BTC pool hardware exceeds 100% of BCH’s security budget—either rewriting up to 9 blocks or pushing competing branches past BCHN’s -maxreorgdepth=10 split threshold.'
+    };
+  }
+
+  if (tk === 'LTC') {
+    return {
+      ticker: 'LTC',
+      verdictBadge: 'AUXPoW SCRYPT COUPLED (DOGECOIN MERGE-MINING DEPENDENCY)',
+      verdictColor: '#FACC15',
+      hardwareProfile: 'Dedicated Scrypt ASICs + Dogecoin AuxPoW Merge-Mining',
+      rentableRisk: 'Moderate (Coupled to Combined LTC+DOGE Scrypt Fleet & Large Pools)',
+      attackPrecedentOrCost: 'Dominant Scrypt ASIC Barrier (Pooled Viabtc / F2Pool Concentration)',
+      reorgContainment: 'litecoind nChainWork amputation; 6-conf + COINBASE_MATURITY=100 purges',
+      summaryCopy:
+        'Litecoin commands dominant Scrypt ASIC hash power alongside Dogecoin via AuxPoW merge mining, insulating it from trivial external GPU surges—though economics hinge tightly on Dogecoin’s subsidy incentives and top Scrypt pool concentration.'
+    };
+  }
+
+  if (fam === 'PHYSICAL_COMMODITY') {
+    return {
+      ticker: tk || 'METAL',
+      verdictBadge: 'ZERO DIGITAL HASH SURFACE • PHYSICAL SEIZURE / SPOOFING',
+      verdictColor: '#FACC15',
+      hardwareProfile: 'Atomic Element (No Consensus Hashrate or Mempool)',
+      rentableRisk: '0% Digital 51% Surface • High Vault Confiscation Risk',
+      attackPrecedentOrCost: 'EO 6102 / Vault Freezes & 19.25 g/cm³ Tungsten Core Counterfeits',
+      reorgContainment: 'Immune to software reorgs; requires XRF/ultrasonic bar verification',
+      summaryCopy:
+        'Physical metals have zero digital consensus surface—no mercenary miner can 51%-reorg atomic nuclei. Their real adversarial threat is sovereign vault confiscation (EO 6102) and high-density counterfeit cladding requiring ultrasonic or XRF assays.'
+    };
+  }
+
+  if (fam === 'ZERO_JOULE_BFT') {
+    return {
+      ticker: tk || 'POS',
+      verdictBadge: '0-JOULE VALIDATOR CARTEL (ZERO HASH COST BARRIER)',
+      verdictColor: '#EF4444',
+      hardwareProfile: '0 Joules • Capital-Weighted BFT / Validator Quorums',
+      rentableRisk: 'No Physical Hash Wall • Foundation / Exchange Stake Cartel Control',
+      attackPrecedentOrCost: 'Foundation Soft-Forks / TransactionDenyConfig / Discord Restarts',
+      reorgContainment: 'Cartel >33.4% halts chain globally; >66.7% censors or rewrites state',
+      summaryCopy:
+        'With 0 Joules of physical Proof-of-Work barrier, adversarial control does not even require renting hash hardware: concentrated insider/exchange/Foundation stake (>33.4% to halt, >66.7% to forge/censor) can freeze transactions or force out-of-band rollbacks at near-zero marginal energy.'
+    };
+  }
+
+  if (isEcosystemOverlayAudit(auditObj)) {
+    return {
+      ticker: tk || 'OVERLAY',
+      verdictBadge: 'CARRIER-DEPENDENT + OFF-CHAIN PINNING / HUB VECTOR',
+      verdictColor: '#FACC15',
+      hardwareProfile: `Subordinated to Base L1 PoW (${tk === 'LN' ? 'BTC SHA-256d' : 'KAS kHeavyHash'})`,
+      rentableRisk: 'No Independent Hash Security (0-Joule Hop / Bridge Surface)',
+      attackPrecedentOrCost:
+        tk === 'LN'
+          ? 'CVE-2023-40231 Mempool Pinning + 483-Slot Channel Jamming'
+          : 'Carrier L1 Secure; Off-Chain Redis / PoS Exit Attester Surface',
+      reorgContainment: 'Inherits base L1 carrier finality strictly below M_L1 (M_overlay < M_L1)',
+      summaryCopy:
+        'Upper-layer channels, rollups, and inscription protocols expend 0 Joules of independent hash security—inheriting base L1 carrier finality while introducing off-chain mempool pinning, hub jamming, indexer skew, or staked-bridge pause vectors.'
+    };
+  }
+
+  return {
+    ticker: tk || 'POW',
+    verdictBadge: 'LINEAR POW • SHARED HASH / CONCENTRATION DEPENDENT',
+    verdictColor: '#FACC15',
+    hardwareProfile: 'Algorithm-Specific Mining Fleet',
+    rentableRisk: 'Depends on Dedicated ASIC Share vs Shared/Rentable Fleet Ratio',
+    attackPrecedentOrCost: 'Exposed if Minority Hashrate Share (<10% of Global Algorithm Fleet)',
+    reorgContainment: 'Longest-work reorg orphans minority chain + reverses recent confirmations',
+    summaryCopy:
+      'Sequential PoW security depends strictly on owning >90% dedicated hardware on a single-purpose algorithm; shared or general-purpose algorithms invite cross-chain or rented-capacity 51% reorg bursts.'
+  };
+}
+
+export const BITCOIND_COMMERCE_LAYERS: Array<{ title: string; detail: string }> = [
+  {
+    title: '1. Settlement Finality Revoked',
+    detail:
+      'Every "6-confirmation settled" merchant or exchange payment on the minority side is stripped back to 0 confirmations, exposing physical goods and off-ramps to cross-partition double-spends and RBF replacement.'
+  },
+  {
+    title: '2. 100% Coinbase + Downstream Taint Purge (COINBASE_MATURITY = 100)',
+    detail:
+      'Every minority block reward—and every downstream merchant, DEX, or user transaction chain touching even 1 satoshi of newly mined post-split BTC—is permanently invalidated (removeForReorg).'
+  },
+  {
+    title: '3. 20 MB disconnectpool Overflow & 14-Day Mempool Expiry',
+    detail:
+      'Bitcoin Core hard-caps MAX_DISCONNECTED_TX_POOL_BYTES at 20,000,000 bytes (20 MB, ~10–12 blocks). In multi-hour, multi-day, or DAA-spanning reorgs, disconnectpool overflows and drops excess disconnected transactions instead of re-adding them to the mempool, while DEFAULT_MAX_MEMPOOL_SIZE (300 MB) and DEFAULT_MEMPOOL_EXPIRY (336h / 14d) evict unconfirmed backlogs unless senders manually rebroadcast.'
+  },
+  {
+    title: '4. Height-Lock Invalidation',
+    detail:
+      'If a DAA drop pushes the minority chain ahead in nHeight prior to reconnection, height-locked spends (nLockTime, OP_CLTV, OP_CSV, Lightning HTLC timeouts) become consensus-invalid (non-final) when rewound onto a shorter, heavier winning chain.'
+  }
 ];
 
 export function getBftQuorumThreshold(ticker: string): number {
@@ -185,23 +483,24 @@ export function getSimulatorTelemetry(
       };
     }
     return {
-      statusLabel: `${minoritySide.toUpperCase()} (${minorityPct}%) CHANNELS WIPED`,
+      statusLabel: `${minoritySide.toUpperCase()} (${minorityPct}%) L1 SWEEPS ORPHANED`,
       statusColor: '#EF4444',
       westAlive: westShare >= 50,
       eastAlive: eastShare > 50,
       metrics: [
-        { label: 'L1 Carrier Reorg', value: '100% Minority Orphaned', color: '#EF4444' },
-        { label: 'Force-Close / Justice', value: 'Sweeps Erased + Pinned', color: '#EF4444' },
-        { label: 'CLTV / CSV Locks', value: 'Up to 14d (2,016 Blks)', color: '#FB923C' }
+        { label: 'L1 Carrier Reorg', value: 'Lower nChainWork Orphaned', color: '#EF4444' },
+        { label: 'Force-Close / HTLCs', value: 'disconnectpool / Non-Final', color: '#EF4444' },
+        { label: 'CLTV / CSV Locks', value: 'Evicted Past 20 MB / 14d', color: '#FB923C' }
       ],
-      caption: `At resplice, Bitcoin’s heaviest-chain reorg erases 100% of channel opens, splices, force-closes, and watchtower justice sweeps mined on the ${minorityPct}% ${minoritySide} chain while stranding capital in multi-day CSV locks.`
+      caption: `Pre-cut UTXOs survive, but at resplice bitcoind’s nChainWork rule orphans the ${minorityPct}% ${minoritySide} chain—revoking finality on channel opens, splices, force-closes, and justice sweeps, purging COINBASE_MATURITY=100 taints, overflowing the 20 MB disconnectpool, and invalidating height-locked HTLCs.`
     };
   }
 
   if (fam === 'BLOCKDAG_POW') {
+    const kasRegime = getKaspaConsensusRegime(durationMins);
     if (phase === 'PEACE') {
       return {
-        statusLabel: '10.0 BPS PARALLEL WEAVE',
+        statusLabel: '10.0 BPS LIVE GHOSTDAG WEAVE',
         statusColor: '#49EACB',
         westAlive: true,
         eastAlive: true,
@@ -211,34 +510,42 @@ export function getSimulatorTelemetry(
           { label: 'Orphan Waste', value: '0.0% (M = 1.0)', color: '#49EACB' }
         ],
         caption:
-          'Concurrent kHeavyHash blocks across both hemispheres weave simultaneously into one chronological GHOSTDAG spine with zero orphan energy waste.'
+          'Concurrent kHeavyHash blocks across both hemispheres weave simultaneously into one chronological live GHOSTDAG spine at 10 BPS with zero orphan energy waste.'
       };
     }
     if (phase === 'WARTIME') {
       return {
-        statusLabel: 'BOTH CONTINENTS 100% LIVE',
+        statusLabel: 'BOTH CONTINENTS 100% LIVE (KIP-14 DAA)',
         statusColor: '#49EACB',
         westAlive: true,
         eastAlive: true,
         metrics: [
-          { label: `West (${westShare}%)`, value: 'DAA -> 10.0 BPS', color: '#49EACB' },
-          { label: `East (${eastShare}%)`, value: 'DAA -> 10.0 BPS', color: '#49EACB' },
-          { label: `${durationLabel} Blackout`, value: '0 Halts • 2 Sub-DAGs', color: '#49EACB' }
+          { label: `West (${westShare}%)`, value: 'KIP-14 -> 10.0 BPS', color: '#49EACB' },
+          { label: `East (${eastShare}%)`, value: 'KIP-14 -> 10.0 BPS', color: '#49EACB' },
+          { label: `${durationLabel} (~${(kasRegime.estimatedBlocks / 1000).toFixed(0)}k blks)`, value: `Regime ${kasRegime.id} Bound`, color: kasRegime.color }
         ],
-        caption: `Even under a ${westShare}% / ${eastShare}% split for ${durationLabel}, neither hemisphere halts—KIP-0004 per-block DAA smoothly ramps both isolated continents to 10.0 BPS.`
+        caption: `Even under a ${westShare}% / ${eastShare}% split for ${durationLabel}, neither hemisphere halts: KIP-14 per-block Sampled DAA (~44-minute / 26,410-block window) smoothly ramps both isolated continents back to 10.0 BPS (even a 10% shard). DAGKNIGHT ${DAGKNIGHT_ROADMAP_TAG}.`
       };
     }
     return {
-      statusLabel: 'ZERO-LOSS BLUE-WORK MERGE',
-      statusColor: '#49EACB',
-      westAlive: true,
-      eastAlive: true,
+      statusLabel: kasRegime.statusBadge,
+      statusColor: kasRegime.color,
+      westAlive: kasRegime.id !== 'C' ? (kasRegime.id === 'A' ? true : westShare >= 50) : true,
+      eastAlive: kasRegime.id !== 'C' ? (kasRegime.id === 'A' ? true : eastShare > 50) : true,
       metrics: [
-        { label: `West (${westShare}%)`, value: '100% Merged', color: '#49EACB' },
-        { label: `East (${eastShare}%)`, value: '100% Merged', color: '#49EACB' },
-        { label: 'Work Destroyed', value: '0.0% (0 Orphans)', color: '#49EACB' }
+        { label: `West (${westShare}%)`, value: kasRegime.shortMetricValue, color: kasRegime.color },
+        {
+          label: `East (${eastShare}%)`,
+          value: kasRegime.id === 'A' ? 'Weaves + Red Side Blks' : kasRegime.id === 'B' ? 'Valid TXs -> Mempool' : '--override-params',
+          color: kasRegime.color
+        },
+        {
+          label: kasRegime.id === 'A' ? 'merge_depth = 36,000' : kasRegime.id === 'B' ? 'ViolatingBoundedMerge' : 'finality_depth = 432k',
+          value: `Regime ${kasRegime.id} • ${durationLabel}`,
+          color: kasRegime.color
+        }
       ],
-      caption: `At resplice, GHOSTDAG / DAGKNIGHT weaves 100% of blocks from both the ${westShare}% West and ${eastShare}% East sub-DAGs into one unified graph without amputating the ${minorityPct}% side.`
+      caption: `${kasRegime.mechanicsCopy} (Live GHOSTDAG 10 BPS bounds; DAGKNIGHT ${DAGKNIGHT_ROADMAP_TAG}.)`
     };
   }
 
@@ -262,9 +569,12 @@ export function getSimulatorTelemetry(
       const westRate = ((westShare / 100) * 100).toFixed(0);
       const eastRate = ((eastShare / 100) * 100).toFixed(0);
       const bchCheckpointSplit = tk === 'BCH' && durationMins >= 120;
+      const btcKpi = getWartimeDaaKpiMetrics(westShare);
       return {
         statusLabel: bchCheckpointSplit
           ? '>2h 10-BLOCK CHECKPOINT LOCK!'
+          : tk === 'BTC'
+          ? `2,016-EPOCH FREEZE (${btcKpi.bitcoinSlowBlockMins}m BLOCKS)`
           : '2 INCOMPATIBLE FORKS',
         statusColor: bchCheckpointSplit ? '#EF4444' : '#FACC15',
         westAlive: true,
@@ -274,6 +584,8 @@ export function getSimulatorTelemetry(
             label: `West (${westShare}%)`,
             value: bchCheckpointSplit
               ? 'Finalized Tip A (Depth 10)'
+              : tk === 'BTC' && westShare < 50
+              ? `~${btcKpi.bitcoinSlowBlockMins}m Blks (~${btcKpi.bitcoinMinorityEpochWeeks}w)`
               : `${westRate}% Pace (${westShare >= 50 ? 'Heavier' : 'Lighter'})`,
             color: bchCheckpointSplit ? '#EF4444' : westShare >= 50 ? '#4ADE80' : '#FACC15'
           },
@@ -281,18 +593,26 @@ export function getSimulatorTelemetry(
             label: `East (${eastShare}%)`,
             value: bchCheckpointSplit
               ? 'Finalized Tip B (Depth 10)'
+              : tk === 'BTC' && eastShare <= 50
+              ? `~${btcKpi.bitcoinSlowBlockMins}m Blks (~${btcKpi.bitcoinMinorityEpochWeeks}w)`
               : `${eastRate}% Pace (${eastShare > 50 ? 'Heavier' : 'Lighter'})`,
             color: bchCheckpointSplit ? '#EF4444' : eastShare > 50 ? '#4ADE80' : '#FACC15'
           },
           {
             label: `${durationLabel} Split`,
-            value: bchCheckpointSplit ? '-maxreorgdepth=10 Hit' : 'Diverging Histories',
+            value: bchCheckpointSplit
+              ? '-maxreorgdepth=10 Hit'
+              : tk === 'BTC'
+              ? '2,016-Blk Epoch Stalled'
+              : 'Diverging Histories',
             color: bchCheckpointSplit ? '#EF4444' : '#FB923C'
           }
         ],
         caption: bchCheckpointSplit
           ? `At ${durationLabel} (>=2h / -finalizationdelay=7200s), BOTH isolated BCH continents mine past BCHN’s -maxreorgdepth=10 rolling checkpoint and locally lock incompatible finalized blocks!`
-          : tk === 'BTC' || tk === 'LTC'
+          : tk === 'BTC'
+          ? `Pre-cut UTXOs survive, but Bitcoin’s rigid 2,016-block epoch freezes the ${minorityPct}% ${minoritySide} shard at ~${btcKpi.bitcoinSlowBlockMins}-minute blocks (~${btcKpi.bitcoinMinorityEpochWeeks} weeks to retarget vs. 100m blocks / ~10w at 10% hashrate) while mempools choke.`
+          : tk === 'LTC'
           ? `Both continents keep mining without halting, but rigid 2,016-block difficulty retargeting throttles the ${minorityPct}% ${minoritySide} chain while rival histories diverge.`
           : `Both continents keep mining locally across the ${durationLabel} cable cut, but single-chain topology forces West (${westShare}%) and East (${eastShare}%) onto rival histories.`
       };
@@ -314,10 +634,38 @@ export function getSimulatorTelemetry(
         caption: `Because the ${durationLabel} cut exceeded BCHN’s 10-block / 7,200s rolling checkpoint, -finalizeheaders=1 forces West and East nodes to ban each other upon resplice—permanently splitting BCH!`
       };
     }
+    if (tk === 'BTC') {
+      return {
+        statusLabel: isTie
+          ? '50/50 nChainWork RACE -> 1 SIDE ORPHANED'
+          : `${minoritySide.toUpperCase()} (${minorityPct}%) nChainWork AMPUTATION`,
+        statusColor: '#EF4444',
+        westAlive: westShare >= 50,
+        eastAlive: eastShare > 50,
+        metrics: [
+          {
+            label: `${majoritySide} (${majorityPct}%)`,
+            value: isTie ? 'Heaviest nChainWork Wins' : 'Wins by nChainWork',
+            color: '#4ADE80'
+          },
+          {
+            label: `${minoritySide} (${minorityPct}%)`,
+            value: 'Pre-Cut UTXOs Survive',
+            color: '#FACC15'
+          },
+          {
+            label: 'Minority Commerce',
+            value: 'Finality + 20MB Pool Purge',
+            color: '#EF4444'
+          }
+        ],
+        caption: `Pre-partition UTXOs survive intact, but bitcoind enforces cumulative nChainWork (not nHeight)—orphaning 100% of the ${minorityPct}% ${minoritySide} partition’s blocks & SHA-256 work (M < 1.0), revoking 6-conf finality, purging COINBASE_MATURITY=100 taints (removeForReorg), overflowing the 20 MB disconnectpool, and invalidating height locks.`
+      };
+    }
     return {
       statusLabel: isTie
-        ? '50/50 RACE -> 1 SIDE WIPED'
-        : `${minoritySide.toUpperCase()} (${minorityPct}%) CHAIN WIPED`,
+        ? '50/50 RACE -> 1 SIDE ORPHANED'
+        : `${minoritySide.toUpperCase()} (${minorityPct}%) BRANCH ORPHANED`,
       statusColor: '#EF4444',
       westAlive: westShare >= 50,
       eastAlive: eastShare > 50,
@@ -329,7 +677,7 @@ export function getSimulatorTelemetry(
         },
         {
           label: `${minoritySide} (${minorityPct}%)`,
-          value: '100% Orphaned & Erased',
+          value: 'Minority Blocks Orphaned',
           color: '#EF4444'
         },
         {
@@ -345,10 +693,10 @@ export function getSimulatorTelemetry(
       ],
       caption:
         tk === 'XMR'
-          ? `Nakamoto reorg annihilates 100% of the ${minorityPct}% ${minoritySide} chain${
-              xmrCoinbaseWiped ? ', erases >2h unlocked 0.6 XMR coinbase commerce,' : ''
-            } and invalidates honest user RingCT transactions whose 16-member rings grabbed vanished ${minoritySide} decoys.`
-          : `Nakamoto’s Heaviest-Chain Rule ruthlessly orphans and erases every block, Joule of electricity, and merchant payment mined on the ${minorityPct}% ${minoritySide} continent.`
+          ? `Pre-cut UTXOs survive, but Nakamoto reorg orphans 100% of the ${minorityPct}% ${minoritySide} chain${
+              xmrCoinbaseWiped ? ', invalidates >2h unlocked 0.6 XMR coinbase chains,' : ''
+            } and poisons honest RingCT transactions whose 16-member rings selected vanished ${minoritySide} decoys.`
+          : `Pre-partition UTXOs survive, but Nakamoto’s cumulative nChainWork rule orphans every block mined on the ${minorityPct}% ${minoritySide} branch, discarding its PoW energy and revoking post-split settlement finality.`
     };
   }
 
@@ -818,90 +1166,186 @@ export function TopologyMeshCanvas({
           drawSubDagLane(westY, 0);
           drawSubDagLane(eastY, 17);
         } else {
+          const kasRegime = getKaspaConsensusRegime(durationMins);
           const spliceX = gutterX + laneW * 0.52;
 
-          const waveR = ((t * 38) % 44) + 8;
-          ctx.strokeStyle = `rgba(73, 234, 203, ${Math.max(0, 0.55 - waveR / 90)})`;
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.arc(spliceX, midY, waveR, 0, Math.PI * 2);
-          ctx.stroke();
+          if (kasRegime.id === 'A') {
+            const waveR = ((t * 38) % 44) + 8;
+            ctx.strokeStyle = `rgba(73, 234, 203, ${Math.max(0, 0.55 - waveR / 90)})`;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.arc(spliceX, midY, waveR, 0, Math.PI * 2);
+            ctx.stroke();
 
-          ctx.strokeStyle = 'rgba(73, 234, 203, 0.55)';
-          ctx.setLineDash([3, 3]);
-          ctx.beginPath();
-          ctx.moveTo(spliceX, 16);
-          ctx.lineTo(spliceX, height - 16);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          const leftCols = [gutterX + 22, gutterX + 66, gutterX + 110].filter(
-            (x) => x < spliceX - 18
-          );
-          leftCols.forEach((cx, idx) => {
-            const nx = idx < leftCols.length - 1 ? leftCols[idx + 1] : spliceX;
-            const targetWY = idx < leftCols.length - 1 ? westY : midY - 12;
-            const targetEY = idx < leftCols.length - 1 ? eastY : midY + 12;
             ctx.strokeStyle = 'rgba(73, 234, 203, 0.55)';
-            ctx.lineWidth = 1.4;
+            ctx.setLineDash([3, 3]);
             ctx.beginPath();
-            ctx.moveTo(cx, westY - 8);
-            ctx.lineTo(nx, targetWY);
-            ctx.moveTo(cx, westY + 8);
-            ctx.lineTo(nx, targetWY);
-            ctx.moveTo(cx, eastY - 8);
-            ctx.lineTo(nx, targetEY);
-            ctx.moveTo(cx, eastY + 8);
-            ctx.lineTo(nx, targetEY);
+            ctx.moveTo(spliceX, 16);
+            ctx.lineTo(spliceX, height - 16);
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            [westY - 8, westY + 8, eastY - 8, eastY + 8].forEach((py) => {
-              ctx.fillStyle = '#0B1917';
-              ctx.strokeStyle = '#49EACB';
+            const leftCols = [gutterX + 22, gutterX + 66, gutterX + 110].filter(
+              (x) => x < spliceX - 18
+            );
+            leftCols.forEach((cx, idx) => {
+              const nx = idx < leftCols.length - 1 ? leftCols[idx + 1] : spliceX;
+              const targetWY = idx < leftCols.length - 1 ? westY : midY - 12;
+              const targetEY = idx < leftCols.length - 1 ? eastY : midY + 12;
+              ctx.strokeStyle = 'rgba(73, 234, 203, 0.55)';
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              ctx.moveTo(cx, westY - 8);
+              ctx.lineTo(nx, targetWY);
+              ctx.moveTo(cx, westY + 8);
+              ctx.lineTo(nx, targetWY);
+              ctx.moveTo(cx, eastY - 8);
+              ctx.lineTo(nx, targetEY);
+              ctx.moveTo(cx, eastY + 8);
+              ctx.lineTo(nx, targetEY);
+              ctx.stroke();
+
+              [westY - 8, westY + 8, eastY - 8, eastY + 8].forEach((py, rowIdx) => {
+                // High-anticone side blocks marked red (#EF4444) while retaining valid non-conflicting TXs
+                const isHighAnticoneSide = idx === leftCols.length - 1 && rowIdx === 3;
+                ctx.fillStyle = isHighAnticoneSide ? '#230D10' : '#0B1917';
+                ctx.strokeStyle = isHighAnticoneSide ? '#EF4444' : '#49EACB';
+                ctx.lineWidth = 1.5;
+                drawRoundedRect(ctx, cx - 5.5, py - 5.5, 11, 11, 2.8);
+                ctx.fill();
+                ctx.stroke();
+              });
+            });
+
+            const rightCols = [spliceX + 46, spliceX + 92, spliceX + 138].filter(
+              (x) => x < width - rightPad - 8
+            );
+            let prevX = spliceX;
+            rightCols.forEach((rx) => {
+              ctx.strokeStyle = 'rgba(73, 234, 203, 0.65)';
               ctx.lineWidth = 1.5;
-              drawRoundedRect(ctx, cx - 5.5, py - 5.5, 11, 11, 2.8);
-              ctx.fill();
+              ctx.beginPath();
+              ctx.moveTo(prevX, midY - 12);
+              ctx.lineTo(rx, westY);
+              ctx.moveTo(prevX, midY + 12);
+              ctx.lineTo(rx, westY);
+              ctx.moveTo(prevX, midY - 12);
+              ctx.lineTo(rx, eastY);
+              ctx.moveTo(prevX, midY + 12);
+              ctx.lineTo(rx, eastY);
               ctx.stroke();
+              prevX = rx;
+
+              [westY, midY, eastY].forEach((ry) => {
+                ctx.fillStyle = '#0E2622';
+                ctx.strokeStyle = '#49EACB';
+                ctx.lineWidth = 1.6;
+                drawRoundedRect(ctx, rx - 6, ry - 6, 12, 12, 3);
+                ctx.fill();
+                ctx.stroke();
+              });
             });
-          });
 
-          const rightCols = [spliceX + 46, spliceX + 92, spliceX + 138].filter(
-            (x) => x < width - rightPad - 8
-          );
-          let prevX = spliceX;
-          rightCols.forEach((rx) => {
-            ctx.strokeStyle = 'rgba(73, 234, 203, 0.65)';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(prevX, midY - 12);
-            ctx.lineTo(rx, westY);
-            ctx.moveTo(prevX, midY + 12);
-            ctx.lineTo(rx, westY);
-            ctx.moveTo(prevX, midY - 12);
-            ctx.lineTo(rx, eastY);
-            ctx.moveTo(prevX, midY + 12);
-            ctx.lineTo(rx, eastY);
-            ctx.stroke();
-            prevX = rx;
-
-            [westY, midY, eastY].forEach((ry) => {
-              ctx.fillStyle = '#0E2622';
+            [midY - 12, midY + 12].forEach((my) => {
+              ctx.fillStyle = '#13352F';
               ctx.strokeStyle = '#49EACB';
-              ctx.lineWidth = 1.6;
-              drawRoundedRect(ctx, rx - 6, ry - 6, 12, 12, 3);
+              ctx.lineWidth = 2;
+              drawRoundedRect(ctx, spliceX - 7, my - 7, 14, 14, 3.5);
               ctx.fill();
               ctx.stroke();
             });
-          });
+          } else if (kasRegime.id === 'B') {
+            // Regime B (1-12h): Heavier Blue-Work Reorg (ViolatingBoundedMergeDepth past 36,000)
+            const westWins = westShare >= 50;
+            const winY = westWins ? westY : eastY;
+            const loseY = westWins ? eastY : westY;
 
-          [midY - 12, midY + 12].forEach((my) => {
-            ctx.fillStyle = '#13352F';
             ctx.strokeStyle = '#49EACB';
             ctx.lineWidth = 2;
-            drawRoundedRect(ctx, spliceX - 7, my - 7, 14, 14, 3.5);
+            ctx.beginPath();
+            ctx.moveTo(gutterX + 12, winY);
+            ctx.lineTo(spliceX, winY);
+            ctx.lineTo(spliceX + 34, midY);
+            ctx.lineTo(width - rightPad - 10, midY);
+            ctx.stroke();
+
+            for (let x = gutterX + 24; x < spliceX - 6; x += 42) {
+              ctx.fillStyle = '#0B1917';
+              ctx.strokeStyle = '#49EACB';
+              ctx.lineWidth = 1.7;
+              drawRoundedRect(ctx, x - 6, winY - 6, 12, 12, 3);
+              ctx.fill();
+              ctx.stroke();
+            }
+            for (let x = spliceX + 36; x < width - rightPad - 10; x += 42) {
+              ctx.fillStyle = '#0B1917';
+              ctx.strokeStyle = '#49EACB';
+              ctx.lineWidth = 1.7;
+              drawRoundedRect(ctx, x - 6, midY - 6, 12, 12, 3);
+              ctx.fill();
+              ctx.stroke();
+            }
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.45)';
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(gutterX + 12, loseY);
+            ctx.lineTo(spliceX - 12, loseY);
+            ctx.stroke();
+            ctx.restore();
+
+            for (let x = gutterX + 26; x < spliceX - 16; x += 44) {
+              ctx.fillStyle = '#1E1A0B';
+              ctx.strokeStyle = '#FACC15';
+              ctx.lineWidth = 1.5;
+              drawRoundedRect(ctx, x - 6, loseY - 6, 12, 12, 3);
+              ctx.fill();
+              ctx.stroke();
+            }
+
+            ctx.fillStyle = 'rgba(250, 204, 21, 0.14)';
+            ctx.strokeStyle = 'rgba(250, 204, 21, 0.6)';
+            ctx.lineWidth = 1.2;
+            drawRoundedRect(ctx, spliceX - 58, midY - 10, 116, 20, 10);
             ctx.fill();
             ctx.stroke();
-          });
+            ctx.font = '700 7.4px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#FACC15';
+            ctx.textAlign = 'center';
+            ctx.fillText('BLUE-WORK REORG • TX->MEMPOOL', spliceX, midY + 2.8);
+            ctx.textAlign = 'start';
+          } else {
+            // Regime C (>12h): FinalityConflict lock past finality_depth = 432,000
+            [westY, eastY].forEach((laneY) => {
+              ctx.strokeStyle = 'rgba(249, 115, 22, 0.72)';
+              ctx.lineWidth = 1.6;
+              ctx.beginPath();
+              ctx.moveTo(gutterX + 12, laneY);
+              ctx.lineTo(width - rightPad - 12, laneY);
+              ctx.stroke();
+              for (let x = gutterX + 24; x < width - rightPad - 12; x += 44) {
+                ctx.fillStyle = '#1C120A';
+                ctx.strokeStyle = '#F97316';
+                ctx.lineWidth = 1.6;
+                drawRoundedRect(ctx, x - 6, laneY - 6, 12, 12, 3);
+                ctx.fill();
+                ctx.stroke();
+              }
+            });
+
+            ctx.fillStyle = '#20120A';
+            ctx.strokeStyle = '#F97316';
+            ctx.lineWidth = 1.6;
+            drawRoundedRect(ctx, gutterX + laneW * 0.18, midY - 12, laneW * 0.64, 24, 8);
+            ctx.fill();
+            ctx.stroke();
+            ctx.font = '700 7.6px "JetBrains Mono", monospace';
+            ctx.fillStyle = '#FDBA74';
+            ctx.textAlign = 'center';
+            ctx.fillText('FINALITY LOCK (432k) • --override-params', gutterX + laneW * 0.5, midY + 2.8);
+            ctx.textAlign = 'start';
+          }
         }
       } else if (fam === 'LINEAR_POW') {
         if (phase === 'PEACE') {
@@ -1336,14 +1780,23 @@ export function WartimeSpliceSimulator({
   kasAudit,
   accent
 }: WartimeSpliceSimulatorProps) {
+  const [scenarioMode, setScenarioMode] = useState<SimScenarioMode>('CABLE_CUT');
   const [phase, setPhase] = useState<PartitionPhase>('WARTIME');
   const [westShare, setWestShare] = useState(58);
-  const [durationMins, setDurationMins] = useState(60);
+  const [durationMins, setDurationMins] = useState(45);
   const [compareKas, setCompareKas] = useState(true);
   const [autoPlay, setAutoPlay] = useState(false);
 
   const showSideBySide = compareKas && activeAudit?.ticker !== 'KAS' && Boolean(kasAudit);
   const eastShare = 100 - westShare;
+  const kasRegime = getKaspaConsensusRegime(durationMins);
+  const daaKpi = getWartimeDaaKpiMetrics(westShare);
+  const kip14Trajectory = getKip14ShardTrajectory(westShare);
+  const mercenaryActive = getMercenaryAttackTelemetry(activeAudit);
+  const mercenaryKas = kasAudit ? getMercenaryAttackTelemetry(kasAudit) : null;
+  const activeTickerUpper = String(activeAudit?.ticker || '').toUpperCase();
+  const isBitcoinOrLn = activeTickerUpper === 'BTC' || activeTickerUpper === 'LN';
+  const showKasRegimeBanner = activeTickerUpper === 'KAS' || showSideBySide;
 
   useEffect(() => {
     if (!autoPlay) return undefined;
@@ -1436,6 +1889,131 @@ export function WartimeSpliceSimulator({
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div
+          data-testid="sim-scenario-toggle"
+          className="p-0.5 rounded-full bg-[#07080A] border border-white/[0.08] inline-flex items-center gap-1"
+        >
+          <button
+            type="button"
+            aria-pressed={scenarioMode === 'CABLE_CUT'}
+            onClick={() => setScenarioMode('CABLE_CUT')}
+            className={`px-3 py-1 rounded-full font-mono text-[10.5px] transition inline-flex items-center gap-1.5 ${
+              scenarioMode === 'CABLE_CUT'
+                ? 'font-bold border'
+                : 'text-neutral-400 hover:text-neutral-200 border border-transparent'
+            }`}
+            style={
+              scenarioMode === 'CABLE_CUT'
+                ? {
+                    backgroundColor: accent.softBg,
+                    color: accent.primary,
+                    borderColor: accent.border
+                  }
+                : undefined
+            }
+          >
+            <Scissors className="w-3 h-3 shrink-0" />
+            <span>Geographic Cable Cut</span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={scenarioMode === 'MERCENARY_HASH'}
+            onClick={() => {
+              setAutoPlay(false);
+              setScenarioMode('MERCENARY_HASH');
+            }}
+            className={`px-3 py-1 rounded-full font-mono text-[10.5px] transition inline-flex items-center gap-1.5 ${
+              scenarioMode === 'MERCENARY_HASH'
+                ? 'font-bold border'
+                : 'text-neutral-400 hover:text-neutral-200 border border-transparent'
+            }`}
+            style={
+              scenarioMode === 'MERCENARY_HASH'
+                ? {
+                    backgroundColor: accent.softBg,
+                    color: accent.primary,
+                    borderColor: accent.border
+                  }
+                : undefined
+            }
+          >
+            <ShieldAlert className="w-3 h-3 shrink-0" />
+            <span>Mercenary 51% Hash</span>
+          </button>
+        </div>
+        <span className="font-mono text-[10px] text-neutral-500">
+          {scenarioMode === 'CABLE_CUT'
+            ? 'Tests undersea fiber split, DAA recovery & resplice finality'
+            : 'Tests rentable CPU/GPU bursts, shared ASIC spillover & 0-Joule cartels'}
+        </span>
+      </div>
+
+      {scenarioMode === 'MERCENARY_HASH' ? (
+        <div
+          data-testid="mercenary-hash-panel"
+          className="space-y-3.5"
+        >
+          <div className={`grid grid-cols-1 ${showSideBySide && mercenaryKas ? 'lg:grid-cols-2' : ''} gap-3.5`}>
+            {[
+              { item: mercenaryActive, isKasRef: activeTickerUpper === 'KAS' },
+              ...(showSideBySide && mercenaryKas ? [{ item: mercenaryKas, isKasRef: true }] : [])
+            ].map(({ item, isKasRef }) => (
+              <div
+                key={item.ticker}
+                className="rounded-2xl bg-[#07080A] border p-4 space-y-3"
+                style={{ borderColor: isKasRef ? 'rgba(73, 234, 203, 0.35)' : 'rgba(255,255,255,0.08)' }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-xs font-bold text-white">
+                    ${item.ticker} // MERCENARY 51% HASH THREAT MODEL
+                  </span>
+                  <span
+                    className="font-mono text-[9.5px] font-bold px-2 py-0.5 rounded-full"
+                    style={{
+                      color: item.verdictColor,
+                      backgroundColor: `${item.verdictColor}18`,
+                      border: `1px solid ${item.verdictColor}45`
+                    }}
+                  >
+                    {item.verdictBadge}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div className="rounded-xl bg-[#0B0C0E] border border-white/[0.06] p-2.5">
+                    <div className="font-mono text-[9.5px] uppercase text-neutral-500 mb-0.5">
+                      Hardware Security Profile
+                    </div>
+                    <div className="text-neutral-200 font-medium">{item.hardwareProfile}</div>
+                  </div>
+                  <div className="rounded-xl bg-[#0B0C0E] border border-white/[0.06] p-2.5">
+                    <div className="font-mono text-[9.5px] uppercase text-neutral-500 mb-0.5">
+                      Rentable Burst Surface
+                    </div>
+                    <div className="text-neutral-200 font-medium">{item.rentableRisk}</div>
+                  </div>
+                  <div className="rounded-xl bg-[#0B0C0E] border border-white/[0.06] p-2.5">
+                    <div className="font-mono text-[9.5px] uppercase text-neutral-500 mb-0.5">
+                      Empirical Precedent / Cost Floor
+                    </div>
+                    <div className="text-neutral-200 font-medium">{item.attackPrecedentOrCost}</div>
+                  </div>
+                  <div className="rounded-xl bg-[#0B0C0E] border border-white/[0.06] p-2.5">
+                    <div className="font-mono text-[9.5px] uppercase text-neutral-500 mb-0.5">
+                      Consensus Containment
+                    </div>
+                    <div className="text-neutral-200 font-medium">{item.reorgContainment}</div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-neutral-300 leading-relaxed">{item.summaryCopy}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
       <div className="p-1 rounded-2xl sm:rounded-full bg-[#07080A] border border-white/[0.07] grid grid-cols-1 sm:grid-cols-3 gap-1">
         {phases.map((p) => {
           const PIcon = p.icon;
@@ -1576,6 +2154,83 @@ export function WartimeSpliceSimulator({
         </div>
       </div>
 
+      {/* Primary Wartime KPI: Per-Block DAA vs. Bitcoin's 2,016-Block Epoch Freeze */}
+      <div
+        data-testid="wartime-daa-kpi-panel"
+        className="rounded-2xl bg-[#07080A] border border-white/[0.07] p-3.5 sm:p-4 space-y-2.5"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-widest text-[#49EACB] font-bold">
+            PRIMARY WARTIME KPI // PER-BLOCK DAA vs. 2,016-BLOCK EPOCH FREEZE
+          </span>
+          <span className="font-mono text-[10px] text-neutral-400">
+            Active Minority Shard: <strong className="text-white">{daaKpi.minorityPct}%</strong>
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          <div className="rounded-xl bg-[#0B0C0E] border border-[#49EACB]/25 p-3 space-y-1">
+            <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+              <span className="font-bold text-[#49EACB]">Kaspa • Per-Block Sampled DAA</span>
+              <span className="text-[10px] text-[#49EACB] font-semibold">10.0 BPS Survival</span>
+            </div>
+            <p className="text-[11.5px] text-neutral-300 leading-relaxed">
+              Recalculates difficulty <strong>every single block</strong> (KIP-14 ~44-minute /
+              26,410-block window), allowing even a <strong>10% isolated hashrate grid</strong> to
+              recalibrate back to full <strong>10.0 BPS</strong> local commerce within hours.
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-[#0B0C0E] border border-[#EF4444]/25 p-3 space-y-1">
+            <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+              <span className="font-bold text-[#F87171]">Bitcoin • Rigid 2,016-Block Epoch</span>
+              <span className="text-[10px] text-[#F87171] font-semibold">
+                {daaKpi.minorityPct}% = ~{daaKpi.bitcoinSlowBlockMins}m blks (~
+                {daaKpi.bitcoinMinorityEpochWeeks}w)
+              </span>
+            </div>
+            <p className="text-[11.5px] text-neutral-300 leading-relaxed">
+              {daaKpi.bitcoinBenchmarkCopy}
+            </p>
+          </div>
+        </div>
+
+        {/* KIP-14 2-Stage Transient Block-Rate Trajectory */}
+        <div
+          data-testid="kip14-trajectory-bar"
+          className="rounded-xl bg-[#0B0C0E] border border-[#49EACB]/20 p-3 space-y-2"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10px]">
+            <span className="text-[#49EACB] font-bold uppercase tracking-wider">
+              KIP-14 Transient Block-Rate &amp; Emission Ramp ({kip14Trajectory.minorityPct}% Shard)
+            </span>
+            <span className="text-neutral-400">
+              {kip14Trajectory.initialShardBps.toFixed(1)} BPS &rarr; {kip14Trajectory.daaWindowLabel} &rarr;{' '}
+              <strong className="text-[#49EACB]">{kip14Trajectory.restoredBps.toFixed(1)} BPS</strong> ({kip14Trajectory.recoveryHoursLabel})
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
+            <div className="rounded-lg bg-[#121418] border border-white/[0.06] px-2.5 py-1.5">
+              <div className="text-neutral-500 text-[9px] uppercase">T=0s Cable Snap</div>
+              <div className="text-[#FACC15] font-bold">
+                {kip14Trajectory.initialShardBps.toFixed(1)} BPS (~{kip14Trajectory.initialBlockIntervalMs}ms)
+              </div>
+            </div>
+            <div className="rounded-lg bg-[#121418] border border-white/[0.06] px-2.5 py-1.5">
+              <div className="text-neutral-500 text-[9px] uppercase">Per-Block Sampled DAA</div>
+              <div className="text-white font-bold">44m Window Smooths Target</div>
+            </div>
+            <div className="rounded-lg bg-[#121418] border border-[#49EACB]/30 px-2.5 py-1.5">
+              <div className="text-neutral-500 text-[9px] uppercase">Converged Local Grid</div>
+              <div className="text-[#49EACB] font-bold">10.0 BPS Full Commerce</div>
+            </div>
+          </div>
+          <p className="text-[11px] text-neutral-400 leading-relaxed">
+            {kip14Trajectory.trajectoryNote}
+          </p>
+        </div>
+      </div>
+
       <div className={`grid grid-cols-1 ${showSideBySide ? 'lg:grid-cols-2' : ''} gap-3.5`}>
         <TopologyMeshCanvas
           auditObj={activeAudit}
@@ -1592,6 +2247,76 @@ export function WartimeSpliceSimulator({
           />
         )}
       </div>
+
+      {showKasRegimeBanner && (
+        <div
+          data-testid="kaspa-consensus-regime-panel"
+          className="rounded-2xl bg-[#07080A] border p-3.5 sm:p-4 space-y-2"
+          style={{ borderColor: `${kasRegime.color}40` }}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className="font-mono text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                style={{
+                  color: kasRegime.color,
+                  backgroundColor: `${kasRegime.color}18`,
+                  border: `1px solid ${kasRegime.color}45`
+                }}
+              >
+                rusty-kaspa Regime {kasRegime.id}: {kasRegime.statusBadge}
+              </span>
+              <span className="font-mono text-[10px] text-neutral-400">
+                {kasRegime.durationBand}
+              </span>
+            </div>
+            <span className="font-mono text-[10px] text-neutral-400">
+              DAGKnight {DAGKNIGHT_ROADMAP_TAG}
+            </span>
+          </div>
+          <p className="text-xs text-neutral-300 leading-relaxed">{kasRegime.mechanicsCopy}</p>
+        </div>
+      )}
+
+      {isBitcoinOrLn && (
+        <div
+          data-testid="bitcoind-resplice-mechanics-panel"
+          className="rounded-2xl bg-[#07080A] border border-[#EF4444]/30 p-3.5 sm:p-4 space-y-2.5"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-[#F87171] font-bold">
+              bitcoind C++ Minority Resplice Consensus Mechanics
+            </span>
+            <span className="font-mono text-[10px] text-[#4ADE80]">
+              Pre-Partition UTXOs Survive • nChainWork Over nHeight
+            </span>
+          </div>
+          <p className="text-xs text-neutral-300 leading-relaxed">
+            <strong>Pre-Partition UTXOs Survive:</strong> Untouched balances confirmed prior to
+            the fiber cut remain intact on both branches. <strong>Heaviest-Chain (nChainWork) Amputation:</strong>{' '}
+            Upon resplice, Bitcoin enforces cumulative Proof-of-Work (<code className="text-neutral-200">nChainWork</code>)—not
+            raw block count (<code className="text-neutral-200">nHeight</code>). Even if a minority
+            partition crosses a DAA drop and mines a longer chain by height,{' '}
+            <code className="text-neutral-200">bitcoind</code> orphans 100% of the lower-work
+            branch’s blocks and discards 100% of its expended SHA-256 miner energy (<code className="text-neutral-200">M &lt; 1.0</code>).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pt-0.5">
+            {BITCOIND_COMMERCE_LAYERS.map((layer) => (
+              <div
+                key={layer.title}
+                className="rounded-xl bg-[#0B0C0E] border border-white/[0.06] p-2.5 space-y-1"
+              >
+                <div className="font-mono text-[10.5px] font-bold text-[#FCA5A5]">
+                  {layer.title}
+                </div>
+                <p className="text-[11px] text-neutral-400 leading-relaxed">{layer.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+        </>
+      )}
     </div>
   );
 }
