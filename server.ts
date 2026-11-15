@@ -13,10 +13,12 @@ import { PRELOADED_AUDITS } from './src/data/preloadedAudits.ts';
 import {
   ALIAS_MAP,
   GRADING_RUBRIC_SPEC,
+  enforceEnergyArbitrageLawOnAudit,
   formatScore,
   isResponseTextTruncated,
   isValidCompleteAuditPayload,
   normalizeAuditPayload,
+  resolveCanonicalAssetTicker,
   safeParseAuditJson,
   sortAuditTickersByGrade,
   type AuditData,
@@ -100,14 +102,20 @@ function normalizeLookupKey(raw: string): string {
 }
 
 function indexAuditAliases(audit: AuditData): void {
-  const tk = normalizeLookupKey(audit.ticker);
+  const enforced = enforceEnergyArbitrageLawOnAudit(audit);
+  const tk = resolveCanonicalAssetTicker(enforced.ticker) || normalizeLookupKey(enforced.ticker);
   if (!tk) return;
-  serverAuditCache.set(tk, audit);
+  const normalizedAudit: AuditData = { ...enforced, ticker: tk };
+  serverAuditCache.set(tk, normalizedAudit);
   serverAliasCache.set(tk, tk);
-  const nameNorm = normalizeLookupKey(audit.name);
+  const origNorm = normalizeLookupKey(audit.ticker);
+  if (origNorm && origNorm !== tk) {
+    serverAliasCache.set(origNorm, tk);
+  }
+  const nameNorm = normalizeLookupKey(normalizedAudit.name);
   if (nameNorm) serverAliasCache.set(nameNorm, tk);
-  if (Array.isArray(audit.queryAliases)) {
-    audit.queryAliases.forEach((al) => {
+  if (Array.isArray(normalizedAudit.queryAliases)) {
+    normalizedAudit.queryAliases.forEach((al) => {
       const norm = normalizeLookupKey(al);
       if (norm) serverAliasCache.set(norm, tk);
     });
@@ -209,6 +217,10 @@ function lookupCachedAudit(rawQuery: string): AuditData | null {
   const norm = normalizeLookupKey(rawQuery);
   if (!norm) return null;
   if (serverAuditCache.has(norm)) return serverAuditCache.get(norm) || null;
+  const canonical = resolveCanonicalAssetTicker(norm);
+  if (canonical && serverAuditCache.has(canonical)) {
+    return serverAuditCache.get(canonical) || null;
+  }
   const staticAlias = ALIAS_MAP[norm];
   if (staticAlias && serverAuditCache.has(staticAlias)) {
     return serverAuditCache.get(staticAlias) || null;
@@ -481,7 +493,7 @@ RE-AUDIT CALIBRATION & DEPTH RULES:
   return `Run a complete, rigorous 6-Invariant Thermodynamic Audit on the cryptocurrency network, token, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
 ${baselineContext}${freshIntelContext}
 IMPORTANT:
-- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Note: "CU" / "XCU" means Physical Copper (Cu-29).
+- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Always set "ticker" to the canonical short symbol ("CU" for Copper, "XAU" for Gold, "XAG" for Silver, "XPT" for Platinum, "XPD" for Palladium, "BTC" for Bitcoin, etc.) rather than a full word. Note: "CU" / "XCU" means Physical Copper (Cu-29).
 - Classify consensusFamily strictly as "BLOCKDAG_POW", "LINEAR_POW", "PHYSICAL_COMMODITY", or "ZERO_JOULE_BFT" based on LIVE ACTIVE MAINNET consensus today (never classify live hardware PoW as ZERO_JOULE_BFT due to unactivated roadmap proposals, and NEVER classify a payment-channel mesh or state-channel overlay over sequential PoW as BLOCKDAG_POW—set isUpperLayerOverlayOrChannel = true and consensusFamily = "LINEAR_POW"!).
 - CARRIER-SUBORDINATED VELOCITY LAW (M_overlay < M_carrier < 1.0): Off-chain HTLC/PTLC channel signature exchanges burn 0.0 Joules (deferred IOUs, NOT M = 1.0 Proof-of-Work!). If "${targetQuery}" is a Layer-2 payment-channel network, state-channel protocol, rollup, or inscription overlay, set isUpperLayerOverlayOrChannel = true, set carrierLayerOneVelocityCap to its base Layer-1 carrier's Velocity score (e.g., 0.20 for Bitcoin, 1.00 for Kaspa), and score Invariant 06 STRICTLY BELOW its sequential L1 carrier (0.05–0.18, e.g., 0.15)!
 - Strictly obey the project-agnostic quantitative rubric brackets in your system instructions!

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   type AuditData,
   type InvariantData,
+  canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   computeRunningAuditAccent,
   deriveGradeFromTotal,
@@ -13,9 +14,11 @@ import {
   inspectStreamedAuditProgress,
   isResponseTextTruncated,
   normalizeAuditPayload,
+  resolveCanonicalAssetTicker,
   safeParseAuditJson,
   sortAuditTickersByGrade
 } from './rubricSpec.ts';
+import { partitionTickersByEcosystem } from './auditProvenance.ts';
 
 function makeDummyInvariants(scores: [number, number, number, number, number, number]): InvariantData[] {
   const ids = ['01', '02', '03', '04', '05', '06'];
@@ -299,4 +302,55 @@ test('computeRunningAuditAccent tracks running average step by step and converge
   assert.equal(sovZero.accent.primary, getGradeAccent('D+').primary);
 });
 
+test('canonicalizeAuditsCollection merges COPPER and stale overlay CU into one Layer-1 CU bubble', () => {
+  assert.equal(resolveCanonicalAssetTicker('copper'), 'CU');
+  assert.equal(resolveCanonicalAssetTicker('Platinum'), 'XPT');
+  assert.equal(resolveCanonicalAssetTicker('Bitcoin'), 'BTC');
+  assert.equal(resolveCanonicalAssetTicker('Ethereum'), 'ETH');
 
+  const staleOverlayCu = makeDummyAudit(
+    {
+      ticker: 'CU',
+      name: 'Copper Tokenized Derivative Overlay',
+      consensusFamily: 'CARRIER_SUBORDINATED_OVERLAY',
+      isUpperLayerOverlayOrChannel: true,
+      grade: 'C-',
+      totalScore: 2.65
+    },
+    [0.5, 0.5, 0.5, 0.45, 0.4, 0.3]
+  );
+
+  const l1Copper = makeDummyAudit(
+    {
+      ticker: 'COPPER',
+      name: 'Physical Copper (COMEX)',
+      consensusFamily: 'PHYSICAL_COMMODITY',
+      isUpperLayerOverlayOrChannel: false,
+      grade: 'C+',
+      totalScore: 3.7,
+      archiveRevision: 2
+    },
+    [0.7, 0.65, 0.65, 0.6, 0.55, 0.55]
+  );
+
+  const canonical = canonicalizeAuditsCollection({
+    COPPER: l1Copper,
+    CU: staleOverlayCu
+  });
+
+  assert.equal(canonical.COPPER, undefined);
+  assert.ok(canonical.CU);
+  assert.equal(canonical.CU.ticker, 'CU');
+  assert.equal(canonical.CU.consensusFamily, 'PHYSICAL_COMMODITY');
+  assert.equal(canonical.CU.isUpperLayerOverlayOrChannel, false);
+  assert.equal(canonical.CU.grade, 'C+');
+  assert.equal(canonical.CU.totalScore, 3.7);
+  assert.ok(canonical.CU.queryAliases?.includes('COPPER'));
+
+  const { coreTickers, ecosystemTickers } = partitionTickersByEcosystem(
+    Object.keys(canonical),
+    canonical
+  );
+  assert.deepEqual(coreTickers, ['CU']);
+  assert.deepEqual(ecosystemTickers, []);
+});

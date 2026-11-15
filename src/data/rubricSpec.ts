@@ -323,14 +323,58 @@ export const ALIAS_MAP: Record<string, string> = {
   GOLD: 'XAU',
   PHYSICALGOLD: 'XAU',
   GOLDMETAL: 'XAU',
+  GOLDXAU: 'XAU',
   BULLION: 'XAU',
   AU: 'XAU',
   XAUUSD: 'XAU',
   SILVER: 'XAG',
   PHYSICALSILVER: 'XAG',
   SILVERMETAL: 'XAG',
+  SILVERXAG: 'XAG',
   AG: 'XAG',
   XAGUSD: 'XAG',
+  PLATINUM: 'XPT',
+  PHYSICALPLATINUM: 'XPT',
+  PT: 'XPT',
+  PALLADIUM: 'XPD',
+  PHYSICALPALLADIUM: 'XPD',
+  PD: 'XPD',
+  COPPER: 'CU',
+  PHYSICALCOPPER: 'CU',
+  COPPERCU: 'CU',
+  XCU: 'CU',
+  XCUUSD: 'CU',
+  RHODIUM: 'RH',
+  URANIUM: 'U3O8',
+  YELLOWCAKE: 'U3O8',
+  NICKEL: 'NI',
+  ALUMINUM: 'AL',
+  ALUMINIUM: 'AL',
+  TITANIUM: 'TI',
+  TUNGSTEN: 'W',
+  WOLFRAM: 'W',
+  IRIDIUM: 'IR',
+  OSMIUM: 'OS',
+  RUTHENIUM: 'RU',
+  COBALT: 'CO',
+  LITHIUM: 'LI',
+  ZINC: 'ZN',
+  TIN: 'SN',
+  LEAD: 'PB',
+  IRON: 'FE',
+  STEEL: 'FE',
+  CHROMIUM: 'CR',
+  MERCURY: 'HG',
+  GALLIUM: 'GA',
+  INDIUM: 'IN',
+  MOLYBDENUM: 'MO',
+  TANTALUM: 'TA',
+  BISMUTH: 'BI',
+  ANTIMONY: 'SB',
+  MAGNESIUM: 'MG',
+  MANGANESE: 'MN',
+  VANADIUM: 'V',
+  RAREEARTH: 'REE',
   LITECOIN: 'LTC',
   GEEK: 'GEEK',
   GEEKPROTOCOL: 'GEEK',
@@ -359,8 +403,50 @@ export const ALIAS_MAP: Record<string, string> = {
   BITTENSOR: 'TAO',
   MONERO: 'XMR',
   CARDANO: 'ADA',
-  AVALANCHE: 'AVAX'
+  AVALANCHE: 'AVAX',
+  DOGECOIN: 'DOGE',
+  CHAINLINK: 'LINK',
+  POLKADOT: 'DOT',
+  COSMOS: 'ATOM',
+  CELESTIA: 'TIA',
+  ARBITRUM: 'ARB',
+  OPTIMISM: 'OP',
+  POLYGON: 'POL',
+  MATIC: 'POL',
+  TONCOIN: 'TON',
+  HEDERA: 'HBAR',
+  FILECOIN: 'FIL',
+  APTOS: 'APT',
+  VECHAIN: 'VET',
+  FANTOM: 'FTM',
+  INJECTIVE: 'INJ',
+  TEZOS: 'XTZ',
+  ETHENA: 'ENA',
+  WORLDCOIN: 'WLD',
+  STARKNET: 'STRK',
+  LAYERZERO: 'ZRO',
+  ERGO: 'ERG',
+  ALEPHIUM: 'ALPH',
+  NERVOS: 'CKB',
+  KADENA: 'KDA',
+  RAVENCOIN: 'RVN',
+  DECRED: 'DCR',
+  QUANT: 'QNT',
+  ARWEAVE: 'AR',
+  CONFLUX: 'CFX',
+  ETHEREUMCLASSIC: 'ETC',
+  TETHER: 'USDT',
+  USDCOIN: 'USDC'
 };
+
+export function resolveCanonicalAssetTicker(rawTickerOrName: string): string {
+  const cleaned = String(rawTickerOrName || '')
+    .replace(/^\$/, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (!cleaned) return '';
+  return ALIAS_MAP[cleaned] || cleaned;
+}
 
 export const GRADE_RANK: Record<string, number> = {
   'A+': 1,
@@ -799,6 +885,34 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
   if (!auditObj || !Array.isArray(auditObj.invariants) || auditObj.invariants.length < 6) {
     return auditObj;
   }
+  const rawTk = String(auditObj.ticker || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, '');
+  const canonicalTk = rawTk ? resolveCanonicalAssetTicker(rawTk) : '';
+  const effectiveTk = canonicalTk || rawTk;
+  const isPhysicalMetal = isPhysicalMetalAuditPayload(
+    auditObj.name,
+    auditObj.architecture,
+    effectiveTk,
+    auditObj.consensusFamily
+  );
+
+  const mergedAliases = Array.from(
+    new Set(
+      [
+        effectiveTk,
+        rawTk,
+        ...(Array.isArray(auditObj.queryAliases) ? auditObj.queryAliases : [])
+      ]
+        .map((s) =>
+          String(s || '')
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, '')
+        )
+        .filter(Boolean)
+    )
+  ).slice(0, 20);
+
   const invs = auditObj.invariants.map((inv) => ({ ...inv }));
   const sovScore = Number(invs[0]?.score ?? 1);
   const costScore = Number(invs[1]?.score ?? 0);
@@ -806,6 +920,11 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
   if (costScore <= 0) {
     return {
       ...auditObj,
+      ticker: effectiveTk || auditObj.ticker,
+      ...(mergedAliases.length > 0 ? { queryAliases: mergedAliases } : {}),
+      ...(isPhysicalMetal
+        ? { consensusFamily: 'PHYSICAL_COMMODITY' as const, isUpperLayerOverlayOrChannel: false }
+        : {}),
       invariants: invs.map((i) => ({ ...i, score: 0 })),
       totalScore: 0,
       grade: 'F'
@@ -821,6 +940,7 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
         archAndText
       );
     const isOverlay =
+      !isPhysicalMetal &&
       /\b(LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|HTLC|PTLC|ROLLUP|KRC-20|BRC-20|RUNES|SIDECHAIN|LAYER-2|LAYER 2|\bL2\b|\bLN\b)\b/.test(
         archAndText
       );
@@ -844,10 +964,73 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
 
   return {
     ...auditObj,
+    ticker: effectiveTk || auditObj.ticker,
+    ...(mergedAliases.length > 0 ? { queryAliases: mergedAliases } : {}),
+    ...(isPhysicalMetal
+      ? { consensusFamily: 'PHYSICAL_COMMODITY' as const, isUpperLayerOverlayOrChannel: false }
+      : {}),
     invariants: invs,
     totalScore: exactTotal,
     grade: recalibratedGrade
   };
+}
+
+function scoreCanonicalCandidatePriority(item: AuditData): number {
+  let score = 0;
+  if (item.consensusFamily === 'PHYSICAL_COMMODITY') score += 10_000_000_000;
+  if (item.isUpperLayerOverlayOrChannel !== true) score += 1_000_000_000;
+  score += Math.min(999, Number(item.archiveRevision) || 0) * 1_000_000;
+  const ts = Number(item.archivedAtMs) || 0;
+  if (ts > 0) score += Math.floor(ts / 1000) % 1_000_000;
+  if (item.lastFreshAuditAt) score += 500;
+  return score;
+}
+
+export function canonicalizeAuditsCollection(
+  rawMap: Record<string, AuditData>
+): Record<string, AuditData> {
+  const result: Record<string, AuditData> = {};
+  Object.entries(rawMap || {}).forEach(([k, val]) => {
+    if (!val || typeof val !== 'object' || !Array.isArray(val.invariants) || val.invariants.length < 6) {
+      return;
+    }
+    const normalized = enforceEnergyArbitrageLawOnAudit({
+      ...val,
+      ticker: String(val.ticker || k)
+        .toUpperCase()
+        .replace(/[^A-Z0-9_-]/g, '')
+    });
+    const canonicalKey = normalized.ticker;
+    if (!canonicalKey) return;
+
+    const existing = result[canonicalKey];
+    if (!existing) {
+      result[canonicalKey] = normalized;
+      return;
+    }
+
+    // Merge aliases and keep the cleaner / newer Layer-1 physical or higher-revision record
+    const mergedAliases = Array.from(
+      new Set([
+        ...(existing.queryAliases || []),
+        ...(normalized.queryAliases || []),
+        String(k).toUpperCase().replace(/[^A-Z0-9]/g, ''),
+        canonicalKey
+      ].filter(Boolean))
+    ).slice(0, 20);
+
+    const winner =
+      scoreCanonicalCandidatePriority(normalized) >= scoreCanonicalCandidatePriority(existing)
+        ? normalized
+        : existing;
+
+    result[canonicalKey] = {
+      ...winner,
+      ticker: canonicalKey,
+      queryAliases: mergedAliases
+    };
+  });
+  return result;
 }
 
 export interface SinglePhysicsFlags {
@@ -1180,19 +1363,21 @@ export function isPhysicalMetalAuditPayload(
     .replace(/[^A-Z0-9]/g, '');
   const nameAndTicker = `${cleanTicker} ${String(name || '').toUpperCase()}`.trim();
 
-  if (
-    cleanTicker === 'PAXG' ||
-    cleanTicker === 'XAUT' ||
-    EXPLICIT_TOKENIZED_COMMODITY_REGEX.test(nameAndTicker)
-  ) {
+  if (cleanTicker === 'PAXG' || cleanTicker === 'XAUT') {
+    return false;
+  }
+
+  // Raw periodic-table / commodity tickers (e.g. CU, XCU, XAU, XAG, PT, XPT, PD, XPD, TI, RH, LI, NI, FE)
+  // always represent primary Layer-1 physical elements, even if an earlier cached doc had legacy overlay phrasing.
+  if (RAW_METAL_TICKER_SET.has(cleanTicker) || RAW_METAL_TICKER_SET.has(cleanQuery)) {
+    return true;
+  }
+
+  if (EXPLICIT_TOKENIZED_COMMODITY_REGEX.test(nameAndTicker)) {
     return false;
   }
 
   if (consensusFamily === 'PHYSICAL_COMMODITY') {
-    return true;
-  }
-
-  if (RAW_METAL_TICKER_SET.has(cleanTicker) || RAW_METAL_TICKER_SET.has(cleanQuery)) {
     return true;
   }
 
@@ -1399,12 +1584,17 @@ export function normalizeAuditPayload(
     cleanInvariants[0].score
   );
 
-  const cleanTicker = existingBaseline
+  const rawCandidateTicker = existingBaseline
     ? existingBaseline.ticker
     : String(parsed.ticker || rawQuery)
         .toUpperCase()
         .replace(/[^A-Z0-9]/g, '')
-        .slice(0, 8) || 'ASSET';
+        .slice(0, 12) || 'ASSET';
+  const cleanTicker =
+    (isPhysicalMetal
+      ? resolveCanonicalAssetTicker(rawQuery) || resolveCanonicalAssetTicker(rawCandidateTicker)
+      : resolveCanonicalAssetTicker(rawCandidateTicker))
+      .slice(0, 8) || rawCandidateTicker.slice(0, 8) || 'ASSET';
 
   const resolvedName =
     stripTrailingDash(parsed.name) || existingBaseline?.name || cleanTicker;

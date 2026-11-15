@@ -1,17 +1,132 @@
 export type ThesisChapterId = 'ALL' | 'INVARIANTS' | 'INFLATION' | 'COSMOS';
 export type ThesisDepthMode = 'NORMIE' | 'GENIUS';
 
+export interface ThesisLawEquation {
+  law: string;
+  equation: string;
+}
+
 export interface ThesisParagraph {
+  id: number;
+  chapter: Exclude<ThesisChapterId, 'ALL'>;
+  tag: string;
+  text: string;
+  laws: ThesisLawEquation[];
+}
+
+const AXIOM_LAWS_BY_ID: Record<number, ThesisLawEquation[]> = {
+  1: [
+    {
+      law: 'Existential Entity Decoupling & Sovereign Boundary Principle',
+      equation: '∂G / ∂E_admin = 0   |   Sovereignty = 0 ⇒ Score_CostFloor ≤ 1.0 ∧ Grade ≤ D+'
+    }
+  ],
+  2: [
+    {
+      law: 'First Law of Thermodynamics (Conservation of Energy)',
+      equation: 'dU = δQ − δW   |   E_mint = P_ASIC · Δt > 0   (E = 0 ⇒ F)'
+    }
+  ],
+  3: [
+    {
+      law: 'Second Law of Thermodynamics & Landauer’s Principle',
+      equation: 'ΔS_universe = ΔS_sys + ΔS_env ≥ 0   |   ΔQ ≥ k_B · T · ln 2'
+    }
+  ],
+  4: [
+    {
+      law: 'Brewer’s CAP Theorem, FLP Impossibility & Nakamoto Liveness',
+      equation: 'BFT Halt: N_offline > ⅓ N_stake   |   PoW Partition: λ_island > 0 ⇒ Live'
+    }
+  ],
+  5: [
+    {
+      law: 'Disjoint UTXO Mass Conservation & Parallel Verification Bound',
+      equation: '∑ UTXO_in = ∑ UTXO_out + Fee   |   U_i ∩ U_j = ∅ ⇒ S(p) = p'
+    }
+  ],
+  6: [
+    {
+      law: 'Relativistic Optical Speed Limit & Carrier Subordination Law',
+      equation: 'v_fiber = c / n ≈ 2.0 × 10⁸ m/s   |   M_overlay < M_L1 ≤ 1.0'
+    }
+  ],
+  7: [
+    {
+      law: 'Mechanical Equivalent of Heat & Metabolic ATP Conversion',
+      equation: '1 kcal = 4,184 J   |   W_workweek ≈ 100 MJ = 1.0 × 10⁸ J'
+    }
+  ],
+  8: [
+    {
+      law: 'Carnot Efficiency Ceiling & Bureaucratic Waste Heat Law',
+      equation: 'η_max = 1 − T_cold / T_hot < 1   |   W_net = W_tax (20 MJ) − Q_friction (8 MJ)'
+    }
+  ],
+  9: [
+    {
+      law: 'Noether’s Time-Translation Theorem & Zero-Creation Constraint',
+      equation: '∂L / ∂t = 0 ⇒ dE / dt = 0   |   Claims (40 MJ) − Tax (20 MJ) ⇒ Theft (20 MJ)'
+    }
+  ],
+  10: [
+    {
+      law: 'Exponential Paper Lien Divergence vs. Physical Reserve Boundary',
+      equation: 'D(t) = D₀ · e^(r·t) ≫ ∫ P_phys(τ) dτ   |   E_reserve = 0.00 J'
+    }
+  ],
+  11: [
+    {
+      law: 'Enthalpy of Combustion Floor (Hyperinflation Convergence)',
+      equation: 'lim_{M → ∞} V_fiat(E = 0) → ΔH°_comb(Cellulose) ≈ 16 MJ / kg'
+    }
+  ],
+  12: [
+    {
+      law: 'Stefan–Boltzmann Thermal Radiation & Bond Enthalpy Law',
+      equation: 'P_rad = ε · σ · A · T⁴   |   ΔE_sketch = 0 ⇒ ΔQ_heat = 0 J'
+    }
+  ],
+  13: [
+    {
+      law: 'Gravitational Potential Energy & Mechanical Work Integral',
+      equation: 'ΔU_g = m · g · h   |   W_canyon = ∫ F_shear · v · dt ≫ 0'
+    }
+  ],
+  14: [
+    {
+      law: 'Photochemical Endergonic Synthesis & Arrhenius Activation Threshold',
+      equation: '6 CO₂ + 6 H₂O + hν → C₆H₁₂O₆ + 6 O₂   |   k = A · e^(−E_a / R·T)'
+    }
+  ],
+  15: [
+    {
+      law: 'Gibbs Free Energy Decay & Continuous Negentropy Maintenance',
+      equation: 'ΔG = ΔH − T·ΔS < 0  (Fe → Fe₂O₃·nH₂O)   ⇒   dW_maint / dt > 0'
+    }
+  ],
+  16: [
+    {
+      law: 'Asymmetric Energy Extraction & Zero-Joule Weak Subjectivity',
+      equation: 'E_consensus = 0 J  ⇒  CostFloor = 0  ∧  |S_fork − S_truth| = 0 J'
+    }
+  ],
+  17: [
+    {
+      law: 'The Truth 6-Invariant Thermodynamic Audit Functional',
+      equation: 'Score_total = ∑_{i=1..6} S_i ∈ [0, 6.0]   |   S₀₂ = 0 ⇒ F   |   S₀₁ = 0 ⇒ ≤ D+'
+    }
+  ]
+};
+
+interface RawThesisParagraph {
   id: number;
   chapter: Exclude<ThesisChapterId, 'ALL'>;
   tag: string;
   text: string;
 }
 
-/**
- * Concise 17-axiom origin thesis (NORMIE Edition — kept intact).
- */
-export const GENESIS_THESIS_PARAGRAPHS: ThesisParagraph[] = [
+const RAW_NORMIE_PARAGRAPHS: RawThesisParagraph[] = [
   {
     id: 1,
     chapter: 'INVARIANTS',
@@ -116,12 +231,7 @@ export const GENESIS_THESIS_PARAGRAPHS: ThesisParagraph[] = [
   }
 ];
 
-/**
- * Unabridged long-form GENIUS Edition of the origin thesis:
- * preserves every invariant, conservation law, biological/metabolic Joule ledger,
- * and cosmic Proof-of-Work proof at full first-principles forensic resolution.
- */
-export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = [
+const RAW_GENIUS_PARAGRAPHS: RawThesisParagraph[] = [
   {
     id: 1,
     chapter: 'INVARIANTS',
@@ -225,6 +335,25 @@ export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = [
     text: 'That single, unyielding realization is what forged The Truth: stop grading glossy investor decks, celebrity founders, speculative TVL loops, arbitrary market-cap ranks, or consensus theater, and measure every digital protocol and physical commodity strictly against the invariant conservation laws that govern stars, river canyons, cellular metabolism, oxidized steel, and ASIC silicon. Enforce Existential Sovereignty, E > 0 Cost Floor, Landauer Immutability, Wartime Partition Availability, Stateless UTXO Topology, and Velocity M = 1.0 under non-negotiable zero-clamp physics (E = 0 forces terminal Grade F; Sovereignty = 0 caps derivative floors; overlays subordinate beneath their L1 carrier)—because physics never negotiates, never lobbies a committee, never bails out insiders, and always settles the final ledger in Joules.'
   }
 ];
+
+function attachAxiomLaws(raw: RawThesisParagraph[]): ThesisParagraph[] {
+  return raw.map((item) => ({
+    ...item,
+    laws: AXIOM_LAWS_BY_ID[item.id] || []
+  }));
+}
+
+/**
+ * Concise 17-axiom origin thesis (NORMIE Edition — kept intact + law/equation blocks).
+ */
+export const GENESIS_THESIS_PARAGRAPHS: ThesisParagraph[] = attachAxiomLaws(RAW_NORMIE_PARAGRAPHS);
+
+/**
+ * Unabridged long-form GENIUS Edition of the origin thesis:
+ * preserves every invariant, conservation law, biological/metabolic Joule ledger,
+ * and cosmic Proof-of-Work proof at full first-principles forensic resolution.
+ */
+export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = attachAxiomLaws(RAW_GENIUS_PARAGRAPHS);
 
 export function getGenesisThesisParagraphs(mode: ThesisDepthMode): ThesisParagraph[] {
   return mode === 'GENIUS' ? GENESIS_THESIS_GENIUS_PARAGRAPHS : GENESIS_THESIS_PARAGRAPHS;

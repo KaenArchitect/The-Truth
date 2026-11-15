@@ -19,6 +19,10 @@ test('GENESIS_THESIS preserves all 17 NORMIE and GENIUS axioms across matching c
     assert.equal(normie.id, i + 1);
     assert.equal(genius.id, i + 1);
     assert.equal(normie.chapter, genius.chapter);
+    assert.ok(normie.laws.length >= 1, `NORMIE section #${i + 1} must include at least one physical law/equation`);
+    assert.ok(genius.laws.length >= 1, `GENIUS section #${i + 1} must include at least one physical law/equation`);
+    assert.ok(normie.laws[0].law.trim().length > 5);
+    assert.ok(normie.laws[0].equation.trim().length > 5);
     assert.ok(
       genius.text.length > normie.text.length,
       `Axiom #${i + 1} GENIUS length (${genius.text.length}) must exceed NORMIE length (${normie.text.length})`

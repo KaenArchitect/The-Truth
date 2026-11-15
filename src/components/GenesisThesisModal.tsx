@@ -49,7 +49,12 @@ export function GenesisThesisModal({
     `THE TRUTH // FIRST PRINCIPLES — WHAT LED THE TRUTH TO... THE TRUTH (${editionLabel} EDITION)`,
     'Physics Over Consensus • Thermodynamics, 100 MJ Human Work & Cosmic Proof-of-Work',
     '',
-    ...activeParagraphs.map((p) => `[${p.tag}]\n${p.text}`)
+    ...activeParagraphs.map((p) => {
+      const lawsBlock = p.laws
+        .map((l) => `Law: ${l.law}\nEquation: ${l.equation}`)
+        .join('\n');
+      return `[${p.tag}]\n${lawsBlock}\n${p.text}`;
+    })
   ].join('\n\n');
 
   return (
@@ -84,75 +89,75 @@ export function GenesisThesisModal({
             </h2>
 
             <div className="flex flex-col items-end gap-2 shrink-0">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onCopyFullThesis(fullCopyText)}
-                className="h-8 px-3 rounded-full bg-[#141820] hover:bg-[#1B202B] border border-white/15 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 transition"
-                style={{ color: accent.primary }}
-              >
-                {copiedTarget === 'genesis-thesis' ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Copied Thesis</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Copy Full Thesis</span>
-                  </>
-                )}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onCopyFullThesis(fullCopyText)}
+                  className="h-8 px-3 rounded-full bg-[#141820] hover:bg-[#1B202B] border border-white/15 font-mono text-[11px] font-semibold inline-flex items-center gap-1.5 transition"
+                  style={{ color: accent.primary }}
+                >
+                  {copiedTarget === 'genesis-thesis' ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Copied Thesis</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Copy Full Thesis</span>
+                    </>
+                  )}
+                </button>
 
-              <button
-                type="button"
-                data-testid="genesis-modal-close"
-                aria-label="Close Genesis Thesis"
-                onClick={onClose}
-                className="w-8 h-8 rounded-full bg-[#141820] hover:bg-neutral-800 border border-white/15 flex items-center justify-center text-neutral-300 hover:text-white transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+                <button
+                  type="button"
+                  data-testid="genesis-modal-close"
+                  aria-label="Close Genesis Thesis"
+                  onClick={onClose}
+                  className="w-8 h-8 rounded-full bg-[#141820] hover:bg-neutral-800 border border-white/15 flex items-center justify-center text-neutral-300 hover:text-white transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
 
-            <div
-              data-testid="genesis-depth-switch"
-              className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10.5px] leading-none shrink-0"
-              role="group"
-              aria-label="Genesis Thesis Depth Mode Switch"
-            >
-              <button
-                type="button"
-                onClick={() => onSetGeniusMode(false)}
-                className={`h-full px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
-                  !isGeniusMode
-                    ? 'bg-[#1D212A] text-white font-semibold'
-                    : 'text-neutral-400 hover:text-neutral-200'
-                }`}
+              <div
+                data-testid="genesis-depth-switch"
+                className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10.5px] leading-none shrink-0"
+                role="group"
+                aria-label="Genesis Thesis Depth Mode Switch"
               >
-                NORMIE
-              </button>
-              <button
-                type="button"
-                onClick={() => onSetGeniusMode(true)}
-                className={`h-full px-3 rounded-full transition inline-flex items-center justify-center gap-1 leading-none ${
-                  isGeniusMode ? 'font-bold' : 'text-neutral-400 hover:text-neutral-200'
-                }`}
-                style={
-                  isGeniusMode
-                    ? {
-                        backgroundColor: accent.softBg,
-                        color: accent.primary,
-                        border: `1px solid ${accent.border}`
-                      }
-                    : { border: '1px solid transparent' }
-                }
-              >
-                <Sparkles className="w-2.5 h-2.5 shrink-0" />
-                <span>GENIUS</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSetGeniusMode(false)}
+                  className={`h-full px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
+                    !isGeniusMode
+                      ? 'bg-[#1D212A] text-white font-semibold'
+                      : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                >
+                  NORMIE
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSetGeniusMode(true)}
+                  className={`h-full px-3 rounded-full transition inline-flex items-center justify-center gap-1 leading-none ${
+                    isGeniusMode ? 'font-bold' : 'text-neutral-400 hover:text-neutral-200'
+                  }`}
+                  style={
+                    isGeniusMode
+                      ? {
+                          backgroundColor: accent.softBg,
+                          color: accent.primary,
+                          border: `1px solid ${accent.border}`
+                        }
+                      : { border: '1px solid transparent' }
+                  }
+                >
+                  <Sparkles className="w-2.5 h-2.5 shrink-0" />
+                  <span>GENIUS</span>
+                </button>
+              </div>
             </div>
-          </div>
           </div>
         </div>
 
@@ -240,7 +245,8 @@ export function GenesisThesisModal({
           {filteredParagraphs.map((para) => (
             <article
               key={`${isGeniusMode ? 'G' : 'N'}-${para.id}`}
-              className="p-4 sm:p-5 rounded-2xl bg-[#090B0E] border border-white/[0.08] space-y-2"
+              data-testid={`thesis-section-${para.id}`}
+              className="p-4 sm:p-5 rounded-2xl bg-[#090B0E] border border-white/[0.08] space-y-3"
             >
               <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
                 <span style={{ color: accent.primary }}>{para.tag}</span>
@@ -248,6 +254,32 @@ export function GenesisThesisModal({
                   #{String(para.id).padStart(2, '0')} / 17
                 </span>
               </div>
+
+              {para.laws.length > 0 && (
+                <div
+                  data-testid="thesis-section-laws"
+                  className="rounded-xl bg-[#0D1117] border border-white/[0.07] px-3.5 py-2.5 space-y-1.5"
+                >
+                  {para.laws.map((item, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+                        <span
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: accent.secondary }}
+                        />
+                        <span>{item.law}</span>
+                      </div>
+                      <div
+                        className="font-mono text-[11.5px] sm:text-[12.5px] font-semibold tracking-wide overflow-x-auto no-scrollbar whitespace-nowrap sm:whitespace-normal"
+                        style={{ color: accent.primary }}
+                      >
+                        {item.equation}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <p className="text-[13.5px] sm:text-[14.5px] leading-[1.72] text-neutral-200 font-normal">
                 {para.text}
               </p>

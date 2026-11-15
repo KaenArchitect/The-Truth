@@ -12,8 +12,30 @@ export interface PhysicsEquationSprite {
   scale: number;
   opacity: number;
   tone: 'primary' | 'secondary' | 'neutral';
+  gradeTierIndex: number;
   showOnMobile: boolean;
 }
+
+export interface GradeStarColorSpec {
+  grade: string;
+  hex: string;
+  rgb: string;
+  rgbTuple: [number, number, number];
+}
+
+export const GRADE_STAR_SPECTRUM: GradeStarColorSpec[] = [
+  { grade: 'A+', hex: '#49EACB', rgb: '73, 234, 203', rgbTuple: [73, 234, 203] },
+  { grade: 'A-', hex: '#34D399', rgb: '52, 211, 153', rgbTuple: [52, 211, 153] },
+  { grade: 'B+', hex: '#4ADE80', rgb: '74, 222, 128', rgbTuple: [74, 222, 128] },
+  { grade: 'B', hex: '#22C55E', rgb: '34, 197, 94', rgbTuple: [34, 197, 94] },
+  { grade: 'B-', hex: '#84CC16', rgb: '132, 204, 22', rgbTuple: [132, 204, 22] },
+  { grade: 'C+', hex: '#FACC15', rgb: '250, 204, 21', rgbTuple: [250, 204, 21] },
+  { grade: 'C', hex: '#EAB308', rgb: '234, 179, 8', rgbTuple: [234, 179, 8] },
+  { grade: 'C-', hex: '#F59E0B', rgb: '245, 158, 11', rgbTuple: [245, 158, 11] },
+  { grade: 'D+', hex: '#FB923C', rgb: '251, 146, 60', rgbTuple: [251, 146, 60] },
+  { grade: 'D-', hex: '#F97316', rgb: '249, 115, 22', rgbTuple: [249, 115, 22] },
+  { grade: 'F', hex: '#EF4444', rgb: '239, 68, 68', rgbTuple: [239, 68, 68] }
+];
 
 export interface UniverseStar {
   index: number;
@@ -25,6 +47,10 @@ export interface UniverseStar {
   baseAlpha: number;
   twinklePhase: number;
   tone: 'primary' | 'secondary' | 'neutral';
+  gradeColorRgb: string;
+  gradeColorTuple: [number, number, number];
+  gradeColorHex: string;
+  gradeTier: string;
   isDeepField: boolean;
 }
 
@@ -34,8 +60,145 @@ export interface ProjectedStar {
   size: number;
   alpha: number;
   tone: 'primary' | 'secondary' | 'neutral';
+  gradeColorRgb: string;
   angleRad: number;
   tailLength: number;
+}
+
+export interface UniverseTelemetryInput {
+  hasActiveAudit: boolean;
+  isAuditing: boolean;
+  totalScore?: number;
+  grade?: string;
+  scanProgressPct?: number;
+  isMobile?: boolean;
+}
+
+export interface UniverseTelemetry {
+  starCount: number;
+  motionSpeed: number;
+  vortexDurationSec: number;
+  equationSpeedMult: number;
+  nebulaIntensity: number;
+  useMultiGradeStarColors: boolean;
+  isZeroMotion: boolean;
+  scoreNorm: number;
+}
+
+function inferScoreFromGrade(grade?: string): number {
+  const g = String(grade || '').trim().toUpperCase();
+  if (g === 'A+') return 6.0;
+  if (g === 'A') return 5.5;
+  if (g === 'A-') return 5.1;
+  if (g === 'B+') return 4.5;
+  if (g === 'B') return 4.1;
+  if (g === 'B-') return 3.85;
+  if (g === 'C+') return 3.65;
+  if (g === 'C') return 3.15;
+  if (g === 'C-') return 2.65;
+  if (g === 'D+') return 2.1;
+  if (g === 'D') return 1.75;
+  if (g === 'D-') return 1.35;
+  if (g === 'F') return 0.0;
+  return 4.0;
+}
+
+export function computeUniverseTelemetryForGrade(input: UniverseTelemetryInput): UniverseTelemetry {
+  const {
+    hasActiveAudit,
+    isAuditing,
+    totalScore,
+    grade,
+    scanProgressPct = 0,
+    isMobile = false
+  } = input;
+
+  const cleanGrade = String(grade || '').trim().toUpperCase();
+  const numericScore =
+    typeof totalScore === 'number' && Number.isFinite(totalScore)
+      ? totalScore
+      : inferScoreFromGrade(cleanGrade);
+  const scoreNorm = Math.max(0, Math.min(1, numericScore / 6));
+  const isGradeF = cleanGrade === 'F' || (typeof totalScore === 'number' && totalScore <= 0);
+
+  // Before an audit runs: rich full-spectrum starfield showcasing all thermodynamic grade colors.
+  if (!hasActiveAudit && !isAuditing) {
+    return {
+      starCount: isMobile ? 140 : 220,
+      motionSpeed: 1.0,
+      vortexDurationSec: 52,
+      equationSpeedMult: 1.0,
+      nebulaIntensity: 1.0,
+      useMultiGradeStarColors: true,
+      isZeroMotion: false,
+      scoreNorm: 4 / 6
+    };
+  }
+
+  // While actively auditing: smoothly track running invariant progress toward settled grade.
+  if (isAuditing) {
+    if (isGradeF && scanProgressPct >= 25) {
+      return {
+        starCount: 0,
+        motionSpeed: 0,
+        vortexDurationSec: 0,
+        equationSpeedMult: 0,
+        nebulaIntensity: 0.14,
+        useMultiGradeStarColors: false,
+        isZeroMotion: true,
+        scoreNorm: 0
+      };
+    }
+    const baseMin = isMobile ? 64 : 96;
+    const baseSpan = isMobile ? 166 : 264;
+    const starCount = Math.round(baseMin + Math.pow(scoreNorm, 0.92) * baseSpan);
+    const motionSpeed = Number((0.65 + Math.pow(scoreNorm, 0.95) * 1.25).toFixed(3));
+    const vortexDurationSec = Math.max(22, Math.round(52 / Math.max(0.45, motionSpeed)));
+    return {
+      starCount,
+      motionSpeed,
+      vortexDurationSec,
+      equationSpeedMult: Number(Math.max(0.65, motionSpeed).toFixed(3)),
+      nebulaIntensity: Number((0.45 + scoreNorm * 0.85).toFixed(3)),
+      useMultiGradeStarColors: scanProgressPct < 35,
+      isZeroMotion: false,
+      scoreNorm
+    };
+  }
+
+  // Settled Grade F (E = 0): zero stars, zero movement (thermodynamic heat death).
+  if (isGradeF) {
+    return {
+      starCount: 0,
+      motionSpeed: 0,
+      vortexDurationSec: 0,
+      equationSpeedMult: 0,
+      nebulaIntensity: 0.14,
+      useMultiGradeStarColors: false,
+      isZeroMotion: true,
+      scoreNorm: 0
+    };
+  }
+
+  // Settled passing/non-F grades (D- through A+): star density, speed, and aura scale smoothly with score.
+  const minStars = isMobile ? 28 : 42;
+  const maxExtraStars = isMobile ? 202 : 318;
+  const starCount = Math.round(minStars + Math.pow(scoreNorm, 0.95) * maxExtraStars);
+  const motionSpeed = Number((0.2 + Math.pow(scoreNorm, 1.08) * 1.6).toFixed(3));
+  const vortexDurationSec = Math.max(24, Math.min(190, Math.round(52 / Math.max(0.28, motionSpeed))));
+  const equationSpeedMult = Number(Math.max(0.32, motionSpeed).toFixed(3));
+  const nebulaIntensity = Number((0.35 + scoreNorm * 0.95).toFixed(3));
+
+  return {
+    starCount,
+    motionSpeed,
+    vortexDurationSec,
+    equationSpeedMult,
+    nebulaIntensity,
+    useMultiGradeStarColors: false,
+    isZeroMotion: false,
+    scoreNorm
+  };
 }
 
 export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
@@ -53,6 +216,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.04,
     opacity: 0.24,
     tone: 'primary',
+    gradeTierIndex: 0,
     showOnMobile: true
   },
   {
@@ -69,6 +233,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.96,
     opacity: 0.2,
     tone: 'neutral',
+    gradeTierIndex: 2,
     showOnMobile: true
   },
   {
@@ -85,6 +250,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.08,
     opacity: 0.23,
     tone: 'primary',
+    gradeTierIndex: 4,
     showOnMobile: true
   },
   {
@@ -101,6 +267,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.94,
     opacity: 0.2,
     tone: 'secondary',
+    gradeTierIndex: 9,
     showOnMobile: false
   },
   {
@@ -117,6 +284,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.02,
     opacity: 0.22,
     tone: 'neutral',
+    gradeTierIndex: 5,
     showOnMobile: true
   },
   {
@@ -133,6 +301,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.08,
     opacity: 0.23,
     tone: 'primary',
+    gradeTierIndex: 1,
     showOnMobile: true
   },
   {
@@ -149,6 +318,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.02,
     opacity: 0.21,
     tone: 'secondary',
+    gradeTierIndex: 3,
     showOnMobile: true
   },
   {
@@ -165,6 +335,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.96,
     opacity: 0.2,
     tone: 'neutral',
+    gradeTierIndex: 7,
     showOnMobile: true
   },
   {
@@ -181,6 +352,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.98,
     opacity: 0.21,
     tone: 'primary',
+    gradeTierIndex: 6,
     showOnMobile: true
   },
   {
@@ -197,6 +369,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.92,
     opacity: 0.17,
     tone: 'neutral',
+    gradeTierIndex: 8,
     showOnMobile: false
   },
   {
@@ -213,6 +386,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.92,
     opacity: 0.17,
     tone: 'secondary',
+    gradeTierIndex: 10,
     showOnMobile: false
   },
   {
@@ -229,6 +403,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 1.0,
     opacity: 0.2,
     tone: 'neutral',
+    gradeTierIndex: 4,
     showOnMobile: false
   },
   {
@@ -245,6 +420,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.95,
     opacity: 0.21,
     tone: 'primary',
+    gradeTierIndex: 0,
     showOnMobile: false
   },
   {
@@ -261,6 +437,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.94,
     opacity: 0.16,
     tone: 'secondary',
+    gradeTierIndex: 5,
     showOnMobile: true
   },
   {
@@ -277,6 +454,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.98,
     opacity: 0.18,
     tone: 'neutral',
+    gradeTierIndex: 8,
     showOnMobile: true
   },
   {
@@ -293,6 +471,7 @@ export const PHYSICS_EQUATION_SPRITES: PhysicsEquationSprite[] = [
     scale: 0.94,
     opacity: 0.16,
     tone: 'primary',
+    gradeTierIndex: 10,
     showOnMobile: false
   }
 ];
@@ -307,7 +486,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function createUniverseStars(count = 220, seed = 20261115): UniverseStar[] {
+export function createUniverseStars(count = 360, seed = 20261115): UniverseStar[] {
   const safeCount = Math.max(0, Math.floor(count));
   const rng = mulberry32(seed);
   const arms = 3;
@@ -324,14 +503,15 @@ export function createUniverseStars(count = 220, seed = 20261115): UniverseStar[
     const baseAngle = isDeepField ? rng() * Math.PI * 2 : armOffset + spiralTwist + scatter;
 
     const zDepth = (rng() - 0.5) * 0.18;
-    const size = isDeepField ? 0.8 + rng() * 1.1 : 0.9 + (1 - radiusNorm * 0.45) * 1.65;
+    const size = isDeepField ? 0.8 + rng() * 1.1 : 0.95 + (1 - radiusNorm * 0.45) * 1.7;
     const baseAlpha = isDeepField
-      ? 0.18 + rng() * 0.3
-      : Math.min(0.85, 0.25 + (1 - radiusNorm * 0.55) * 0.52);
+      ? 0.22 + rng() * 0.34
+      : Math.min(0.9, 0.3 + (1 - radiusNorm * 0.55) * 0.54);
     const twinklePhase = rng() * Math.PI * 2;
     const tonePick = rng();
     const tone: UniverseStar['tone'] =
       tonePick < 0.42 ? 'primary' : tonePick < 0.72 ? 'neutral' : 'secondary';
+    const gradeSpec = GRADE_STAR_SPECTRUM[i % GRADE_STAR_SPECTRUM.length];
 
     stars.push({
       index: i,
@@ -343,6 +523,10 @@ export function createUniverseStars(count = 220, seed = 20261115): UniverseStar[
       baseAlpha,
       twinklePhase,
       tone,
+      gradeColorRgb: gradeSpec.rgb,
+      gradeColorTuple: gradeSpec.rgbTuple,
+      gradeColorHex: gradeSpec.hex,
+      gradeTier: gradeSpec.grade,
       isDeepField
     });
   }
@@ -355,7 +539,8 @@ export function projectGalaxyPoint(
   elapsedSec: number,
   width: number,
   height: number,
-  speedMultiplier = 1
+  speedMultiplier = 1,
+  streakScale = speedMultiplier
 ): ProjectedStar {
   const cx = width * 0.5;
   const cy = height * 0.47;
@@ -376,7 +561,8 @@ export function projectGalaxyPoint(
   const rx = localX * sinTilt - localY * cosTilt;
   const ry = localX * cosTilt + localY * sinTilt + star.zDepth * r * 0.35;
 
-  const twinkle = 0.74 + 0.26 * Math.sin(elapsedSec * 1.35 + star.twinklePhase);
+  const twinkleRate = 0.85 + Math.min(1.6, Math.max(0, streakScale) * 0.55);
+  const twinkle = streakScale <= 0.01 ? 0.85 : 0.74 + 0.26 * Math.sin(elapsedSec * twinkleRate + star.twinklePhase);
   const alpha = Math.max(0.05, Math.min(0.95, star.baseAlpha * twinkle));
 
   // Tangent velocity direction for subtle relativistic orbital streaks
@@ -386,9 +572,10 @@ export function projectGalaxyPoint(
   const tanY = tanLocalX * cosTilt + tanLocalY * sinTilt;
   const angleRad = Math.atan2(tanY, tanX);
 
-  const tailLength = star.isDeepField
-    ? 0
-    : Math.min(16, (1.5 + (1 - star.radiusNorm) * 7.5) * Math.min(2, speedMultiplier));
+  const tailLength =
+    star.isDeepField || streakScale <= 0.01
+      ? 0
+      : Math.min(18, (1.5 + (1 - star.radiusNorm) * 7.5) * Math.min(2.2, streakScale));
 
   return {
     x: cx + rx,
@@ -396,6 +583,7 @@ export function projectGalaxyPoint(
     size: star.size,
     alpha,
     tone: star.tone,
+    gradeColorRgb: star.gradeColorRgb,
     angleRad,
     tailLength
   };

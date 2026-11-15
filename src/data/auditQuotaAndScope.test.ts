@@ -7,6 +7,7 @@ import {
   evaluateMarketScope,
   getUserDailyQuotaStatus,
   refundDailyPull,
+  resolvePhysicalCommodityQuery,
   resolveQuotaPrincipalKeys,
   type MarketCapEntry
 } from './auditQuotaAndScope.ts';
@@ -149,5 +150,15 @@ test('Elemental metal symbols like CU, XCU, PT, PD, TI, RH, AU, AG resolve clean
     assert.equal(res.reason, 'PHYSICAL_COMMODITY', `Expected ${sym} reason PHYSICAL_COMMODITY`);
     assert.ok(res.matchedName && res.matchedName.length > 0);
   }
+});
+
+test('Physical commodities always map to short canonical elemental/ISO tickers', () => {
+  assert.equal(resolvePhysicalCommodityQuery('copper')?.symbol, 'CU');
+  assert.equal(resolvePhysicalCommodityQuery('Gold')?.symbol, 'XAU');
+  assert.equal(resolvePhysicalCommodityQuery('SILVER')?.symbol, 'XAG');
+  assert.equal(resolvePhysicalCommodityQuery('platinum')?.symbol, 'XPT');
+  assert.equal(resolvePhysicalCommodityQuery('Palladium')?.symbol, 'XPD');
+  assert.equal(resolvePhysicalCommodityQuery('Uranium')?.symbol, 'U3O8');
+  assert.equal(resolvePhysicalCommodityQuery('Lithium')?.symbol, 'LI');
 });
 

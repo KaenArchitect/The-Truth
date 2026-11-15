@@ -61,6 +61,7 @@ import {
   DEFAULT_TITLES,
   GRADING_RUBRIC_SPEC,
   ORBIT_ANGLES_DEG,
+  canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   computeRunningAuditAccent,
   deriveGradeFromTotal,
@@ -71,6 +72,7 @@ import {
   getScoreStyle,
   inspectStreamedAuditProgress,
   isResponseTextTruncated,
+  resolveCanonicalAssetTicker,
   sortAuditTickersByGrade,
   stripTrailingDash,
   type AuditData,
@@ -256,16 +258,7 @@ function loadLocalAuditsSnapshot(): Record<string, AuditData> {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, AuditData>;
     if (!parsed || typeof parsed !== 'object') return {};
-    const valid: Record<string, AuditData> = {};
-    Object.entries(parsed).forEach(([k, val]) => {
-      if (val && typeof val === 'object' && Array.isArray(val.invariants) && val.invariants.length >= 6) {
-        const tk = String(val.ticker || k)
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, '');
-        if (tk) valid[tk] = enforceEnergyArbitrageLawOnAudit({ ...val, ticker: tk });
-      }
-    });
-    return valid;
+    return canonicalizeAuditsCollection(parsed);
   } catch {
     return {};
   }
@@ -278,16 +271,7 @@ function loadSandboxAuditsSnapshot(): Record<string, AuditData> {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, AuditData>;
     if (!parsed || typeof parsed !== 'object') return {};
-    const valid: Record<string, AuditData> = {};
-    Object.entries(parsed).forEach(([k, val]) => {
-      if (val && typeof val === 'object' && Array.isArray(val.invariants) && val.invariants.length >= 6) {
-        const tk = String(val.ticker || k)
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, '');
-        if (tk) valid[tk] = enforceEnergyArbitrageLawOnAudit({ ...val, ticker: tk });
-      }
-    });
-    return valid;
+    return canonicalizeAuditsCollection(parsed);
   } catch {
     return {};
   }
@@ -378,11 +362,13 @@ function ThermodynamicAuditApp() {
   const [isSandboxMode, setIsSandboxMode] = useState<boolean>(() =>
     typeof window !== 'undefined' ? isSandboxUrlEnabled(window.location.search) : false
   );
-  const [audits, setAudits] = useState<Record<string, AuditData>>(() => ({
-    ...PRELOADED_AUDITS,
-    ...loadLocalAuditsSnapshot(),
-    ...loadSandboxAuditsSnapshot()
-  }));
+  const [audits, setAudits] = useState<Record<string, AuditData>>(() =>
+    canonicalizeAuditsCollection({
+      ...PRELOADED_AUDITS,
+      ...loadLocalAuditsSnapshot(),
+      ...loadSandboxAuditsSnapshot()
+    })
+  );
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
 
@@ -746,7 +732,9 @@ function ThermodynamicAuditApp() {
         });
         if (Object.keys(serverAudits).length > 0) {
           setDynamicAliases((prev) => ({ ...prev, ...serverAliases }));
-          setAudits((prev) => ({ ...PRELOADED_AUDITS, ...prev, ...serverAudits }));
+          setAudits((prev) =>
+            canonicalizeAuditsCollection({ ...PRELOADED_AUDITS, ...prev, ...serverAudits })
+          );
         }
       })
       .catch(() => {});
@@ -854,11 +842,13 @@ function ThermodynamicAuditApp() {
 
         setArchivedCloudCount(Object.keys(remoteAudits).length);
         setDynamicAliases((prev) => ({ ...prev, ...remoteAliases }));
-        setAudits((prev) => ({
-          ...PRELOADED_AUDITS,
-          ...prev,
-          ...remoteAudits
-        }));
+        setAudits((prev) =>
+          canonicalizeAuditsCollection({
+            ...PRELOADED_AUDITS,
+            ...prev,
+            ...remoteAudits
+          })
+        );
         setInvLogs((prev) => ({
           ...prev,
           ...remoteLogs
@@ -1563,9 +1553,10 @@ function ThermodynamicAuditApp() {
       .replace(/^\$/, '')
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '');
+    const canonicalGuess = resolveCanonicalAssetTicker(normalized);
     const displayTarget = existingBaseline
-      ? existingBaseline.ticker
-      : normalized.slice(0, 8) || 'ASSET';
+      ? resolveCanonicalAssetTicker(existingBaseline.ticker) || existingBaseline.ticker
+      : canonicalGuess.slice(0, 8) || normalized.slice(0, 8) || 'ASSET';
 
     setIsAuditing(true);
     setSearchInput('');
@@ -2417,8 +2408,11 @@ function ThermodynamicAuditApp() {
       .toUpperCase()
       .replace(/[^A-Z0-9]/g, '');
 
+    const canonicalTarget = resolveCanonicalAssetTicker(normalized);
     const cachedKey = audits[normalized]
       ? normalized
+      : canonicalTarget && audits[canonicalTarget]
+      ? canonicalTarget
       : ALIAS_MAP[normalized] && audits[ALIAS_MAP[normalized]]
       ? ALIAS_MAP[normalized]
       : dynamicAliases[normalized] && audits[dynamicAliases[normalized]]
@@ -3225,7 +3219,7 @@ function ThermodynamicAuditApp() {
           }
         }
         .genius-vortex-spin {
-          animation: geniusVortexSpin 52s linear infinite;
+          animation: geniusVortexSpin var(--vortex-dur, 52s) linear infinite;
           backface-visibility: hidden;
           will-change: transform;
         }
@@ -3282,25 +3276,34 @@ function ThermodynamicAuditApp() {
 
       {/* Zero-Blur GPU-Composited Pulsing Gradient (NORMIE) <-> Swirling Universe + Physics Laws (GENIUS) */}
       {(() => {
+        const activeBackdropScore = isAuditing && runningAuditState
+          ? runningAuditState.projectedTotal ?? 4.0
+          : hasActiveAudit
+          ? Number(currentAudit?.totalScore) || 0
+          : 4.0;
+        const activeBackdropGrade = isAuditing && runningAuditState
+          ? runningAuditState.projectedGrade || 'IDLE'
+          : hasActiveAudit
+          ? String(currentAudit?.grade || 'F')
+          : 'IDLE';
+        const scoreRatio = Math.max(0, Math.min(1, activeBackdropScore / 6));
         const pulseDur = isAuditing
-          ? '2.2s'
+          ? `${(3.1 - scoreRatio * 1.25).toFixed(2)}s`
           : isLandingIdle
           ? '4.4s'
-          : Number(currentAudit?.totalScore) === 0
-          ? '5.4s'
-          : `${(4.6 - (Math.min(6, Number(currentAudit?.totalScore) || 0) / 6) * 1.1).toFixed(2)}s`;
+          : `${(6.2 - scoreRatio * 3.0).toFixed(2)}s`;
         const coreBaseOpacity = isAuditing
-          ? 0.36
+          ? 0.3 + scoreRatio * 0.12
           : isLandingIdle
           ? 0.27
-          : Number(currentAudit?.totalScore) === 0
-          ? 0.25
-          : 0.32;
+          : 0.16 + scoreRatio * 0.22;
 
         return (
           <>
             <div
               data-testid="normie-pulse-bg"
+              data-grade={activeBackdropGrade}
+              data-pulse-dur={pulseDur}
               className={`pointer-events-none fixed inset-0 overflow-hidden z-0 transition-opacity duration-700 ${
                 isGeniusMode ? 'opacity-0 bg-anim-paused' : 'opacity-100'
               } ${isAnyModalOpen ? 'bg-anim-paused' : ''}`}
@@ -3341,6 +3344,10 @@ function ThermodynamicAuditApp() {
             <GeniusUniverseBackground
               active={isGeniusMode}
               isAuditing={isAuditing}
+              hasActiveAudit={hasActiveAudit}
+              grade={activeBackdropGrade}
+              totalScore={activeBackdropScore}
+              scanProgressPct={scanProgressPct}
               paused={isAnyModalOpen}
               primaryColor={accent.primary}
               secondaryColor={accent.secondary}
@@ -3682,7 +3689,7 @@ function ThermodynamicAuditApp() {
 
           <div
             className={`relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
-              isLandingIdle ? 'mt-9 sm:mt-10' : isGeniusMode ? 'mt-8 sm:mt-9' : 'mt-2'
+              isLandingIdle ? 'mt-9 sm:mt-10' : 'mt-8 sm:mt-9'
             }`}
           >
             <form
@@ -3750,7 +3757,7 @@ function ThermodynamicAuditApp() {
               </div>
             </form>
 
-            {((archiveToast && !isAuditing) || auditStatusMsg || auditError) && (
+            {((archiveToast && !isAuditing) || auditError) && (
               <div
                 className={`pointer-events-none absolute top-full left-0 right-0 z-30 flex flex-col items-center gap-2 ${
                   isGeniusMode ? 'mt-8 sm:mt-11' : 'mt-2'
@@ -3771,54 +3778,28 @@ function ThermodynamicAuditApp() {
                   </div>
                 )}
 
-                {(auditStatusMsg || auditError) && (
+                {auditError && (
                   <div className="pointer-events-auto animate-card-fade w-full">
-                    {auditStatusMsg && (
-                      <div
-                        className="px-4 py-2 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono space-y-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
-                        style={{ border: `1px solid ${accent.border}`, color: accent.primary }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 truncate">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
-                            <span className="truncate">{auditStatusMsg}</span>
-                          </div>
-                          <span className="text-[11px] font-bold shrink-0">{scanProgressPct}%</span>
-                        </div>
-                        <div className="w-full h-1.5 rounded-full bg-white/[0.07] overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-200"
-                            style={{
-                              width: `${scanProgressPct}%`,
-                              backgroundImage: accent.gradientCss,
-                              boxShadow: `0 0 10px ${accent.primary}`
-                            }}
-                          />
-                        </div>
+                    <div
+                      className="px-4 py-2.5 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono flex items-center justify-between gap-3 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
+                      style={{
+                        border: `1px solid ${accent.secondaryBorder}`,
+                        color: accent.secondary
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: accent.primary }} />
+                        <span>{auditError}</span>
                       </div>
-                    )}
-                    {auditError && (
-                      <div
-                        className="px-4 py-2.5 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono flex items-center justify-between gap-3 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
-                        style={{
-                          border: `1px solid ${accent.secondaryBorder}`,
-                          color: accent.secondary
-                        }}
+                      <button
+                        type="button"
+                        aria-label="Dismiss audit error"
+                        onClick={() => setAuditError(null)}
+                        className="text-neutral-400 hover:text-white"
                       >
-                        <div className="flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: accent.primary }} />
-                          <span>{auditError}</span>
-                        </div>
-                        <button
-                          type="button"
-                          aria-label="Dismiss audit error"
-                          onClick={() => setAuditError(null)}
-                          className="text-neutral-400 hover:text-white"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3834,7 +3815,7 @@ function ThermodynamicAuditApp() {
         <>
           <aside
             data-tutorial-id="passed-sidebar"
-            className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+28px)] lg:top-[50vh] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-220px)] lg:max-h-[calc(100vh-184px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+            className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
           >
             <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
               <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
@@ -3900,7 +3881,7 @@ function ThermodynamicAuditApp() {
             </div>
           </aside>
 
-          <aside className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+28px)] lg:top-[50vh] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-220px)] lg:max-h-[calc(100vh-184px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]">
+          <aside className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]">
             <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
               <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
                 <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
@@ -3970,7 +3951,7 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           2B. CENTER ARENA (BLANK GOOGLE-STYLE LANDING, SINGLE SPHERE, OR 2–4 CONSTELLATIONS)
          ===================================================================== */}
-      <main className="relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pt-2 pb-6 flex flex-col items-center justify-start">
+      <main className="relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pt-10 sm:pt-11 pb-6 flex flex-col items-center justify-start">
         {isLandingIdle ? (
           <div
             className="w-full min-h-[46vh] md:min-h-[62vh] pointer-events-none"
@@ -3992,7 +3973,7 @@ function ThermodynamicAuditApp() {
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
 
             return (
-              <div className="animate-stage-enter w-full flex flex-col items-center gap-5">
+              <div className="animate-stage-enter w-full flex flex-col items-center gap-6">
                 <div
                   data-tutorial-id="pin-compare"
                   className="w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 py-2.5 flex flex-wrap items-center justify-center md:justify-between gap-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
@@ -5188,29 +5169,63 @@ function ThermodynamicAuditApp() {
               </button>
             </div>
 
-            {/* DOCKED QUICK-SCAN HOVER CARD & WARTIME SIM LAUNCHER */}
-            <div className="w-full max-w-xl min-h-[138px] mt-1 flex items-center justify-center">
+            {/* DOCKED PROGRESS TOAST (DURING AUDIT) & QUICK-SCAN HOVER CARD */}
+            <div
+              className={`w-full max-w-xl min-h-[120px] flex flex-col items-center ${
+                isAuditing ? 'mt-3 sm:mt-5 justify-start' : 'mt-1 justify-center'
+              }`}
+            >
               {isAuditing ? (
-                <div className="animate-card-fade text-center space-y-1.5 pt-2 font-mono text-xs text-neutral-400">
-                  <div>
-                    Executing deterministic 6-invariant scan on{' '}
-                    <span className="font-bold text-white">${scanTargetTicker}</span>...
-                  </div>
-                  <div className="text-[11px] text-neutral-500">
-                    Stage {activeScanStage.id}/06 — {activeScanStage.title}
-                  </div>
-                  {runningAuditState &&
-                    runningAuditState.auditedCount > 0 &&
-                    runningAuditState.projectedTotal !== null && (
-                      <div
-                        className="text-[11px] font-semibold transition-colors duration-200"
-                        style={{ color: accent.primary }}
-                      >
-                        Running Avg ({runningAuditState.auditedCount}/6):{' '}
-                        {formatScore(runningAuditState.projectedTotal)} / 6.00 (
-                        {runningAuditState.projectedGrade})
+                <div
+                  data-testid="audit-progress-toast"
+                  className="animate-card-fade w-full flex flex-col items-center space-y-2.5"
+                >
+                  {auditStatusMsg && (
+                    <div
+                      className="w-full px-4 py-2.5 rounded-2xl bg-[#121418]/[0.96] text-xs font-mono space-y-1.5 shadow-[0_12px_32px_rgba(0,0,0,0.65)]"
+                      style={{ border: `1px solid ${accent.border}`, color: accent.primary }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                          <span className="truncate">{auditStatusMsg}</span>
+                        </div>
+                        <span className="text-[11px] font-bold shrink-0">{scanProgressPct}%</span>
                       </div>
-                    )}
+                      <div className="w-full h-1.5 rounded-full bg-white/[0.07] overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-200"
+                          style={{
+                            width: `${scanProgressPct}%`,
+                            backgroundImage: accent.gradientCss,
+                            boxShadow: `0 0 10px ${accent.primary}`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-center space-y-1 font-mono text-xs text-neutral-400">
+                    <div>
+                      Executing deterministic 6-invariant scan on{' '}
+                      <span className="font-bold text-white">${scanTargetTicker}</span>...
+                    </div>
+                    <div className="text-[11px] text-neutral-500">
+                      Stage {activeScanStage.id}/06 — {activeScanStage.title}
+                    </div>
+                    {runningAuditState &&
+                      runningAuditState.auditedCount > 0 &&
+                      runningAuditState.projectedTotal !== null && (
+                        <div
+                          className="text-[11px] font-semibold transition-colors duration-200"
+                          style={{ color: accent.primary }}
+                        >
+                          Running Avg ({runningAuditState.auditedCount}/6):{' '}
+                          {formatScore(runningAuditState.projectedTotal)} / 6.00 (
+                          {runningAuditState.projectedGrade})
+                        </div>
+                      )}
+                  </div>
                 </div>
               ) : activeHoveredInvariant ? (
                 (() => {
