@@ -35,11 +35,11 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     id: 'search-engine',
     stepNumber: 1,
     targetId: 'search-dock',
-    title: '1. Audit Any Asset or Physical Metal',
+    title: '1. Audit Any Asset, Metal, or Fiat',
     summary:
-      'Evaluate cryptocurrencies, Layer-2 networks, or physical commodities against six non-negotiable laws of thermodynamics on a strict 0.0 to 6.0 scale.',
+      'Evaluate cryptocurrencies, Layer-2 networks, fiat currencies, or physical commodities against six non-negotiable laws of thermodynamics on a strict 0.0 to 6.0 scale.',
     instructions: [
-      'Type any ticker or name (e.g., KAS, BTC, SOL, GOLD, SILVER, LIGHTNING) and press Audit / Pull.',
+      'Type any ticker or name (e.g., KAS, BTC, USD, EUR, GOLD, SILVER, LIGHTNING) and press Audit / Pull.',
       'Preloaded and community-archived assets load instantaneously at zero API credit cost.',
       'Unarchived assets trigger a live Gemini 4 + Google Search forensic audit streamed invariant by invariant.'
     ],
@@ -135,7 +135,7 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     stepNumber: 1,
     targetId: 'search-dock',
     title: '1. Audit Any Asset',
-    summary: 'Enter any crypto, L2, or physical metal (e.g., KAS, BTC, GOLD) and tap Audit / Pull.',
+    summary: 'Enter any crypto, fiat (USD, EUR), L2, or physical metal (KAS, BTC, GOLD) and tap Audit / Pull.',
     instructions: [],
     actionLabel: 'Focus Search',
     actionId: 'focus-search',

@@ -1,4 +1,6 @@
 import {
+  FIAT_CURRENCY_TICKER_SET,
+  isFiatCurrencyAuditPayload,
   isOverlayArchitectureText,
   isPhysicalMetalAuditPayload,
   type AuditData
@@ -241,6 +243,12 @@ export function getAuditCategory(audit: AuditData | null | undefined): AuditCate
     )
   ) {
     return 'PHYSICAL_COMMODITY';
+  }
+  if (
+    FIAT_CURRENCY_TICKER_SET.has(tk) ||
+    isFiatCurrencyAuditPayload(audit.name, audit.architecture, audit.ticker)
+  ) {
+    return 'ECOSYSTEM_OVERLAY';
   }
   if (CORE_REFERENCE_TICKERS.has(tk)) {
     return 'SOVEREIGN_L1_BENCHMARK';
@@ -706,11 +714,14 @@ export function getAuditRevisionAnalysis(
       }
     ];
   } else if (audit?.consensusFamily === 'ZERO_JOULE_BFT') {
+    const isFiat = isFiatCurrencyAuditPayload(audit.name, audit.architecture, audit.ticker);
     triggers = [
       {
         direction: 'MONITOR',
         invariantId: '02',
-        condition: isEcosystemOverlayAudit(audit)
+        condition: isFiat
+          ? 'Sovereign fiat currencies are classified under Ecosystem / Overlays and stay locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy as unbacked central-bank credit/promissory ledgers (E = 0).'
+          : isEcosystemOverlayAudit(audit)
           ? 'Any L2/sidechain/token relying on 0-Joule Signers, centralized sequencers, or pre-printed supply stays locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy.'
           : 'Any network finalizing blocks via 0-Joule stake voting remains locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy—software optimizations cannot overcome E = 0.'
       }

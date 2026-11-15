@@ -540,10 +540,12 @@ export function projectGalaxyPoint(
   width: number,
   height: number,
   speedMultiplier = 1,
-  streakScale = speedMultiplier
+  streakScale = speedMultiplier,
+  centerX?: number,
+  centerY?: number
 ): ProjectedStar {
-  const cx = width * 0.5;
-  const cy = height * 0.47;
+  const cx = typeof centerX === 'number' && Number.isFinite(centerX) ? centerX : width * 0.5;
+  const cy = typeof centerY === 'number' && Number.isFinite(centerY) ? centerY : height * 0.5;
   const maxRadius = Math.hypot(width, height) * 0.52;
 
   // Differential Keplerian orbital spin: inner core swirls faster than outer spiral arms

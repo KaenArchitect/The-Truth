@@ -194,4 +194,49 @@ test('Verified admin user gets unlimited audit pulls without consuming or being 
   }
 });
 
+test('Fiat currencies resolve to FIAT_CURRENCY without misclassifying stablecoins, metals, or colliding crypto tickers', () => {
+  for (const q of [
+    'USD',
+    'EUR',
+    'GBP',
+    'JPY',
+    'CHF',
+    'CNY',
+    'US Dollar',
+    'British Pound',
+    'Japanese Yen',
+    'Turkish Lira',
+    'Argentine Peso',
+    'fiat USD'
+  ]) {
+    const res = evaluateMarketScope({
+      query: q,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.allowed, true, `Expected fiat query ${q} allowed`);
+    assert.equal(res.reason, 'FIAT_CURRENCY', `Expected ${q} to resolve as FIAT_CURRENCY`);
+    assert.equal(res.bypassesScope, true);
+  }
+
+  for (const cryptoQuery of ['USDC', 'USDT', 'USD Coin', 'Tether', 'DAI', 'SOL', 'AR', 'S', 'OP']) {
+    const res = evaluateMarketScope({
+      query: cryptoQuery,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.allowed, true);
+    assert.equal(res.reason, 'CRYPTO_NETWORK', `Expected ${cryptoQuery} to remain CRYPTO_NETWORK`);
+  }
+
+  for (const metalQuery of ['GOLD', 'XAU', 'XAG', 'CU', 'PT', 'W']) {
+    const res = evaluateMarketScope({
+      query: metalQuery,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.reason, 'PHYSICAL_COMMODITY', `Expected ${metalQuery} to remain PHYSICAL_COMMODITY`);
+  }
+});
+
 

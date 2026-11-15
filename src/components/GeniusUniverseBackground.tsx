@@ -188,7 +188,7 @@ export function GeniusUniverseBackground({
       ctx.clearRect(0, 0, width, height);
 
       const cx = width * 0.5;
-      const cy = height * 0.47;
+      const cy = height * 0.5;
       const coreR = Math.min(width, height) * 0.44;
 
       // Smoothly cross-fading galactic nebula wash
@@ -257,7 +257,9 @@ export function GeniusUniverseBackground({
             width,
             height,
             1,
-            sm.speedMult
+            sm.speedMult,
+            cx,
+            cy
           );
           if (proj.x < -20 || proj.x > width + 20 || proj.y < -20 || proj.y > height + 20) {
             continue;
@@ -391,7 +393,7 @@ export function GeniusUniverseBackground({
 
       {/* Ambient galactic core rotation aura (hidden/motionless on Grade F) */}
       <div
-        className={`genius-vortex-spin absolute left-1/2 top-[47%] w-[780px] h-[780px] sm:w-[1160px] sm:h-[1160px] rounded-full transition-opacity duration-700 ${
+        className={`genius-vortex-spin absolute left-1/2 top-1/2 w-[780px] h-[780px] sm:w-[1160px] sm:h-[1160px] rounded-full transition-opacity duration-700 ${
           paused || isZeroMotion ? 'bg-anim-paused' : ''
         }`}
         style={{

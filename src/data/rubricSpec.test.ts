@@ -354,3 +354,43 @@ test('canonicalizeAuditsCollection merges COPPER and stale overlay CU into one L
   assert.deepEqual(coreTickers, ['CU']);
   assert.deepEqual(ecosystemTickers, []);
 });
+
+test('Fiat currencies enforce ZERO_JOULE_BFT, Grade F (0.0 / 6.0), and isUpperLayerOverlayOrChannel = true across normalizer and clamps', () => {
+  const inflatedFiatRaw = {
+    ticker: 'usdollar',
+    name: 'US Dollar',
+    consensusFamily: 'LINEAR_POW',
+    isUpperLayerOverlayOrChannel: false,
+    architecture: 'Federal Reserve Legal Tender & Fedwire Credit Overlay',
+    invariants: makeDummyInvariants([0.5, 0.4, 0.7, 0.8, 0.6, 0.9])
+  };
+  const normalizedFiat = normalizeAuditPayload(inflatedFiatRaw, 'US Dollar', 'USDOLLAR', null);
+  assert.equal(normalizedFiat.ticker, 'USD');
+  assert.equal(normalizedFiat.consensusFamily, 'ZERO_JOULE_BFT');
+  assert.equal(normalizedFiat.isUpperLayerOverlayOrChannel, true);
+  assert.equal(normalizedFiat.grade, 'F');
+  assert.equal(normalizedFiat.totalScore, 0);
+  assert.ok(normalizedFiat.invariants.every((inv) => inv.score === 0));
+
+  // Even direct single-invariant re-audit proposals cannot raise fiat above 0.00
+  assert.equal(clampSingleInvariantByPhysics(normalizedFiat, 1, 0.9), 0);
+  assert.equal(clampSingleInvariantByPhysics(normalizedFiat, 5, 0.8), 0);
+
+  const euroEnforced = enforceEnergyArbitrageLawOnAudit(
+    makeDummyAudit(
+      {
+        ticker: 'euro',
+        name: 'Euro',
+        consensusFamily: 'LINEAR_POW',
+        isUpperLayerOverlayOrChannel: false,
+        architecture: 'ECB Fractional Reserve Fiat'
+      },
+      [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]
+    )
+  );
+  assert.equal(euroEnforced.ticker, 'EUR');
+  assert.equal(euroEnforced.consensusFamily, 'ZERO_JOULE_BFT');
+  assert.equal(euroEnforced.isUpperLayerOverlayOrChannel, true);
+  assert.equal(euroEnforced.grade, 'F');
+  assert.equal(euroEnforced.totalScore, 0);
+});

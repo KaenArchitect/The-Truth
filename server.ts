@@ -33,6 +33,7 @@ import {
   getUserDailyQuotaStatus,
   pruneStaleQuotaDays,
   refundDailyPull,
+  resolveFiatCurrencyQuery,
   resolvePhysicalCommodityQuery,
   resolveQuotaPrincipalKeys,
   type DailyQuotaLedger
@@ -426,11 +427,20 @@ function formatGeminiErrorMessage(err: unknown): string {
 async function fetchFreshGroundedWebIntel(
   ai: GoogleGenAI,
   targetQuery: string,
-  existingBaseline: AuditData | null
+  existingBaseline: AuditData | null,
+  isFiatQuery = false
 ): Promise<{ intelText: string; sources: GroundingSource[] }> {
-  const groundingQuery = `Perform an exhaustive forensic engineering & GitHub intelligence pull up through November 2026 for "${targetQuery}"${
-    existingBaseline ? ` (${existingBaseline.name} / $${existingBaseline.ticker})` : ''
-  }. Gather exact, verifiable receipts across all 6 physical invariants:
+  const groundingQuery = isFiatQuery
+    ? `Perform an exhaustive forensic central-bank, legal-tender, and clearing-rail intelligence pull up through November 2026 for sovereign fiat currency "${targetQuery}". Gather exact, verifiable historical & current receipts across all 6 invariants:
+1. Genesis & Sovereignty: Central bank statutory charter/legislation (e.g., 1913 Federal Reserve Act, Maastricht Treaty, BOJ Act), Treasury/finance-ministry issuance control, legal-tender coercion statutes, and executive freeze/confiscation or bail-in frameworks.
+2. Cost Floor (E = 0): Historical & recent Quantitative Easing / balance-sheet expansion totals, commercial bank reserve-requirement rules (e.g. 0% reserves), broad M2 money-supply expansion rates, and zero marginal issuance cost of electronic central-bank/commercial credit.
+3. Immutability: Historical debasements & broken commodity pegs (e.g. 1933 EO 6102 gold seizure, 1971 Nixon Shock closing gold convertibility, ERM/peg breaks, currency redenominations), plus reversible bank ledger / chargeback & court-ordered clawback mechanics.
+4. Availability: Payment-rail operating hours & holidays (Fedwire/CHIPS/TARGET2/BOJ-NET weekend closures), SWIFT sanctions cutoffs, domestic capital controls, bank holidays, and ATM withdrawal freezes during crises.
+5. State Topology: Permissioned tiered ledger topology (central-bank Tier-1 master accounts vs fractional-reserve commercial bank IOUs), native OFAC/sanctions blacklists, freezes, garnishments, and AML/KYC identity gating.
+6. Velocity: Real settlement finality vs credit-IOU messaging across Fedwire, CHIPS, SWIFT, ACH, SEPA, or CIPS (T+1 to T+3 batch finality delays, zero thermodynamic Proof-of-Work finality).`
+    : `Perform an exhaustive forensic engineering & GitHub intelligence pull up through November 2026 for "${targetQuery}"${
+        existingBaseline ? ` (${existingBaseline.name} / $${existingBaseline.ticker})` : ''
+      }. Gather exact, verifiable receipts across all 6 physical invariants:
 1. Genesis & Sovereignty: Exact premine/ICO/VC/foundation token splits, coinbase developer taxes/lockboxes, founding corporations, governance wars, and bridge/admin multisig keys.
 2. Consensus & Cost Floor: Exact LIVE active mainnet block production mechanism (PoW hash algorithm, ASIC vs CPU share, block subsidy, max supply cap, fee burns/clawbacks—explicitly distinguishing live mainnet consensus from unactivated future proposals!).
 3. Immutability: Exact GitHub repositories & source/config flags, header/PoPoW sync vs S3/snapshot sync, rolling finality checkpoints or max-reorg depth caps, node pruning horizon, and dated inflation/counterfeiting CVEs or ZK circuit soundness bugs.
@@ -444,8 +454,9 @@ async function fetchFreshGroundedWebIntel(
         model: 'gemini-4-hydrogen',
         contents: groundingQuery,
         config: {
-          systemInstruction:
-            'You are a forensic cryptocurrency codebase and physical commodity researcher. Produce a detailed, high-density 6-section technical dossier packed with exact GitHub repository names, config constants, genesis/supply numbers, upgrade heights, CVEs, and dated incident postmortems from live Google Search results. Clearly separate live mainnet consensus from unactivated roadmap proposals.',
+          systemInstruction: isFiatQuery
+            ? 'You are a forensic monetary-history, central-bank, and payment-rail researcher. Produce a detailed, high-density 6-section dossier packed with exact central-bank statutes, M2/balance-sheet expansion figures, broken gold-window dates, payment-rail batch windows (Fedwire, CHIPS, TARGET2, SWIFT, ACH), and real asset-freeze/capital-control precedents from live Google Search results.'
+            : 'You are a forensic cryptocurrency codebase and physical commodity researcher. Produce a detailed, high-density 6-section technical dossier packed with exact GitHub repository names, config constants, genesis/supply numbers, upgrade heights, CVEs, and dated incident postmortems from live Google Search results. Clearly separate live mainnet consensus from unactivated roadmap proposals.',
           tools: [{ googleSearch: {} }],
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           maxOutputTokens: 16384
@@ -501,7 +512,8 @@ async function fetchSingleInvariantWebIntel(
 function buildFullAuditPrompt(
   targetQuery: string,
   intelText: string,
-  existingBaseline: AuditData | null
+  existingBaseline: AuditData | null,
+  isFiatQuery = false
 ): string {
   const baselineContext = existingBaseline
     ? `\nEXISTING VERIFIED TECHNICAL EVIDENCE FOR $${existingBaseline.ticker} (${existingBaseline.name}):
@@ -531,17 +543,21 @@ RE-AUDIT CALIBRATION & DEPTH RULES:
     ? `\nLIVE GOOGLE SEARCH GROUNDED INTELLIGENCE (RETRIEVED TODAY):\n${intelText}\n`
     : '';
 
-  return `Run a complete, rigorous 6-Invariant Thermodynamic Audit on the cryptocurrency network, token, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
+  const fiatGuidance = isFiatQuery
+    ? `- CRITICAL FIAT CURRENCY OVERLAY RULE: "${targetQuery}" is a sovereign fiat currency audited under the exact same 6-invariant thermodynamic rubric and placed in ECOSYSTEM OVERLAYS. Always set consensusFamily = "ZERO_JOULE_BFT", isUpperLayerOverlayOrChannel = true, hasGenesisPremineOrVcOrIco = true, hasProtocolDevTaxOrKillSwitch = true, carrierLayerOneVelocityCap = 0, grade = "F", totalScore = 0.0, and every invariant score ("01" through "06") = 0.00. Always set "ticker" to the canonical 3-letter ISO-4217 currency code (e.g., "USD", "EUR", "GBP", "JPY", "CHF", "CNY", etc.). Ground each paragraph in real central-bank legislation, M2/balance-sheet expansion metrics, broken commodity/gold pegs, correspondent clearing-rail schedules (Fedwire/CHIPS/TARGET2/SWIFT/ACH/SEPA), sanctions/freeze authorities, and fractional-reserve credit mechanics—do NOT invent GitHub repositories or blockchain CVEs.\n`
+    : '';
+
+  return `Run a complete, rigorous 6-Invariant Thermodynamic Audit on the cryptocurrency network, token, sovereign fiat currency, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
 ${baselineContext}${freshIntelContext}
 IMPORTANT:
-- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Always set "ticker" to the canonical short symbol ("CU" for Copper, "XAU" for Gold, "XAG" for Silver, "XPT" for Platinum, "XPD" for Palladium, "BTC" for Bitcoin, etc.) rather than a full word. Note: "CU" / "XCU" means Physical Copper (Cu-29).
+${fiatGuidance}- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Always set "ticker" to the canonical short symbol ("CU" for Copper, "XAU" for Gold, "XAG" for Silver, "XPT" for Platinum, "XPD" for Palladium, "BTC" for Bitcoin, etc.) rather than a full word. Note: "CU" / "XCU" means Physical Copper (Cu-29).
 - Classify consensusFamily strictly as "BLOCKDAG_POW", "LINEAR_POW", "PHYSICAL_COMMODITY", or "ZERO_JOULE_BFT" based on LIVE ACTIVE MAINNET consensus today (never classify live hardware PoW as ZERO_JOULE_BFT due to unactivated roadmap proposals, and NEVER classify a payment-channel mesh or state-channel overlay over sequential PoW as BLOCKDAG_POW—set isUpperLayerOverlayOrChannel = true and consensusFamily = "LINEAR_POW"!).
 - CARRIER-SUBORDINATED VELOCITY LAW (M_overlay < M_carrier < 1.0): Off-chain HTLC/PTLC channel signature exchanges burn 0.0 Joules (deferred IOUs, NOT M = 1.0 Proof-of-Work!). If "${targetQuery}" is a Layer-2 payment-channel network, state-channel protocol, rollup, or inscription overlay, set isUpperLayerOverlayOrChannel = true, set carrierLayerOneVelocityCap to its base Layer-1 carrier's Velocity score (e.g., 0.20 for Bitcoin, 1.00 for Kaspa), and score Invariant 06 STRICTLY BELOW its sequential L1 carrier (0.05–0.18, e.g., 0.15)!
 - Strictly obey the project-agnostic quantitative rubric brackets in your system instructions!
 - MANDATORY LENGTH & FORENSIC RIGOR FOR ALL 6 INVARIANTS ("01" through "06"):
   * "paragraph": Concise, clear 55–75 word Normie Mode explanation.
-  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph citing exact GitHub repositories, source files/config flags, genesis/supply/tax numbers, mathematical consensus/retarget/quorum/reorg formulas, wartime partition + cable resplice mechanics, and dated CVEs/outage postmortems (ending with a simple dash "-").
-  * "conclusion": Comprehensive 130–180 word GRADE Evidence Certainty synthesis enumerating key codebase/mainnet receipts, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
+  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph citing exact primary institutional/codebase receipts, statutory/config constants, supply/tax/expansion numbers, mathematical consensus/retarget/quorum/clearing formulas, partition + freeze/resplice behavior, and dated historical incidents/postmortems (ending with a simple dash "-").
+  * "conclusion": Comprehensive 130–180 word GRADE Evidence Certainty synthesis enumerating key codebase/institutional receipts, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
 Examine in exact order (01 through 06) and put a simple dash "-" at the end of each invariant's paragraph/geniusParagraph and as the last element of each invariant's receipts array ("-") to separate the invariants:
 1. Existential Sovereignty & Entity Decoupling -
 2. Thermodynamic Cost Floor E > 0 -
@@ -909,20 +925,40 @@ async function createApp(): Promise<express.Express> {
       const isRawPhysicalMetalQuery = Boolean(
         commodityMatch && !TOKENIZED_COMMODITY_WRAPPER_TICKERS.has(commodityMatch.symbol)
       );
+      const fiatMatch =
+        !existingBaseline && !commodityMatch
+          ? resolveFiatCurrencyQuery(rawQuery, normalizeLookupKey(rawQuery))
+          : null;
+      const isFiatQuery = Boolean(fiatMatch) || (
+        Boolean(existingBaseline) &&
+        resolveFiatCurrencyQuery(existingBaseline?.ticker || '', normalizeLookupKey(existingBaseline?.ticker || '')) !== null
+      );
       const querySubject = existingBaseline
         ? `${existingBaseline.name} (${existingBaseline.ticker})`
         : isRawPhysicalMetalQuery && commodityMatch
         ? `${commodityMatch.name} (${commodityMatch.symbol})`
+        : fiatMatch
+        ? `${fiatMatch.name} (${fiatMatch.symbol})`
         : rawQuery;
 
-      const freshBundle = await fetchFreshGroundedWebIntel(ai, querySubject, existingBaseline);
+      const freshBundle = await fetchFreshGroundedWebIntel(
+        ai,
+        querySubject,
+        existingBaseline,
+        isFiatQuery
+      );
       sendEvent({
         type: 'intel',
         sources: freshBundle.sources,
         hasIntel: Boolean(freshBundle.intelText)
       });
 
-      const userPrompt = buildFullAuditPrompt(querySubject, freshBundle.intelText, existingBaseline);
+      const userPrompt = buildFullAuditPrompt(
+        querySubject,
+        freshBundle.intelText,
+        existingBaseline,
+        isFiatQuery
+      );
 
       let parsed: RawGeminiAuditPayload | null = null;
       let accumulatedJson = '';

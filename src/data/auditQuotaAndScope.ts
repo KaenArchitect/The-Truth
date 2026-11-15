@@ -42,6 +42,7 @@ export interface MarketScopeResult {
   reason:
     | 'CACHED_ARCHIVE'
     | 'PHYSICAL_COMMODITY'
+    | 'FIAT_CURRENCY'
     | 'CRYPTO_NETWORK'
     | 'EMPTY_OR_INVALID';
   rank: number | null;
@@ -254,6 +255,170 @@ export function normalizeMarketQuery(raw: string): string {
     .replace(/^\$/, '')
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
+}
+
+export const FIAT_CURRENCY_ALLOWLIST: Record<string, { symbol: string; name: string }> = {
+  USD: { symbol: 'USD', name: 'US Dollar (Fiat USD)' },
+  DOLLAR: { symbol: 'USD', name: 'US Dollar (Fiat USD)' },
+  USDOLLAR: { symbol: 'USD', name: 'US Dollar (Fiat USD)' },
+  UNITEDSTATESDOLLAR: { symbol: 'USD', name: 'US Dollar (Fiat USD)' },
+  GREENBACK: { symbol: 'USD', name: 'US Dollar (Fiat USD)' },
+  EUR: { symbol: 'EUR', name: 'Euro (Fiat EUR)' },
+  EURO: { symbol: 'EUR', name: 'Euro (Fiat EUR)' },
+  EUROZONEEURO: { symbol: 'EUR', name: 'Euro (Fiat EUR)' },
+  GBP: { symbol: 'GBP', name: 'British Pound Sterling (Fiat GBP)' },
+  BRITISHPOUND: { symbol: 'GBP', name: 'British Pound Sterling (Fiat GBP)' },
+  POUND: { symbol: 'GBP', name: 'British Pound Sterling (Fiat GBP)' },
+  POUNDSTERLING: { symbol: 'GBP', name: 'British Pound Sterling (Fiat GBP)' },
+  STERLING: { symbol: 'GBP', name: 'British Pound Sterling (Fiat GBP)' },
+  JPY: { symbol: 'JPY', name: 'Japanese Yen (Fiat JPY)' },
+  JAPANESEYEN: { symbol: 'JPY', name: 'Japanese Yen (Fiat JPY)' },
+  YEN: { symbol: 'JPY', name: 'Japanese Yen (Fiat JPY)' },
+  CHF: { symbol: 'CHF', name: 'Swiss Franc (Fiat CHF)' },
+  SWISSFRANC: { symbol: 'CHF', name: 'Swiss Franc (Fiat CHF)' },
+  FRANC: { symbol: 'CHF', name: 'Swiss Franc (Fiat CHF)' },
+  CNY: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  CHINESEYUAN: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  YUAN: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  RENMINBI: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  RMB: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  CNH: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  OFFSHOREYUAN: { symbol: 'CNY', name: 'Chinese Yuan / Renminbi (Fiat CNY)' },
+  CAD: { symbol: 'CAD', name: 'Canadian Dollar (Fiat CAD)' },
+  CANADIANDOLLAR: { symbol: 'CAD', name: 'Canadian Dollar (Fiat CAD)' },
+  AUD: { symbol: 'AUD', name: 'Australian Dollar (Fiat AUD)' },
+  AUSTRALIANDOLLAR: { symbol: 'AUD', name: 'Australian Dollar (Fiat AUD)' },
+  NZD: { symbol: 'NZD', name: 'New Zealand Dollar (Fiat NZD)' },
+  NEWZEALANDDOLLAR: { symbol: 'NZD', name: 'New Zealand Dollar (Fiat NZD)' },
+  INR: { symbol: 'INR', name: 'Indian Rupee (Fiat INR)' },
+  INDIANRUPEE: { symbol: 'INR', name: 'Indian Rupee (Fiat INR)' },
+  RUPEE: { symbol: 'INR', name: 'Indian Rupee (Fiat INR)' },
+  BRL: { symbol: 'BRL', name: 'Brazilian Real (Fiat BRL)' },
+  BRAZILIANREAL: { symbol: 'BRL', name: 'Brazilian Real (Fiat BRL)' },
+  MXN: { symbol: 'MXN', name: 'Mexican Peso (Fiat MXN)' },
+  MEXICANPESO: { symbol: 'MXN', name: 'Mexican Peso (Fiat MXN)' },
+  KRW: { symbol: 'KRW', name: 'South Korean Won (Fiat KRW)' },
+  KOREANWON: { symbol: 'KRW', name: 'South Korean Won (Fiat KRW)' },
+  SOUTHKOREANWON: { symbol: 'KRW', name: 'South Korean Won (Fiat KRW)' },
+  SGD: { symbol: 'SGD', name: 'Singapore Dollar (Fiat SGD)' },
+  SINGAPOREDOLLAR: { symbol: 'SGD', name: 'Singapore Dollar (Fiat SGD)' },
+  HKD: { symbol: 'HKD', name: 'Hong Kong Dollar (Fiat HKD)' },
+  HONGKONGDOLLAR: { symbol: 'HKD', name: 'Hong Kong Dollar (Fiat HKD)' },
+  TRY: { symbol: 'TRY', name: 'Turkish Lira (Fiat TRY)' },
+  TURKISHLIRA: { symbol: 'TRY', name: 'Turkish Lira (Fiat TRY)' },
+  LIRA: { symbol: 'TRY', name: 'Turkish Lira (Fiat TRY)' },
+  ARS: { symbol: 'ARS', name: 'Argentine Peso (Fiat ARS)' },
+  ARGENTINEPESO: { symbol: 'ARS', name: 'Argentine Peso (Fiat ARS)' },
+  RUB: { symbol: 'RUB', name: 'Russian Ruble (Fiat RUB)' },
+  RUSSIANRUBLE: { symbol: 'RUB', name: 'Russian Ruble (Fiat RUB)' },
+  RUBLE: { symbol: 'RUB', name: 'Russian Ruble (Fiat RUB)' },
+  ROUBLE: { symbol: 'RUB', name: 'Russian Ruble (Fiat RUB)' },
+  ZAR: { symbol: 'ZAR', name: 'South African Rand (Fiat ZAR)' },
+  SOUTHAFRICANRAND: { symbol: 'ZAR', name: 'South African Rand (Fiat ZAR)' },
+  RAND: { symbol: 'ZAR', name: 'South African Rand (Fiat ZAR)' },
+  SEK: { symbol: 'SEK', name: 'Swedish Krona (Fiat SEK)' },
+  SWEDISHKRONA: { symbol: 'SEK', name: 'Swedish Krona (Fiat SEK)' },
+  NOK: { symbol: 'NOK', name: 'Norwegian Krone (Fiat NOK)' },
+  NORWEGIANKRONE: { symbol: 'NOK', name: 'Norwegian Krone (Fiat NOK)' },
+  DKK: { symbol: 'DKK', name: 'Danish Krone (Fiat DKK)' },
+  DANISHKRONE: { symbol: 'DKK', name: 'Danish Krone (Fiat DKK)' },
+  PLN: { symbol: 'PLN', name: 'Polish Zloty (Fiat PLN)' },
+  POLISHZLOTY: { symbol: 'PLN', name: 'Polish Zloty (Fiat PLN)' },
+  ZLOTY: { symbol: 'PLN', name: 'Polish Zloty (Fiat PLN)' },
+  THB: { symbol: 'THB', name: 'Thai Baht (Fiat THB)' },
+  THAIBAHT: { symbol: 'THB', name: 'Thai Baht (Fiat THB)' },
+  BAHT: { symbol: 'THB', name: 'Thai Baht (Fiat THB)' },
+  IDR: { symbol: 'IDR', name: 'Indonesian Rupiah (Fiat IDR)' },
+  INDONESIANRUPIAH: { symbol: 'IDR', name: 'Indonesian Rupiah (Fiat IDR)' },
+  RUPIAH: { symbol: 'IDR', name: 'Indonesian Rupiah (Fiat IDR)' },
+  SAR: { symbol: 'SAR', name: 'Saudi Riyal (Fiat SAR)' },
+  SAUDIRIYAL: { symbol: 'SAR', name: 'Saudi Riyal (Fiat SAR)' },
+  RIYAL: { symbol: 'SAR', name: 'Saudi Riyal (Fiat SAR)' },
+  AED: { symbol: 'AED', name: 'UAE Dirham (Fiat AED)' },
+  UAEDIRHAM: { symbol: 'AED', name: 'UAE Dirham (Fiat AED)' },
+  DIRHAM: { symbol: 'AED', name: 'UAE Dirham (Fiat AED)' },
+  ILS: { symbol: 'ILS', name: 'Israeli New Shekel (Fiat ILS)' },
+  ISRAELISHEKEL: { symbol: 'ILS', name: 'Israeli New Shekel (Fiat ILS)' },
+  SHEKEL: { symbol: 'ILS', name: 'Israeli New Shekel (Fiat ILS)' },
+  TWD: { symbol: 'TWD', name: 'New Taiwan Dollar (Fiat TWD)' },
+  TAIWANDOLLAR: { symbol: 'TWD', name: 'New Taiwan Dollar (Fiat TWD)' },
+  PHP: { symbol: 'PHP', name: 'Philippine Peso (Fiat PHP)' },
+  PHILIPPINEPESO: { symbol: 'PHP', name: 'Philippine Peso (Fiat PHP)' },
+  VND: { symbol: 'VND', name: 'Vietnamese Dong (Fiat VND)' },
+  VIETNAMESEDONG: { symbol: 'VND', name: 'Vietnamese Dong (Fiat VND)' },
+  DONG: { symbol: 'VND', name: 'Vietnamese Dong (Fiat VND)' },
+  EGP: { symbol: 'EGP', name: 'Egyptian Pound (Fiat EGP)' },
+  EGYPTIANPOUND: { symbol: 'EGP', name: 'Egyptian Pound (Fiat EGP)' },
+  NGN: { symbol: 'NGN', name: 'Nigerian Naira (Fiat NGN)' },
+  NIGERIANNAIRA: { symbol: 'NGN', name: 'Nigerian Naira (Fiat NGN)' },
+  NAIRA: { symbol: 'NGN', name: 'Nigerian Naira (Fiat NGN)' },
+  PKR: { symbol: 'PKR', name: 'Pakistani Rupee (Fiat PKR)' },
+  PAKISTANIRUPEE: { symbol: 'PKR', name: 'Pakistani Rupee (Fiat PKR)' },
+  CZK: { symbol: 'CZK', name: 'Czech Koruna (Fiat CZK)' },
+  CZECHKORUNA: { symbol: 'CZK', name: 'Czech Koruna (Fiat CZK)' },
+  HUF: { symbol: 'HUF', name: 'Hungarian Forint (Fiat HUF)' },
+  HUNGARIANFORINT: { symbol: 'HUF', name: 'Hungarian Forint (Fiat HUF)' },
+  FORINT: { symbol: 'HUF', name: 'Hungarian Forint (Fiat HUF)' },
+  CLP: { symbol: 'CLP', name: 'Chilean Peso (Fiat CLP)' },
+  CHILEANPESO: { symbol: 'CLP', name: 'Chilean Peso (Fiat CLP)' },
+  COP: { symbol: 'COP', name: 'Colombian Peso (Fiat COP)' },
+  COLOMBIANPESO: { symbol: 'COP', name: 'Colombian Peso (Fiat COP)' },
+  PEN: { symbol: 'PEN', name: 'Peruvian Sol (Fiat PEN)' },
+  PERUVIANSOL: { symbol: 'PEN', name: 'Peruvian Sol (Fiat PEN)' },
+  VES: { symbol: 'VES', name: 'Venezuelan Bolivar (Fiat VES)' },
+  VEF: { symbol: 'VES', name: 'Venezuelan Bolivar (Fiat VES)' },
+  VENEZUELANBOLIVAR: { symbol: 'VES', name: 'Venezuelan Bolivar (Fiat VES)' },
+  BOLIVAR: { symbol: 'VES', name: 'Venezuelan Bolivar (Fiat VES)' },
+  ZWL: { symbol: 'ZWL', name: 'Zimbabwean Dollar (Fiat ZWL)' },
+  ZWD: { symbol: 'ZWL', name: 'Zimbabwean Dollar (Fiat ZWL)' },
+  ZIMBABWEANDOLLAR: { symbol: 'ZWL', name: 'Zimbabwean Dollar (Fiat ZWL)' },
+  LBP: { symbol: 'LBP', name: 'Lebanese Pound (Fiat LBP)' },
+  LEBANESEPOUND: { symbol: 'LBP', name: 'Lebanese Pound (Fiat LBP)' },
+  UAH: { symbol: 'UAH', name: 'Ukrainian Hryvnia (Fiat UAH)' },
+  UKRAINIANHRYVNIA: { symbol: 'UAH', name: 'Ukrainian Hryvnia (Fiat UAH)' },
+  HRYVNIA: { symbol: 'UAH', name: 'Ukrainian Hryvnia (Fiat UAH)' },
+  KES: { symbol: 'KES', name: 'Kenyan Shilling (Fiat KES)' },
+  KENYANSHILLING: { symbol: 'KES', name: 'Kenyan Shilling (Fiat KES)' },
+  IRR: { symbol: 'IRR', name: 'Iranian Rial (Fiat IRR)' },
+  IRANIANRIAL: { symbol: 'IRR', name: 'Iranian Rial (Fiat IRR)' },
+  XDR: { symbol: 'XDR', name: 'IMF Special Drawing Rights (Fiat SDR)' },
+  FIAT: { symbol: 'FIAT', name: 'Sovereign Fiat Currency (Generic ISO-4217)' },
+  FIATCURRENCY: { symbol: 'FIAT', name: 'Sovereign Fiat Currency (Generic ISO-4217)' },
+  FIATMONEY: { symbol: 'FIAT', name: 'Sovereign Fiat Currency (Generic ISO-4217)' }
+};
+
+const CRYPTO_STABLECOIN_GUARD_REGEX =
+  /\b(USDC|USD\s*COIN|USDT|TETHER|DAI|USDE|FDUSD|TUSD|PYUSD|FRAX|EURC|STABLECOIN)\b/i;
+
+const FIAT_PHRASE_REGEX =
+  /\b(USD|US\s+DOLLAR|U\.S\.\s+DOLLAR|DOLLAR|EURO|GBP|BRITISH\s+POUND|POUND\s+STERLING|JPY|JAPANESE\s+YEN|YEN|CHF|SWISS\s+FRANC|CNY|CNH|RMB|CHINESE\s+YUAN|RENMINBI|CAD|CANADIAN\s+DOLLAR|AUD|AUSTRALIAN\s+DOLLAR|TURKISH\s+LIRA|ARGENTINE\s+PESO|RUSSIAN\s+RUBLE|FIAT\s+CURRENCY|FIAT\s+MONEY)\b/i;
+
+export function resolveFiatCurrencyQuery(
+  rawQuery: string,
+  normQuery = normalizeMarketQuery(rawQuery)
+): { symbol: string; name: string } | null {
+  if (!normQuery) return null;
+  const rawStr = String(rawQuery || '').trim();
+  if (CRYPTO_STABLECOIN_GUARD_REGEX.test(rawStr) || CRYPTO_STABLECOIN_GUARD_REGEX.test(normQuery)) {
+    return null;
+  }
+  const strippedNorm = normQuery.startsWith('FIAT') && normQuery.length > 4
+    ? normQuery.slice(4)
+    : normQuery;
+  if (FIAT_CURRENCY_ALLOWLIST[normQuery]) {
+    return FIAT_CURRENCY_ALLOWLIST[normQuery];
+  }
+  if (strippedNorm && FIAT_CURRENCY_ALLOWLIST[strippedNorm]) {
+    return FIAT_CURRENCY_ALLOWLIST[strippedNorm];
+  }
+  const match = FIAT_PHRASE_REGEX.exec(rawStr);
+  if (match) {
+    const key = normalizeMarketQuery(match[1]);
+    if (FIAT_CURRENCY_ALLOWLIST[key]) {
+      return FIAT_CURRENCY_ALLOWLIST[key];
+    }
+  }
+  return null;
 }
 
 export function resolvePhysicalCommodityQuery(
@@ -503,6 +668,22 @@ export function evaluateMarketScope(input: {
       bypassesScope: true,
       audit: undefined,
       message: `Physical commodity ${commodity.name} is permitted unconditionally (unbounded by crypto CMC rank).`
+    };
+  }
+
+  // Sovereign fiat currencies (classified under Ecosystem / Overlays) bypass crypto CMC ranking rules
+  const fiat = resolveFiatCurrencyQuery(input.query, norm);
+  if (fiat) {
+    return {
+      allowed: true,
+      reason: 'FIAT_CURRENCY',
+      rank: null,
+      maxRank,
+      matchedSymbol: fiat.symbol,
+      matchedName: fiat.name,
+      bypassesScope: true,
+      audit: undefined,
+      message: `Fiat currency ${fiat.name} is permitted unconditionally under Ecosystem / Overlays.`
     };
   }
 

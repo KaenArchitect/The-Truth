@@ -7,6 +7,7 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -339,7 +340,7 @@ function ProvenanceBadgesStrip({
 
       {prov.categoryBadge && (
         <span
-          title="Ecosystem application, L2 rollup, or channel overlay anchored to a base Layer-1 settlement carrier."
+          title="Ecosystem application, L2 rollup, channel overlay, or fiat currency overlay."
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/12 text-indigo-300 border border-indigo-400/35 font-semibold"
         >
           <Layers className="w-2.5 h-2.5 shrink-0" />
@@ -439,6 +440,11 @@ function ThermodynamicAuditApp() {
   const [threeFormation, setThreeFormation] = useState<ThreeFormationMode>('TRIANGLE');
   const [fourFormation, setFourFormation] = useState<FourFormationMode>('RHOMBUS');
   const [expandAllOrbits, setExpandAllOrbits] = useState(true);
+  const arenaRef = useRef<HTMLDivElement | null>(null);
+  const singleStageWrapRef = useRef<HTMLDivElement | null>(null);
+  const heroDockRef = useRef<HTMLDivElement | null>(null);
+  const searchDockRef = useRef<HTMLFormElement | null>(null);
+  const backdropRootRef = useRef<HTMLDivElement | null>(null);
   const constellationMeasureRef = useRef<HTMLDivElement | null>(null);
   const [constellationWrapWidth, setConstellationWrapWidth] = useState(() =>
     typeof window !== 'undefined' && window.innerWidth < 768
@@ -1178,6 +1184,86 @@ function ThermodynamicAuditApp() {
     window.addEventListener('resize', updateWidth);
     return () => window.removeEventListener('resize', updateWidth);
   }, [isMultiStage, stageTickers.length]);
+
+  useLayoutEffect(() => {
+    const syncForegroundCenterToBackdrop = () => {
+      const root = backdropRootRef.current;
+      const rootRect = root ? root.getBoundingClientRect() : null;
+      const backdropCenterY =
+        rootRect && rootRect.height > 0 ? rootRect.top + rootRect.height / 2 : window.innerHeight * 0.5;
+
+      const heroEl = heroDockRef.current;
+      const searchEl = searchDockRef.current;
+      if (isLandingIdle && heroEl && searchEl) {
+        const m = new DOMMatrixReadOnly(window.getComputedStyle(heroEl).transform);
+        const currentTy = Number.isFinite(m.m42) ? m.m42 : 0;
+        const searchRect = searchEl.getBoundingClientRect();
+        if (searchRect.height > 0) {
+          const searchCenterAtTy0 = searchRect.top + searchRect.height / 2 - currentTy;
+          const targetTy = Math.max(0, backdropCenterY - searchCenterAtTy0);
+          heroEl.style.setProperty('--hero-landing-y', `${targetTy.toFixed(2)}px`);
+        }
+      }
+
+      const wrapEl = singleStageWrapRef.current;
+      const arenaEl = arenaRef.current;
+      if (wrapEl && arenaEl && !isLandingIdle && !isMultiStage) {
+        if (isMobileViewport) {
+          wrapEl.style.paddingTop = '0px';
+          wrapEl.style.marginTop = '0px';
+        } else {
+          const wrapStyle = window.getComputedStyle(wrapEl);
+          const currentPt = Number.parseFloat(wrapStyle.paddingTop) || 0;
+          const currentMt = Number.parseFloat(wrapStyle.marginTop) || 0;
+          const wrapTransform = wrapStyle.transform;
+          const wrapMatrix =
+            wrapTransform && wrapTransform !== 'none' ? new DOMMatrixReadOnly(wrapTransform) : null;
+          const currentWrapTy =
+            wrapMatrix && Number.isFinite(wrapMatrix.m42) ? wrapMatrix.m42 : 0;
+          const arenaRect = arenaEl.getBoundingClientRect();
+          if (arenaRect.height > 0) {
+            const arenaCenterBase =
+              arenaRect.top + arenaRect.height / 2 - currentPt - currentMt - currentWrapTy;
+            const deltaY = backdropCenterY - arenaCenterBase;
+            if (deltaY >= 0) {
+              wrapEl.style.paddingTop = `${deltaY.toFixed(2)}px`;
+              wrapEl.style.marginTop = '0px';
+            } else {
+              wrapEl.style.paddingTop = '0px';
+              wrapEl.style.marginTop = `${Math.max(-28, deltaY).toFixed(2)}px`;
+            }
+          }
+        }
+      }
+    };
+
+    syncForegroundCenterToBackdrop();
+    const rafId = window.requestAnimationFrame(syncForegroundCenterToBackdrop);
+    const settleTimer = window.setTimeout(syncForegroundCenterToBackdrop, 420);
+    window.addEventListener('resize', syncForegroundCenterToBackdrop, { passive: true });
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(syncForegroundCenterToBackdrop);
+      if (document.body) ro.observe(document.body);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(settleTimer);
+      window.removeEventListener('resize', syncForegroundCenterToBackdrop);
+      if (ro) ro.disconnect();
+    };
+  }, [
+    isLandingIdle,
+    isMultiStage,
+    hasActiveAudit,
+    isAuditing,
+    isMobileViewport,
+    activeKey,
+    auditError,
+    archiveToast
+  ]);
 
   const currentAudit = hasActiveAudit && activeKey ? audits[activeKey] : audits.KAS;
   const baseAccent = hasActiveAudit
@@ -3446,7 +3532,7 @@ function ThermodynamicAuditApp() {
           : 0.16 + scoreRatio * 0.22;
 
         return (
-          <>
+          <div ref={backdropRootRef} className="pointer-events-none fixed inset-0 overflow-hidden z-0">
             <div
               data-testid="normie-pulse-bg"
               data-grade={activeBackdropGrade}
@@ -3462,7 +3548,7 @@ function ThermodynamicAuditApp() {
               <div
                 className="bg-field-pulse absolute inset-0"
                 style={{
-                  background: `radial-gradient(circle at 50% 47%, ${accent.primary}29 0%, ${accent.secondary}14 42%, rgba(11, 12, 14, 0) 74%)`
+                  background: `radial-gradient(circle at 50% 50%, ${accent.primary}29 0%, ${accent.secondary}14 42%, rgba(11, 12, 14, 0) 74%)`
                 }}
               />
 
@@ -3474,13 +3560,13 @@ function ThermodynamicAuditApp() {
                 }}
               >
                 <div
-                  className="bg-core-breath absolute left-1/2 top-[47%] w-[680px] h-[680px] sm:w-[980px] sm:h-[980px] rounded-full"
+                  className="bg-core-breath absolute left-1/2 top-1/2 w-[680px] h-[680px] sm:w-[980px] sm:h-[980px] rounded-full"
                   style={{
                     background: `radial-gradient(circle, ${accent.primary}58 0%, ${accent.secondary}2E 32%, ${accent.secondary}0F 54%, rgba(11, 12, 14, 0) 72%)`
                   }}
                 />
                 <div
-                  className="bg-halo-wave absolute left-1/2 top-[47%] w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full"
+                  className="bg-halo-wave absolute left-1/2 top-1/2 w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full"
                   style={{
                     background: `radial-gradient(circle, rgba(11, 12, 14, 0) 16%, ${accent.secondary}3B 42%, ${accent.primary}14 58%, rgba(11, 12, 14, 0) 72%)`
                   }}
@@ -3499,14 +3585,18 @@ function ThermodynamicAuditApp() {
               primaryColor={accent.primary}
               secondaryColor={accent.secondary}
             />
-          </>
+          </div>
         );
       })()}
 
       {/* =====================================================================
           1. EDITORIAL HEADER: Centered Google-Style on Open -> Slides Up on Audit
          ===================================================================== */}
-      <header className="relative z-30 w-full pt-5 pb-2 px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center">
+      <header
+        className={`relative z-30 w-full pt-5 px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
+          !isLandingIdle && !isMultiStage ? 'pb-1' : 'pb-2'
+        }`}
+      >
         <div className="relative z-30 w-full flex flex-wrap items-center justify-between gap-3 pointer-events-none">
           <div className="pointer-events-auto flex flex-wrap items-center justify-center md:justify-start gap-2 w-full md:w-auto">
             <button
@@ -3607,11 +3697,13 @@ function ThermodynamicAuditApp() {
 
         {/* HERO LOCKUP + SEARCH BAR */}
         <div
-          className={`hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-3 lg:-mt-9 pointer-events-none ${
-            isLandingIdle
-              ? 'translate-y-[15vh] sm:translate-y-[22vh] md:translate-y-[27vh]'
-              : 'translate-y-0'
-          }`}
+          ref={heroDockRef}
+          className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-3 lg:-mt-9 pointer-events-none"
+          style={{
+            transform: isLandingIdle
+              ? 'translate3d(0, var(--hero-landing-y, 26vh), 0)'
+              : 'translate3d(0, 0px, 0)'
+          }}
         >
           <div
             className={`hero-title-scale pointer-events-auto flex flex-col items-center justify-center text-center select-none bg-transparent ${
@@ -3845,10 +3937,11 @@ function ThermodynamicAuditApp() {
 
           <div
             className={`relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
-              isLandingIdle ? 'mt-9 sm:mt-10' : 'mt-8 sm:mt-9'
+              isLandingIdle ? 'mt-9 sm:mt-10' : 'mt-6 sm:mt-7'
             }`}
           >
             <form
+              ref={searchDockRef}
               data-tutorial-id="search-dock"
               onSubmit={handleSearchSubmit}
               className="pointer-events-auto w-full transition-all duration-700 relative"
@@ -3874,7 +3967,7 @@ function ThermodynamicAuditApp() {
               >
                 <Search className="w-4 h-4 text-neutral-400 shrink-0 mr-3" />
                 <label htmlFor="truth-audit-search" className="sr-only">
-                  Search asset ticker or physical metal to audit
+                  Search asset ticker, physical metal, or fiat currency to audit
                 </label>
                 <input
                   id="truth-audit-search"
@@ -3886,7 +3979,7 @@ function ThermodynamicAuditApp() {
                   spellCheck={false}
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Audit any crypto OR physical metal (e.g., GOLD, SILVER, PLATINUM, KAS, BTC, SOL)..."
+                  placeholder="Audit any crypto, physical metal, or fiat (e.g., USD, EUR, GOLD, KAS, BTC, SOL)..."
                   className="w-full appearance-none bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none font-mono"
                 />
                 {isAuditing ? (
@@ -4049,7 +4142,10 @@ function ThermodynamicAuditApp() {
             </div>
           </aside>
 
-          <aside className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]">
+          <aside
+            data-tutorial-id="failed-sidebar"
+            className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+          >
             <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
               <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
                 <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
@@ -4119,7 +4215,11 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           2B. CENTER ARENA (BLANK GOOGLE-STYLE LANDING, SINGLE SPHERE, OR 2–4 CONSTELLATIONS)
          ===================================================================== */}
-      <main className="relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pt-10 sm:pt-11 pb-6 flex flex-col items-center justify-start">
+      <main
+        className={`relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-6 flex flex-col items-center justify-start ${
+          !isLandingIdle && !isMultiStage ? 'pt-2 sm:pt-3' : 'pt-7 sm:pt-8'
+        }`}
+      >
         {isLandingIdle ? (
           <div
             className="w-full min-h-[46vh] md:min-h-[62vh] pointer-events-none"
@@ -4886,8 +4986,12 @@ function ThermodynamicAuditApp() {
             );
           })()
         ) : (
-          <div className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0">
+          <div
+            ref={singleStageWrapRef}
+            className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
+          >
             <div
+              ref={arenaRef}
               data-tutorial-id="center-arena"
               onMouseEnter={() => setIsArenaHovered(true)}
               onMouseLeave={() => {
@@ -6988,8 +7092,8 @@ function ThermodynamicAuditApp() {
                     <strong className="text-neutral-200">
                       {isAdminSession ? 'unlimited for your admin account' : `limited to ${dailyQuota.limit} per user/day`}
                     </strong>{' '}
-                    across all physical metals, Layer-1 networks, L2s, and overlays (zero CMC rank
-                    cutoffs). Toggle <strong className="text-neutral-200">Strict Lock</strong> during
+                    across all physical metals, fiat currencies, Layer-1 networks, L2s, and overlays
+                    (zero CMC rank cutoffs). Toggle <strong className="text-neutral-200">Strict Lock</strong> during
                     traffic spikes or enable <strong className="text-neutral-200">Sandbox Preview</strong>{' '}
                     to isolate test queries strictly in local browser storage.
                   </p>

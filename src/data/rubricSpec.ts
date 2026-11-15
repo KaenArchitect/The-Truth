@@ -436,7 +436,85 @@ export const ALIAS_MAP: Record<string, string> = {
   CONFLUX: 'CFX',
   ETHEREUMCLASSIC: 'ETC',
   TETHER: 'USDT',
-  USDCOIN: 'USDC'
+  USDCOIN: 'USDC',
+  DOLLAR: 'USD',
+  USDOLLAR: 'USD',
+  UNITEDSTATESDOLLAR: 'USD',
+  GREENBACK: 'USD',
+  EURO: 'EUR',
+  EUROZONEEURO: 'EUR',
+  BRITISHPOUND: 'GBP',
+  POUND: 'GBP',
+  POUNDSTERLING: 'GBP',
+  STERLING: 'GBP',
+  JAPANESEYEN: 'JPY',
+  YEN: 'JPY',
+  SWISSFRANC: 'CHF',
+  FRANC: 'CHF',
+  CHINESEYUAN: 'CNY',
+  YUAN: 'CNY',
+  RENMINBI: 'CNY',
+  RMB: 'CNY',
+  OFFSHOREYUAN: 'CNY',
+  CNH: 'CNY',
+  CANADIANDOLLAR: 'CAD',
+  AUSTRALIANDOLLAR: 'AUD',
+  NEWZEALANDDOLLAR: 'NZD',
+  INDIANRUPEE: 'INR',
+  RUPEE: 'INR',
+  BRAZILIANREAL: 'BRL',
+  MEXICANPESO: 'MXN',
+  KOREANWON: 'KRW',
+  SOUTHKOREANWON: 'KRW',
+  SINGAPOREDOLLAR: 'SGD',
+  HONGKONGDOLLAR: 'HKD',
+  TURKISHLIRA: 'TRY',
+  LIRA: 'TRY',
+  ARGENTINEPESO: 'ARS',
+  RUSSIANRUBLE: 'RUB',
+  RUBLE: 'RUB',
+  ROUBLE: 'RUB',
+  SOUTHAFRICANRAND: 'ZAR',
+  RAND: 'ZAR',
+  SWEDISHKRONA: 'SEK',
+  NORWEGIANKRONE: 'NOK',
+  DANISHKRONE: 'DKK',
+  POLISHZLOTY: 'PLN',
+  ZLOTY: 'PLN',
+  THAIBAHT: 'THB',
+  BAHT: 'THB',
+  INDONESIANRUPIAH: 'IDR',
+  RUPIAH: 'IDR',
+  SAUDIRIYAL: 'SAR',
+  RIYAL: 'SAR',
+  UAEDIRHAM: 'AED',
+  DIRHAM: 'AED',
+  ISRAELISHEKEL: 'ILS',
+  SHEKEL: 'ILS',
+  TAIWANDOLLAR: 'TWD',
+  PHILIPPINEPESO: 'PHP',
+  VIETNAMESEDONG: 'VND',
+  DONG: 'VND',
+  EGYPTIANPOUND: 'EGP',
+  NIGERIANNAIRA: 'NGN',
+  NAIRA: 'NGN',
+  PAKISTANIRUPEE: 'PKR',
+  CZECHKORUNA: 'CZK',
+  HUNGARIANFORINT: 'HUF',
+  FORINT: 'HUF',
+  CHILEANPESO: 'CLP',
+  COLOMBIANPESO: 'COP',
+  PERUVIANSOL: 'PEN',
+  VENEZUELANBOLIVAR: 'VES',
+  BOLIVAR: 'VES',
+  ZIMBABWEANDOLLAR: 'ZWL',
+  LEBANESEPOUND: 'LBP',
+  UKRAINIANHRYVNIA: 'UAH',
+  HRYVNIA: 'UAH',
+  KENYANSHILLING: 'KES',
+  IRANIANRIAL: 'IRR',
+  FIATCURRENCY: 'FIAT',
+  FIATMONEY: 'FIAT'
 };
 
 export function resolveCanonicalAssetTicker(rawTickerOrName: string): string {
@@ -896,6 +974,9 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
     effectiveTk,
     auditObj.consensusFamily
   );
+  const isFiatCurrency =
+    !isPhysicalMetal &&
+    isFiatCurrencyAuditPayload(auditObj.name, auditObj.architecture, effectiveTk);
 
   const mergedAliases = Array.from(
     new Set(
@@ -917,13 +998,15 @@ export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData
   const sovScore = Number(invs[0]?.score ?? 1);
   const costScore = Number(invs[1]?.score ?? 0);
 
-  if (costScore <= 0) {
+  if (costScore <= 0 || isFiatCurrency) {
     return {
       ...auditObj,
       ticker: effectiveTk || auditObj.ticker,
       ...(mergedAliases.length > 0 ? { queryAliases: mergedAliases } : {}),
       ...(isPhysicalMetal
         ? { consensusFamily: 'PHYSICAL_COMMODITY' as const, isUpperLayerOverlayOrChannel: false }
+        : isFiatCurrency
+        ? { consensusFamily: 'ZERO_JOULE_BFT' as const, isUpperLayerOverlayOrChannel: true }
         : {}),
       invariants: invs.map((i) => ({ ...i, score: 0 })),
       totalScore: 0,
@@ -1067,6 +1150,12 @@ export function clampSingleInvariantByPhysics(
     targetAudit?.ticker,
     fam
   );
+  if (
+    !isPhysicalMetal &&
+    isFiatCurrencyAuditPayload(targetAudit?.name, targetAudit?.architecture, targetAudit?.ticker)
+  ) {
+    return 0;
+  }
   const archAndNameText = `${targetAudit?.name || ''} ${targetAudit?.architecture || ''} ${
     targetAudit?.ticker || ''
   }`.toUpperCase();
@@ -1301,13 +1390,61 @@ export function isValidCompleteAuditPayload(parsed: RawGeminiAuditPayload | null
 }
 
 const OVERLAY_POSITIVE_REGEX =
-  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|RUNES|ORDINALS|TAPROOT ASSET|LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|PAYMENT-CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|ROLLUP|SIDECHAIN|LAYER-2|LAYER 2|L2|PARACHAIN|APPCHAIN|SUBNET TOKEN|OVERLAY|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|AUTOMATED MARKET MAKER|DEX|AMM|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN)\b/;
+  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|RUNES|ORDINALS|TAPROOT ASSET|LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|PAYMENT-CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|ROLLUP|SIDECHAIN|LAYER-2|LAYER 2|L2|PARACHAIN|APPCHAIN|SUBNET TOKEN|OVERLAY|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|AUTOMATED MARKET MAKER|DEX|AMM|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN|FIAT|FIAT CURRENCY|CENTRAL BANK|LEGAL TENDER|FRACTIONAL RESERVE|FEDERAL RESERVE|SOVEREIGN DEBT OVERLAY|FIAT OVERLAY)\b/;
 
 const L1_HOST_MENTIONING_L2_REGEX =
   /\b(CENTRALIZED L2|FOR L2|FOR ROLLUPS|FOR PARACHAIN|SUPPORTING L2|HOSTING L2|L2 SEQUENCERS|L2 ROLLUPS|DATA AVAILABILITY[^,;()]*\b(ROLLUP|L2)\b|RELAY CHAIN[^,;()]*\bPARACHAIN\b|(?:LAYER-1|LAYER 1|\bL1\b)[^,;()]*(?:WITH|HOSTING|SUPPORTING)\s+(?:L2|ROLLUP|CHANNEL))\b/;
 
 const EXPLICIT_OVERLAY_IDENTITY_REGEX =
-  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|LIGHTNING|PAYMENT-CHANNEL|PAYMENT CHANNEL|STATE CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|SIDECHAIN|L1-SEQUENCED|OVER [A-Z0-9-]+ L1|ANCHORED TO [A-Z0-9-]+ L1|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN)\b/;
+  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|LIGHTNING|PAYMENT-CHANNEL|PAYMENT CHANNEL|STATE CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|SIDECHAIN|L1-SEQUENCED|OVER [A-Z0-9-]+ L1|ANCHORED TO [A-Z0-9-]+ L1|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN|FIAT CURRENCY|CENTRAL BANK|LEGAL TENDER|FRACTIONAL RESERVE|FEDERAL RESERVE|SOVEREIGN DEBT OVERLAY|FIAT OVERLAY)\b/;
+
+export const FIAT_CURRENCY_TICKER_SET = new Set<string>([
+  'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CNY', 'CNH', 'RMB',
+  'CAD', 'AUD', 'NZD', 'INR', 'BRL', 'MXN', 'KRW', 'SGD',
+  'HKD', 'TRY', 'ARS', 'RUB', 'ZAR', 'SEK', 'NOK', 'DKK',
+  'PLN', 'THB', 'IDR', 'SAR', 'AED', 'ILS', 'TWD', 'PHP',
+  'VND', 'EGP', 'NGN', 'PKR', 'CZK', 'HUF', 'CLP', 'COP',
+  'PEN', 'VES', 'VEF', 'ZWD', 'ZWL', 'LBP', 'UAH', 'KES',
+  'IRR', 'XDR', 'FIAT'
+]);
+
+const EXPLICIT_CRYPTO_NON_FIAT_REGEX =
+  /\b(STABLECOIN|ERC-20|ERC20|SPL TOKEN|BEP-20|TRC-20|USDC|USD COIN|USDT|TETHER USD|USDE|FDUSD|TUSD|PYUSD|DAI|FRAX|EURC|PAXG|XAUT|SOLANA|PROOF OF STAKE|PROOF-OF-STAKE|SMART CONTRACT)\b/;
+
+const FIAT_NAME_OR_ARCH_REGEX =
+  /\b(FIAT CURRENCY|FIAT LEDGER|FIAT MONEY|FIAT OVERLAY|CENTRAL BANK|LEGAL TENDER|FRACTIONAL RESERVE|FEDERAL RESERVE|EUROPEAN CENTRAL BANK|BANK OF JAPAN|BANK OF ENGLAND|PEOPLE'?S BANK OF CHINA|SWISS NATIONAL BANK|RESERVE BANK|FEDWIRE|CHIPS|TARGET2|SOVEREIGN FIAT|US DOLLAR|U\.S\. DOLLAR|UNITED STATES DOLLAR|BRITISH POUND|POUND STERLING|JAPANESE YEN|SWISS FRANC|CHINESE YUAN|RENMINBI|CANADIAN DOLLAR|AUSTRALIAN DOLLAR|INDIAN RUPEE|TURKISH LIRA|ARGENTINE PESO|RUSSIAN RUBLE|BRAZILIAN REAL|MEXICAN PESO|NIGERIAN NAIRA|SOUTH AFRICAN RAND)\b/;
+
+export function isFiatCurrencyAuditPayload(
+  name?: string,
+  architecture?: string,
+  ticker?: string,
+  extraQuery?: string
+): boolean {
+  const cleanTicker = String(ticker || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const cleanQuery = String(extraQuery || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const canonicalTk = resolveCanonicalAssetTicker(cleanTicker);
+  const canonicalQuery = resolveCanonicalAssetTicker(cleanQuery);
+
+  if (
+    FIAT_CURRENCY_TICKER_SET.has(cleanTicker) ||
+    FIAT_CURRENCY_TICKER_SET.has(canonicalTk) ||
+    FIAT_CURRENCY_TICKER_SET.has(cleanQuery) ||
+    FIAT_CURRENCY_TICKER_SET.has(canonicalQuery)
+  ) {
+    return true;
+  }
+
+  const combined = `${name || ''} ${architecture || ''} ${extraQuery || ''}`.toUpperCase().trim();
+  if (!combined) return false;
+  if (EXPLICIT_CRYPTO_NON_FIAT_REGEX.test(combined)) {
+    return false;
+  }
+  return FIAT_NAME_OR_ARCH_REGEX.test(combined);
+}
 
 const RAW_METAL_TICKER_SET = new Set<string>([
   'GOLD', 'AU', 'XAU', 'BULLION',
@@ -1481,16 +1618,26 @@ export function normalizeAuditPayload(
     parsed.consensusFamily || existingBaseline?.consensusFamily,
     rawQuery
   );
+  const isFiatCurrency =
+    !isPhysicalMetal &&
+    isFiatCurrencyAuditPayload(
+      parsed.name || existingBaseline?.name,
+      parsed.architecture || existingBaseline?.architecture,
+      candidateTicker,
+      rawQuery
+    );
+  const effectiveForceZeroJoule = forceZeroJoule || isFiatCurrency;
   const archAndNameText = `${parsed.name || ''} ${parsed.architecture || ''} ${rawQuery}`.toUpperCase();
   const isOverlay =
     !isPhysicalMetal &&
-    (parsed.isUpperLayerOverlayOrChannel === true ||
+    (isFiatCurrency ||
+      parsed.isUpperLayerOverlayOrChannel === true ||
       isOverlayArchitectureText(parsed.name, parsed.architecture, rawQuery));
   const isSequentialCarrierOverlay =
     isOverlay &&
     !/\b(KASPA|KRC-20|KCC-20|GHOSTDAG|BLOCKDAG|IGRA|VIADUCT)\b/.test(archAndNameText);
 
-  const detectedFamily: ConsensusFamily = forceZeroJoule
+  const detectedFamily: ConsensusFamily = effectiveForceZeroJoule
     ? 'ZERO_JOULE_BFT'
     : isPhysicalMetal
     ? 'PHYSICAL_COMMODITY'
@@ -1506,7 +1653,7 @@ export function normalizeAuditPayload(
     ? 'BLOCKDAG_POW'
     : 'LINEAR_POW';
 
-  if (detectedFamily === 'ZERO_JOULE_BFT' || forceZeroJoule) {
+  if (detectedFamily === 'ZERO_JOULE_BFT' || effectiveForceZeroJoule) {
     cleanInvariants.forEach((inv) => {
       inv.score = 0;
     });
@@ -1591,7 +1738,7 @@ export function normalizeAuditPayload(
         .replace(/[^A-Z0-9]/g, '')
         .slice(0, 12) || 'ASSET';
   const cleanTicker =
-    (isPhysicalMetal
+    (isPhysicalMetal || isFiatCurrency
       ? resolveCanonicalAssetTicker(rawQuery) || resolveCanonicalAssetTicker(rawCandidateTicker)
       : resolveCanonicalAssetTicker(rawCandidateTicker))
       .slice(0, 8) || rawCandidateTicker.slice(0, 8) || 'ASSET';

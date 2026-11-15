@@ -253,3 +253,38 @@ test('All physical metals are strictly treated as Layer-1 primary substrates (ne
   assert.ok(ecosystemTickers.includes('PAXG'));
 });
 
+test('Sovereign fiat currencies always classify under Ecosystem / Overlays and never in Core cohorts', () => {
+  const fiatCases = [
+    { ticker: 'USD', name: 'US Dollar', architecture: 'Federal Reserve Sovereign Fiat Overlay' },
+    { ticker: 'EUR', name: 'Euro', architecture: 'ECB Central Bank Credit Ledger' },
+    { ticker: 'TRY', name: 'Turkish Lira', architecture: 'CBRT Legal Tender Ledger' },
+    { ticker: 'ARS', name: 'Argentine Peso', architecture: 'BCRA Sovereign Fiat Currency' }
+  ];
+
+  const mockAudits: Record<string, AuditData> = { ...PRELOADED_AUDITS };
+  const fiatTickers: string[] = [];
+
+  for (const f of fiatCases) {
+    const audit: AuditData = {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: f.ticker,
+      name: f.name,
+      architecture: f.architecture,
+      consensusFamily: 'ZERO_JOULE_BFT',
+      isUpperLayerOverlayOrChannel: false, // Even if unset or false, fiat MUST be forced into Overlays
+      isCustom: true
+    };
+    mockAudits[f.ticker] = audit;
+    fiatTickers.push(f.ticker);
+    assert.equal(getAuditCategory(audit), 'ECOSYSTEM_OVERLAY', `Expected ${f.ticker} to classify as ECOSYSTEM_OVERLAY`);
+    const prov = getAuditProvenance(audit, { preloadedTickers });
+    assert.equal(prov.categoryBadge, 'Ecosystem / Overlays');
+    const analysis = getAuditRevisionAnalysis(audit, false);
+    assert.match(analysis.triggers[0].condition, /Ecosystem \/ Overlays/i);
+  }
+
+  const { coreTickers, ecosystemTickers } = partitionTickersByEcosystem(fiatTickers, mockAudits);
+  assert.deepEqual(coreTickers, []);
+  assert.deepEqual(ecosystemTickers.sort(), ['ARS', 'EUR', 'TRY', 'USD']);
+});
+
