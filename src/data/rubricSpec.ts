@@ -80,6 +80,14 @@ export interface GradeAccent {
   textOnAccent: string;
 }
 
+export interface RunningAuditAccent {
+  auditedCount: number;
+  averageScore: number | null;
+  projectedTotal: number | null;
+  projectedGrade: string | null;
+  accent: GradeAccent;
+}
+
 export interface ScoreStyle {
   color: string;
   bg: string;
@@ -732,6 +740,58 @@ export function deriveGradeFromTotal(
   if (totalScore >= 1.9) return 'D+';
   if (totalScore >= 1.5) return 'D';
   return 'D-';
+}
+
+export function computeRunningAuditAccent(
+  resolvedScores: Record<number, number> = {}
+): RunningAuditAccent {
+  let sum = 0;
+  let auditedCount = 0;
+
+  for (let i = 0; i < 6; i++) {
+    const raw = resolvedScores[i];
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+      sum += Math.max(0, Math.min(1, raw));
+      auditedCount += 1;
+    }
+  }
+
+  if (auditedCount === 0) {
+    return {
+      auditedCount: 0,
+      averageScore: null,
+      projectedTotal: null,
+      projectedGrade: null,
+      accent: getGradeAccent('A+')
+    };
+  }
+
+  const averageScore = Number((sum / auditedCount).toFixed(4));
+  const projectedTotal = Number(((sum / auditedCount) * 6).toFixed(2));
+  const rawCostFloor = resolvedScores[1];
+  const rawSovereignty = resolvedScores[0];
+  const costFloorParam =
+    typeof rawCostFloor === 'number' && Number.isFinite(rawCostFloor)
+      ? Math.max(0, Math.min(1, rawCostFloor))
+      : 1;
+  const sovereigntyParam =
+    typeof rawSovereignty === 'number' && Number.isFinite(rawSovereignty)
+      ? Math.max(0, Math.min(1, rawSovereignty))
+      : 1;
+
+  const projectedGrade = deriveGradeFromTotal(
+    projectedTotal,
+    costFloorParam,
+    sovereigntyParam
+  );
+
+  return {
+    auditedCount,
+    averageScore,
+    projectedTotal,
+    projectedGrade,
+    accent: getGradeAccent(projectedGrade)
+  };
 }
 
 export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData {

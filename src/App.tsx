@@ -60,6 +60,7 @@ import {
   GRADING_RUBRIC_SPEC,
   ORBIT_ANGLES_DEG,
   clampSingleInvariantByPhysics,
+  computeRunningAuditAccent,
   deriveGradeFromTotal,
   enforceEnergyArbitrageLawOnAudit,
   formatScore,
@@ -341,6 +342,7 @@ function ThermodynamicAuditApp() {
   const [scanCodeTick, setScanCodeTick] = useState(0);
   const [scanProgressPct, setScanProgressPct] = useState(0);
   const [resolvedStepColors, setResolvedStepColors] = useState<Record<number, string>>({});
+  const [resolvedStepScores, setResolvedStepScores] = useState<Record<number, number>>({});
 
   // Single-Invariant Interactive Console State (Challenge / More Breakdown / Low-Token 1-Inv Re-Audit)
   const [invPromptInputs, setInvPromptInputs] = useState<Record<string, string>>({});
@@ -907,23 +909,8 @@ function ThermodynamicAuditApp() {
         textOnAccent: '#041713'
       };
   const activeScanStage = CORE_SCAN_STAGES[scanStepIdx] || CORE_SCAN_STAGES[0];
-  const currentStepResolvedColor = resolvedStepColors[scanStepIdx];
-  const accent = isAuditing
-    ? {
-        primary: currentStepResolvedColor || activeScanStage.color,
-        secondary: activeScanStage.color,
-        softBg: activeScanStage.softBg,
-        secondarySoftBg: activeScanStage.softBg,
-        border: currentStepResolvedColor || activeScanStage.color,
-        secondaryBorder: activeScanStage.color,
-        glow: activeScanStage.glow,
-        secondaryGlow: activeScanStage.glow,
-        gradientCss: `linear-gradient(135deg, ${
-          currentStepResolvedColor || activeScanStage.color
-        } 0%, ${activeScanStage.color} 100%)`,
-        textOnAccent: '#041713'
-      }
-    : baseAccent;
+  const runningAuditState = isAuditing ? computeRunningAuditAccent(resolvedStepScores) : null;
+  const accent = isAuditing && runningAuditState ? runningAuditState.accent : baseAccent;
 
   const activeTutorialSteps = isMobileViewport ? MOBILE_TUTORIAL_STEPS : TUTORIAL_STEPS;
   const activeTutorialStep =
@@ -1322,6 +1309,7 @@ function ThermodynamicAuditApp() {
     setScanCodeTick(0);
     setScanProgressPct(4);
     setResolvedStepColors({});
+    setResolvedStepScores({});
     setAuditStatusMsg(
       existingBaseline
         ? `Re-auditing $${displayTarget} via Live Google Search...`
@@ -1486,13 +1474,16 @@ function ThermodynamicAuditApp() {
         const stepColor = tracker.colors[step] || stage.color;
         const stepScore = tracker.scores[step];
         setResolvedStepColors((prev) => ({ ...prev, [step]: stepColor }));
+        if (typeof stepScore === 'number' && Number.isFinite(stepScore)) {
+          setResolvedStepScores((prev) => ({ ...prev, [step]: stepScore }));
+        }
         setScanProgressPct(Math.round(((step + 1) / 6) * 100));
         setAuditStatusMsg(
           stepScore !== undefined
             ? `[${stage.id}/06] ${stage.shortName} Complete (-) -> ${formatScore(stepScore)}/1.0`
             : `[${stage.id}/06] ${stage.shortName} Locked (-)`
         );
-        await new Promise((r) => setTimeout(r, tracker.done ? 95 : 165));
+        await new Promise((r) => setTimeout(r, tracker.done ? 180 : 220));
       }
     })();
 
@@ -3937,8 +3928,7 @@ function ThermodynamicAuditApp() {
                     const isDone = resolvedStepColors[idx] !== undefined;
                     const isCurrent = idx === scanStepIdx;
                     const nodeColor =
-                      resolvedStepColors[idx] ||
-                      (isCurrent ? stg.color : isDone ? stg.color : '#374151');
+                      resolvedStepColors[idx] || (isCurrent ? accent.primary : '#374151');
 
                     return (
                       <g key={stg.id}>
@@ -4110,7 +4100,7 @@ function ThermodynamicAuditApp() {
                         {CORE_SCAN_STAGES.map((stg, idx) => {
                           const dotColor =
                             resolvedStepColors[idx] ||
-                            (idx === scanStepIdx ? stg.color : 'rgba(255,255,255,0.14)');
+                            (idx === scanStepIdx ? accent.primary : 'rgba(255,255,255,0.14)');
                           return (
                             <span
                               key={stg.id}
@@ -4182,6 +4172,18 @@ function ThermodynamicAuditApp() {
                   <div className="text-[11px] text-neutral-500">
                     Stage {activeScanStage.id}/06 — {activeScanStage.title}
                   </div>
+                  {runningAuditState &&
+                    runningAuditState.auditedCount > 0 &&
+                    runningAuditState.projectedTotal !== null && (
+                      <div
+                        className="text-[11px] font-semibold transition-colors duration-200"
+                        style={{ color: accent.primary }}
+                      >
+                        Running Avg ({runningAuditState.auditedCount}/6):{' '}
+                        {formatScore(runningAuditState.projectedTotal)} / 6.00 (
+                        {runningAuditState.projectedGrade})
+                      </div>
+                    )}
                 </div>
               ) : activeHoveredInvariant ? (
                 (() => {

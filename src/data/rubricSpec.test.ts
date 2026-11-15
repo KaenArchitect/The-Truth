@@ -4,6 +4,7 @@ import {
   type AuditData,
   type InvariantData,
   clampSingleInvariantByPhysics,
+  computeRunningAuditAccent,
   deriveGradeFromTotal,
   enforceEnergyArbitrageLawOnAudit,
   getGradeAccent,
@@ -239,4 +240,63 @@ test('getHarmonizedScoreStyle matches invariant score grade color instead of par
   assert.equal(getHarmonizedScoreStyle(0.9, igAccent).color, '#4ADE80');
   assert.equal(getHarmonizedScoreStyle(0.0, igAccent).color, '#EF4444');
 });
+
+test('computeRunningAuditAccent tracks running average step by step and converges to terminal grade accent', () => {
+  const initial = computeRunningAuditAccent({});
+  assert.equal(initial.auditedCount, 0);
+  assert.equal(initial.averageScore, null);
+  assert.equal(initial.projectedGrade, null);
+  assert.equal(initial.accent.primary, '#49EACB');
+
+  // Mixed scores progressing 1 invariant at a time
+  // Step 1: 0.95 -> avg 0.95 -> projected 5.70 (A) -> #49EACB
+  const step1 = computeRunningAuditAccent({ 0: 0.95 });
+  assert.equal(step1.auditedCount, 1);
+  assert.equal(step1.projectedTotal, 5.7);
+  assert.equal(step1.projectedGrade, 'A');
+  assert.equal(step1.accent.primary, getGradeAccent('A').primary);
+
+  // Step 2: 0.55 -> avg 0.75 -> projected 4.50 (B+) -> #4ADE80
+  const step2 = computeRunningAuditAccent({ 0: 0.95, 1: 0.55 });
+  assert.equal(step2.auditedCount, 2);
+  assert.equal(step2.projectedTotal, 4.5);
+  assert.equal(step2.projectedGrade, 'B+');
+  assert.equal(step2.accent.primary, '#4ADE80');
+
+  // Step 3: 0.30 -> avg 0.60 -> projected 3.60 (C+) -> #FACC15
+  const step3 = computeRunningAuditAccent({ 0: 0.95, 1: 0.55, 2: 0.3 });
+  assert.equal(step3.projectedTotal, 3.6);
+  assert.equal(step3.projectedGrade, 'C+');
+  assert.equal(step3.accent.primary, '#FACC15');
+
+  // Step 4: 0.20 -> avg 0.50 -> projected 3.00 (C) -> #EAB308
+  const step4 = computeRunningAuditAccent({ 0: 0.95, 1: 0.55, 2: 0.3, 3: 0.2 });
+  assert.equal(step4.projectedTotal, 3.0);
+  assert.equal(step4.projectedGrade, 'C');
+  assert.equal(step4.accent.primary, '#EAB308');
+
+  // Step 5: 0.10 -> avg 0.42 -> projected 2.52 (C-) -> #F59E0B
+  const step5 = computeRunningAuditAccent({ 0: 0.95, 1: 0.55, 2: 0.3, 3: 0.2, 4: 0.1 });
+  assert.equal(step5.projectedTotal, 2.52);
+  assert.equal(step5.projectedGrade, 'C-');
+  assert.equal(step5.accent.primary, '#F59E0B');
+
+  // Step 6: 0.12 -> total 2.22 -> projected 2.22 (D+) -> #FB923C (exact terminal grade match)
+  const step6 = computeRunningAuditAccent({ 0: 0.95, 1: 0.55, 2: 0.3, 3: 0.2, 4: 0.1, 5: 0.12 });
+  assert.equal(step6.auditedCount, 6);
+  assert.equal(step6.projectedTotal, 2.22);
+  assert.equal(step6.projectedGrade, deriveGradeFromTotal(2.22, 0.55, 0.95));
+  assert.equal(step6.accent.primary, getGradeAccent('D+').primary);
+
+  // Zero cost floor immediately triggers F (#EF4444)
+  const zeroCost = computeRunningAuditAccent({ 0: 0.8, 1: 0 });
+  assert.equal(zeroCost.projectedGrade, 'F');
+  assert.equal(zeroCost.accent.primary, '#EF4444');
+
+  // Sovereignty = 0 caps running projected grade at D+
+  const sovZero = computeRunningAuditAccent({ 0: 0, 1: 0.35, 2: 0.9, 3: 0.9 });
+  assert.equal(sovZero.projectedGrade, 'D+');
+  assert.equal(sovZero.accent.primary, getGradeAccent('D+').primary);
+});
+
 
