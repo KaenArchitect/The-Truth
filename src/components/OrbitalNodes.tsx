@@ -46,9 +46,9 @@ export function createWaveLut(steps: number, fA: number, fB: number, fC: number)
   return { steps, cos1, sin1, sinFA, cosFA, cosFB, sinFB, sinFC, cosFC };
 }
 
-export const MINI_LUT_MAIN = createWaveLut(44, 6, 3, 9);
-export const MINI_LUT_ECHO = createWaveLut(40, 6, 4, 8);
-export const MINI_LUT_INNER = createWaveLut(36, 6, 3, 12);
+export const MINI_LUT_MAIN = createWaveLut(32, 6, 3, 9);
+export const MINI_LUT_ECHO = createWaveLut(28, 6, 4, 8);
+export const MINI_LUT_INNER = createWaveLut(24, 6, 3, 12);
 
 export const NUCLEUS_LUT_MAIN = createWaveLut(72, 6, 3, 9);
 export const NUCLEUS_LUT_ECHO = createWaveLut(64, 6, 4, 8);
@@ -195,6 +195,7 @@ export interface HarmonicProjectBubbleProps {
   onSelectTicker: (ticker: string) => void;
   onTogglePin?: (ticker: string) => void;
   seedIndex?: number;
+  sizePx?: number;
 }
 
 export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
@@ -203,7 +204,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   isPinnedItem = false,
   onSelectTicker,
   onTogglePin,
-  seedIndex = 0
+  seedIndex = 0,
+  sizePx = 68
 }: HarmonicProjectBubbleProps) {
   const mainPathRef = useRef<SVGPathElement | null>(null);
   const echoPathRef = useRef<SVGPathElement | null>(null);
@@ -213,6 +215,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   const isZeroFlat = rawScore === 0;
   const itemAccent = getGradeAccent(item?.grade);
   const isHighlighted = isSelected || isPinnedItem;
+  const effectiveSize = Math.max(60, Math.round(sizePx || 68));
+  const svgOutsetPx = Math.round(effectiveSize * (10 / 68));
 
   useEffect(() => {
     if (isZeroFlat) return undefined;
@@ -235,7 +239,7 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
           buildFastWavePath(MINI_LUT_ECHO, 44, 44, 31.8, amp * 0.76, -ph * 0.9, 0.82, 1.35)
         );
       }
-      if (innerPathRef.current) {
+      if (isHighlighted && innerPathRef.current) {
         innerPathRef.current.setAttribute(
           'd',
           buildFastWavePath(MINI_LUT_INNER, 44, 44, 25.5, amp * 0.44, ph * 1.22, 0.82, 1.35)
@@ -247,8 +251,8 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
     return subscribeSharedWave((dt) => {
       phase += speed * Math.min(1.5, dt);
       renderMini(phase);
-    }, 28);
-  }, [rawScore, isZeroFlat, seedIndex]);
+    }, 12);
+  }, [rawScore, isZeroFlat, isHighlighted, seedIndex]);
 
   return (
     <div className="group relative inline-flex items-center justify-center">
@@ -269,13 +273,20 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
         title={`${item.name} ($${item.ticker}) — Grade ${item.grade} (${formatScore(
           item.totalScore
         )}/6.0)`}
-        className={`relative w-[68px] h-[68px] rounded-full flex flex-col items-center justify-center text-center cursor-pointer select-none transition-transform duration-300 ease-out focus:outline-none ${
+        style={{ width: `${effectiveSize}px`, height: `${effectiveSize}px` }}
+        className={`relative rounded-full flex flex-col items-center justify-center text-center cursor-pointer select-none transition-transform duration-300 ease-out focus:outline-none ${
           isHighlighted ? 'scale-110 z-20' : 'opacity-90 hover:opacity-100 group-hover:scale-105 z-10'
         }`}
       >
         <svg
           viewBox="0 0 88 88"
-          className="absolute inset-[-10px] w-[calc(100%+20px)] h-[calc(100%+20px)] pointer-events-none"
+          style={{
+            left: `-${svgOutsetPx}px`,
+            top: `-${svgOutsetPx}px`,
+            width: `${effectiveSize + svgOutsetPx * 2}px`,
+            height: `${effectiveSize + svgOutsetPx * 2}px`
+          }}
+          className="absolute pointer-events-none"
         >
           <defs>
             <radialGradient id={`projBubbleGrad-${item.ticker}`} cx="50%" cy="50%" r="50%">
@@ -354,19 +365,43 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
 
         <div className="relative z-10 flex flex-col items-center justify-center leading-none">
           <span
-            className={`font-mono text-[10px] tracking-tight transition-colors duration-300 ${
-              isHighlighted ? 'text-white font-bold' : 'text-neutral-200 font-semibold'
-            }`}
+            className={`font-mono tracking-tight transition-colors duration-300 ${
+              effectiveSize >= 96
+                ? 'text-xs'
+                : effectiveSize >= 80
+                ? 'text-[11px]'
+                : effectiveSize >= 74
+                ? 'text-[10.5px]'
+                : 'text-[10px]'
+            } ${isHighlighted ? 'text-white font-bold' : 'text-neutral-200 font-semibold'}`}
           >
             {item.ticker}
           </span>
           <span
-            className="font-display text-sm font-bold mt-0.5 color-glide"
+            className={`font-display font-bold mt-0.5 color-glide ${
+              effectiveSize >= 96
+                ? 'text-xl'
+                : effectiveSize >= 80
+                ? 'text-base'
+                : effectiveSize >= 74
+                ? 'text-[15px]'
+                : 'text-sm'
+            }`}
             style={{ color: itemAccent.primary }}
           >
             {item.grade}
           </span>
-          <span className="font-mono text-[8.5px] text-neutral-400 mt-0.5 transition-colors duration-300">
+          <span
+            className={`font-mono text-neutral-400 mt-0.5 transition-colors duration-300 ${
+              effectiveSize >= 96
+                ? 'text-[10.5px]'
+                : effectiveSize >= 80
+                ? 'text-[9.5px]'
+                : effectiveSize >= 74
+                ? 'text-[9px]'
+                : 'text-[8.5px]'
+            }`}
+          >
             {formatScore(item.totalScore)}
           </span>
         </div>
@@ -691,6 +726,9 @@ export function PinnedOrbitalNode({
       return 1.25 * (1.8 + Math.pow(invScore, 1.12) * 6.8);
     });
 
+    let centerSettledZero = false;
+    const satSettledZero = [false, false, false, false, false, false];
+
     const stepWaves = (dt = 1) => {
       let active = false;
       const st = waveStateRef.current;
@@ -700,23 +738,27 @@ export function PinnedOrbitalNode({
       const centerSpeed = (0.018 + (rawScore / 6.0) * 0.028) * 1.35 * Math.min(1.6, dt);
       if (st.amp > 0.01) st.phase += centerSpeed;
 
-      if (mainWaveRef.current) {
-        mainWaveRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_MAIN, 140, 140, 102, st.amp, st.phase, 0.82, 1.35)
-        );
-      }
-      if (echoWaveRef.current) {
-        echoWaveRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_ECHO, 140, 140, 106, st.amp * 0.78, -st.phase * 0.9, 0.82, 1.35)
-        );
-      }
-      if (innerWaveRef.current) {
-        innerWaveRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_INNER, 140, 140, 90, st.amp * 0.45, st.phase * 1.25, 0.82, 1.35)
-        );
+      const centerNeedsUpdate = st.amp > 0.01 || targetCenterAmp > 0.01 || !centerSettledZero;
+      if (centerNeedsUpdate) {
+        if (mainWaveRef.current) {
+          mainWaveRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_MAIN, 140, 140, 102, st.amp, st.phase, 0.82, 1.35)
+          );
+        }
+        if (echoWaveRef.current) {
+          echoWaveRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_ECHO, 140, 140, 106, st.amp * 0.78, -st.phase * 0.9, 0.82, 1.35)
+          );
+        }
+        if (innerWaveRef.current) {
+          innerWaveRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_INNER, 140, 140, 90, st.amp * 0.45, st.phase * 1.25, 0.82, 1.35)
+          );
+        }
+        centerSettledZero = st.amp <= 0.01 && targetCenterAmp <= 0.01;
       }
 
       if (st.amp > 0.01 || Math.abs(targetCenterAmp - st.amp) > 0.01) active = true;
@@ -732,27 +774,31 @@ export function PinnedOrbitalNode({
         const satSpeed = (0.02 + invScore * 0.032) * 1.35 * Math.min(1.6, dt);
         if (satSt.amp > 0.01) satSt.phase += satSpeed;
 
-        const mRef = satMainRefs.current[idx];
-        const eRef = satEchoRefs.current[idx];
-        const iRef = satInnerRefs.current[idx];
+        const satNeedsUpdate = satSt.amp > 0.01 || tAmp > 0.01 || !satSettledZero[idx];
+        if (satNeedsUpdate) {
+          const mRef = satMainRefs.current[idx];
+          const eRef = satEchoRefs.current[idx];
+          const iRef = satInnerRefs.current[idx];
 
-        if (mRef) {
-          mRef.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_MAIN, 70, 70, 45, satSt.amp, satSt.phase, 0.82, 1.35)
-          );
-        }
-        if (eRef) {
-          eRef.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_ECHO, 70, 70, 47.5, satSt.amp * 0.76, -satSt.phase * 0.88, 0.82, 1.35)
-          );
-        }
-        if (iRef) {
-          iRef.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_INNER, 70, 70, 39, satSt.amp * 0.44, satSt.phase * 1.22, 0.82, 1.35)
-          );
+          if (mRef) {
+            mRef.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_MAIN, 70, 70, 45, satSt.amp, satSt.phase, 0.82, 1.35)
+            );
+          }
+          if (eRef) {
+            eRef.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_ECHO, 70, 70, 47.5, satSt.amp * 0.76, -satSt.phase * 0.88, 0.82, 1.35)
+            );
+          }
+          if (iRef) {
+            iRef.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_INNER, 70, 70, 39, satSt.amp * 0.44, satSt.phase * 1.22, 0.82, 1.35)
+            );
+          }
+          satSettledZero[idx] = satSt.amp <= 0.01 && tAmp <= 0.01;
         }
 
         if (satSt.amp > 0.01 || Math.abs(tAmp - satSt.amp) > 0.01) active = true;
@@ -768,7 +814,7 @@ export function PinnedOrbitalNode({
         unsub();
         unsub = null;
       }
-    }, 42);
+    }, 24);
 
     return () => {
       if (unsub) unsub();

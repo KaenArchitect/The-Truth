@@ -127,14 +127,17 @@ export function GeniusUniverseBackground({
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+    const MAX_BACKING_PIXELS = 1_250_000;
     let width = window.innerWidth || 1440;
     let height = window.innerHeight || 900;
-    let dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    let dpr = 1;
 
     const syncSize = () => {
       width = window.innerWidth || 1440;
       height = window.innerHeight || 900;
-      dpr = Math.min(1.5, window.devicePixelRatio || 1);
+      const nativeDpr = Math.min(1.5, window.devicePixelRatio || 1);
+      const maxDprForBudget = Math.sqrt(MAX_BACKING_PIXELS / Math.max(1, width * height));
+      dpr = Math.max(0.4, Math.min(nativeDpr, maxDprForBudget));
       setViewportIsMobile(width < 768);
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
@@ -210,7 +213,7 @@ export function GeniusUniverseBackground({
       );
       coreGrad.addColorStop(1, 'rgba(11, 12, 14, 0)');
       ctx.fillStyle = coreGrad;
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillRect(cx - coreR, cy - coreR, coreR * 2, coreR * 2);
 
       const visibleCount = Math.min(stars.length, Math.ceil(sm.starCountFloat));
 
@@ -280,14 +283,11 @@ export function GeniusUniverseBackground({
           const b = Math.round(resB + (mgTuple[2] - resB) * mix);
           const rgb = `${r}, ${g}, ${b}`;
 
-          if (proj.tailLength > 1.5) {
+          if (proj.tailLength > 2.0) {
             const x0 = proj.x - Math.cos(proj.angleRad) * proj.tailLength;
             const y0 = proj.y - Math.sin(proj.angleRad) * proj.tailLength;
-            const grad = ctx.createLinearGradient(x0, y0, proj.x, proj.y);
-            grad.addColorStop(0, `rgba(${rgb}, 0)`);
-            grad.addColorStop(1, `rgba(${rgb}, ${(proj.alpha * 0.65 * starVisibility).toFixed(3)})`);
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = Math.max(0.7, proj.size * 0.72);
+            ctx.lineWidth = Math.max(0.65, proj.size * 0.65);
+            ctx.strokeStyle = `rgba(${rgb}, ${(proj.alpha * 0.34 * starVisibility).toFixed(3)})`;
             ctx.beginPath();
             ctx.moveTo(x0, y0);
             ctx.lineTo(proj.x, proj.y);
@@ -323,7 +323,7 @@ export function GeniusUniverseBackground({
         lastTimeRef.current = nowMs;
         return;
       }
-      if (nowMs - lastDrawMs < 32) return; // smooth ~30fps backdrop budget
+      if (nowMs - lastDrawMs < 48) return; // smooth ~20fps backdrop budget
       lastDrawMs = nowMs;
       const prev = lastTimeRef.current ?? nowMs;
       const dt = Math.min(0.08, Math.max(0, (nowMs - prev) / 1000));

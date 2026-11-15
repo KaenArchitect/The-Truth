@@ -959,7 +959,182 @@ export function computeRunningAuditAccent(
   };
 }
 
-export function enforceEnergyArbitrageLawOnAudit(auditObj: AuditData): AuditData {
+export function coerceDisplayText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : fallback;
+  if (typeof value === 'boolean') return String(value);
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime())
+      ? fallback
+      : value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  if (typeof value === 'object') {
+    const obj = value as {
+      toDate?: () => Date;
+      seconds?: unknown;
+      _seconds?: unknown;
+      text?: unknown;
+      label?: unknown;
+    };
+    if (typeof obj.toDate === 'function') {
+      try {
+        const d = obj.toDate();
+        if (d instanceof Date && !Number.isNaN(d.getTime())) {
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      } catch {
+        // Ignore broken toDate() method
+      }
+    }
+    const rawSeconds =
+      typeof obj.seconds === 'number'
+        ? obj.seconds
+        : typeof obj._seconds === 'number'
+        ? obj._seconds
+        : null;
+    if (rawSeconds !== null && Number.isFinite(rawSeconds)) {
+      const d = new Date(rawSeconds * 1000);
+      if (!Number.isNaN(d.getTime())) {
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      }
+    }
+    if (typeof obj.text === 'string') return obj.text;
+    if (typeof obj.label === 'string') return obj.label;
+  }
+  return fallback;
+}
+
+export function sanitizeAuditData(auditObj: AuditData): AuditData {
+  if (!auditObj || typeof auditObj !== 'object') return auditObj;
+
+  const sanitizeSources = (list: unknown): GroundingSource[] | undefined => {
+    if (!Array.isArray(list)) return undefined;
+    const cleaned = list
+      .map((item) => {
+        if (!item || typeof item !== 'object') return null;
+        const rawItem = item as Record<string, unknown>;
+        const uri = coerceDisplayText(rawItem.uri).trim();
+        const title = coerceDisplayText(rawItem.title, uri || 'Verified Source').trim();
+        if (!uri && !title) return null;
+        return { uri: uri || '#', title: title || 'Verified Source' };
+      })
+      .filter((x): x is GroundingSource => x !== null);
+    return cleaned;
+  };
+
+  const sanitizedInvs: InvariantData[] = Array.isArray(auditObj.invariants)
+    ? auditObj.invariants.map((inv, idx) => {
+        const fallbackId = `0${idx + 1}`;
+        const rawInv = (inv && typeof inv === 'object' ? inv : {}) as unknown as Record<string, unknown>;
+        const rawScore = Number(rawInv.score);
+        const rawDelta = rawInv.singleScoreDelta !== undefined ? Number(rawInv.singleScoreDelta) : undefined;
+        const lastSingleAt = coerceDisplayText(rawInv.lastSingleAuditAt).trim();
+        const lastSingleSource = coerceDisplayText(rawInv.lastSingleAuditSource).trim();
+        const geniusP = coerceDisplayText(rawInv.geniusParagraph).trim();
+
+        return {
+          id: coerceDisplayText(rawInv.id, fallbackId) || fallbackId,
+          shortName: coerceDisplayText(rawInv.shortName, DEFAULT_SHORT_NAMES[idx] || fallbackId),
+          title: coerceDisplayText(rawInv.title, DEFAULT_TITLES[idx] || fallbackId),
+          telemetry: coerceDisplayText(rawInv.telemetry, ''),
+          score: Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : 0,
+          quickSummary: coerceDisplayText(rawInv.quickSummary, ''),
+          paragraph: coerceDisplayText(rawInv.paragraph, ''),
+          ...(geniusP ? { geniusParagraph: geniusP } : {}),
+          receipts: Array.isArray(rawInv.receipts)
+            ? rawInv.receipts.map((r) => coerceDisplayText(r).trim()).filter(Boolean)
+            : [],
+          ...(lastSingleAt ? { lastSingleAuditAt: lastSingleAt } : {}),
+          ...(lastSingleSource ? { lastSingleAuditSource: lastSingleSource } : {}),
+          ...(rawDelta !== undefined && Number.isFinite(rawDelta) ? { singleScoreDelta: rawDelta } : {})
+        };
+      })
+    : [];
+
+  const cleanFreshAt = coerceDisplayText((auditObj as unknown as Record<string, unknown>).lastFreshAuditAt).trim();
+  const cleanArchivedLabel = coerceDisplayText((auditObj as unknown as Record<string, unknown>).archivedAtLabel).trim();
+  const cleanGeniusParas = Array.isArray(auditObj.geniusParagraphs)
+    ? auditObj.geniusParagraphs.map((p) => coerceDisplayText(p).trim()).filter(Boolean)
+    : undefined;
+  const cleanFreshSources = sanitizeSources((auditObj as unknown as Record<string, unknown>).freshSources);
+  const cleanSources = sanitizeSources((auditObj as unknown as Record<string, unknown>).sources);
+  const cleanDelta =
+    auditObj.scoreDelta !== null &&
+    auditObj.scoreDelta !== undefined &&
+    Number.isFinite(Number(auditObj.scoreDelta))
+      ? Number(auditObj.scoreDelta)
+      : null;
+
+  return {
+    ...auditObj,
+    ticker: coerceDisplayText(auditObj.ticker, ''),
+    name: coerceDisplayText(auditObj.name, coerceDisplayText(auditObj.ticker, 'Asset')),
+    architecture: coerceDisplayText(auditObj.architecture, 'Audited Protocol'),
+    grade: coerceDisplayText(auditObj.grade, 'F'),
+    totalScore: Number.isFinite(Number(auditObj.totalScore)) ? Number(auditObj.totalScore) : 0,
+    certainty: coerceDisplayText(auditObj.certainty, 'HIGH CERTAINTY'),
+    conclusion: coerceDisplayText(auditObj.conclusion, ''),
+    invariants: sanitizedInvs,
+    ...(cleanGeniusParas && cleanGeniusParas.length > 0 ? { geniusParagraphs: cleanGeniusParas } : {}),
+    lastFreshAuditAt: cleanFreshAt || undefined,
+    archivedAtLabel: cleanArchivedLabel || undefined,
+    scoreDelta: cleanDelta,
+    ...(cleanFreshSources ? { freshSources: cleanFreshSources } : {}),
+    ...(cleanSources ? { sources: cleanSources } : {})
+  };
+}
+
+export function sanitizeInvLogsMap(raw: unknown): Record<string, InvariantLogEntry[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const result: Record<string, InvariantLogEntry[]> = {};
+  Object.entries(raw as Record<string, unknown>).forEach(([key, list]) => {
+    if (!Array.isArray(list)) return;
+    const cleanList: InvariantLogEntry[] = [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      const rawKind = coerceDisplayText(entry.kind, 'BREAKDOWN').toUpperCase();
+      const kind: InvariantLogEntry['kind'] =
+        rawKind === 'REAUDIT' || rawKind === 'CHALLENGE' ? rawKind : 'BREAKDOWN';
+      const rawState = coerceDisplayText(entry.verdictState, '').toUpperCase();
+      const verdictState: InvariantLogEntry['verdictState'] =
+        rawState === 'ACCEPTED' || rawState === 'PARTIAL' || rawState === 'REJECTED'
+          ? rawState
+          : undefined;
+      const cleanSources: GroundingSource[] = Array.isArray(entry.sources)
+        ? entry.sources
+            .map((s) => {
+              if (!s || typeof s !== 'object') return null;
+              const rs = s as Record<string, unknown>;
+              const uri = coerceDisplayText(rs.uri).trim();
+              const title = coerceDisplayText(rs.title, uri || 'Source').trim();
+              return uri || title ? { uri: uri || '#', title: title || 'Source' } : null;
+            })
+            .filter((x): x is GroundingSource => x !== null)
+        : [];
+      const userPromptText = entry.userPrompt === null ? null : coerceDisplayText(entry.userPrompt, '').trim() || null;
+      cleanList.push({
+        id: coerceDisplayText(entry.id, `log-${cleanList.length + 1}`),
+        kind,
+        timestamp: coerceDisplayText(entry.timestamp, 'Just now'),
+        verdictTag: coerceDisplayText(entry.verdictTag, kind),
+        ...(verdictState ? { verdictState } : {}),
+        headline: coerceDisplayText(entry.headline, 'Invariant Log'),
+        userPrompt: userPromptText,
+        body: coerceDisplayText(entry.body, ''),
+        sources: cleanSources
+      });
+    }
+    if (cleanList.length > 0) {
+      result[String(key)] = cleanList;
+    }
+  });
+  return result;
+}
+
+export function enforceEnergyArbitrageLawOnAudit(rawAuditObj: AuditData): AuditData {
+  const auditObj = sanitizeAuditData(rawAuditObj);
   if (!auditObj || !Array.isArray(auditObj.invariants) || auditObj.invariants.length < 6) {
     return auditObj;
   }
@@ -1079,7 +1254,7 @@ export function canonicalizeAuditsCollection(
     }
     const normalized = enforceEnergyArbitrageLawOnAudit({
       ...val,
-      ticker: String(val.ticker || k)
+      ticker: coerceDisplayText(val.ticker, k)
         .toUpperCase()
         .replace(/[^A-Z0-9_-]/g, '')
     });

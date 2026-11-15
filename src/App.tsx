@@ -75,6 +75,7 @@ import {
   inspectStreamedAuditProgress,
   isResponseTextTruncated,
   resolveCanonicalAssetTicker,
+  sanitizeInvLogsMap,
   sortAuditTickersByGrade,
   stripTrailingDash,
   type AuditData,
@@ -162,6 +163,7 @@ import {
   summarizeArchivedAudit,
   type ArchivedAuditListFilters
 } from './data/agentArchiveApi.ts';
+import { computeDisplayLayoutMetrics } from './data/displayScale.ts';
 
 const INVARIANT_ICONS: Record<string, LucideIcon> = {
   '01': ShieldCheck,
@@ -288,8 +290,8 @@ function loadLocalLogsSnapshot(): Record<string, InvariantLogEntry[]> {
   try {
     const raw = window.localStorage.getItem(LOCAL_LOGS_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, InvariantLogEntry[]>;
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    const parsed = JSON.parse(raw) as unknown;
+    return sanitizeInvLogsMap(parsed);
   } catch {
     return {};
   }
@@ -497,6 +499,11 @@ function ThermodynamicAuditApp() {
         : false
   }));
   const isMobileViewport = viewportMetrics.width < 768;
+  const isLgDesktop = viewportMetrics.width >= 1024;
+  const displayMetrics = useMemo(
+    () => computeDisplayLayoutMetrics(viewportMetrics),
+    [viewportMetrics]
+  );
   const pinOrientationMode = resolvePinOrientationMode(viewportMetrics);
 
   // Refs for the Grade-Scaled Harmonic Wave Circle Shape (when not hovering)
@@ -831,7 +838,8 @@ function ThermodynamicAuditApp() {
           remoteAudits[tk] = enforceEnergyArbitrageLawOnAudit(candidateAudit);
 
           if (archivedInvLogs && typeof archivedInvLogs === 'object') {
-            Object.entries(archivedInvLogs).forEach(([invId, logsArr]) => {
+            const cleanedMap = sanitizeInvLogsMap(archivedInvLogs);
+            Object.entries(cleanedMap).forEach(([invId, logsArr]) => {
               if (Array.isArray(logsArr) && logsArr.length > 0) {
                 remoteLogs[`${tk}:${invId}`] = logsArr;
               }
@@ -1117,12 +1125,16 @@ function ThermodynamicAuditApp() {
         return;
       }
 
-      setAudits((prev) => ({ ...prev, ...importedAudits }));
-      const nextLogsMap =
+      setAudits((prev) => canonicalizeAuditsCollection({ ...prev, ...importedAudits }));
+      const cleanedImportedLogs =
         parsed.invLogs && typeof parsed.invLogs === 'object'
-          ? { ...invLogs, ...parsed.invLogs }
+          ? sanitizeInvLogsMap(parsed.invLogs)
+          : {};
+      const nextLogsMap =
+        Object.keys(cleanedImportedLogs).length > 0
+          ? { ...invLogs, ...cleanedImportedLogs }
           : invLogs;
-      if (parsed.invLogs && typeof parsed.invLogs === 'object') {
+      if (Object.keys(cleanedImportedLogs).length > 0) {
         setInvLogs(nextLogsMap);
       }
 
@@ -1240,6 +1252,13 @@ function ThermodynamicAuditApp() {
     syncForegroundCenterToBackdrop();
     const rafId = window.requestAnimationFrame(syncForegroundCenterToBackdrop);
     const settleTimer = window.setTimeout(syncForegroundCenterToBackdrop, 420);
+    const postEnterTimer = window.setTimeout(syncForegroundCenterToBackdrop, 520);
+    const postTransitionTimer = window.setTimeout(syncForegroundCenterToBackdrop, 780);
+    const heroElForTransition = heroDockRef.current;
+    const onHeroTransitionEnd = (e: TransitionEvent) => {
+      if (e.propertyName === 'transform') syncForegroundCenterToBackdrop();
+    };
+    heroElForTransition?.addEventListener('transitionend', onHeroTransitionEnd);
     window.addEventListener('resize', syncForegroundCenterToBackdrop, { passive: true });
 
     let ro: ResizeObserver | null = null;
@@ -1251,6 +1270,9 @@ function ThermodynamicAuditApp() {
     return () => {
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(settleTimer);
+      window.clearTimeout(postEnterTimer);
+      window.clearTimeout(postTransitionTimer);
+      heroElForTransition?.removeEventListener('transitionend', onHeroTransitionEnd);
       window.removeEventListener('resize', syncForegroundCenterToBackdrop);
       if (ro) ro.disconnect();
     };
@@ -1260,6 +1282,9 @@ function ThermodynamicAuditApp() {
     hasActiveAudit,
     isAuditing,
     isMobileViewport,
+    viewportMetrics.width,
+    viewportMetrics.height,
+    displayMetrics.stageSizePx,
     activeKey,
     auditError,
     archiveToast
@@ -1324,6 +1349,9 @@ function ThermodynamicAuditApp() {
       return 1.25 * (1.8 + Math.pow(invScore, 1.12) * 6.8);
     });
 
+    let centerSettledZero = false;
+    const satSettledZero = [false, false, false, false, false, false];
+
     const stepCenterAndSats = (dt = 1) => {
       let keepAnimating = false;
 
@@ -1339,30 +1367,33 @@ function ThermodynamicAuditApp() {
         st.phase += centerSpeed;
       }
 
-      if (mainWavePathRef.current) {
-        mainWavePathRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_MAIN, 140, 140, 102, st.amp, st.phase, 0.82, 1.35)
-        );
-      }
-      if (echoWavePathRef.current) {
-        echoWavePathRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_ECHO, 140, 140, 106, st.amp * 0.78, -st.phase * 0.9, 0.82, 1.35)
-        );
-      }
-      if (innerWavePathRef.current) {
-        innerWavePathRef.current.setAttribute(
-          'd',
-          buildFastWavePath(NUCLEUS_LUT_INNER, 140, 140, 90, st.amp * 0.45, st.phase * 1.25, 0.82, 1.35)
-        );
+      if (st.amp > 0.01 || targetCenterAmp > 0.01 || !centerSettledZero) {
+        if (mainWavePathRef.current) {
+          mainWavePathRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_MAIN, 140, 140, 102, st.amp, st.phase, 0.82, 1.35)
+          );
+        }
+        if (echoWavePathRef.current) {
+          echoWavePathRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_ECHO, 140, 140, 106, st.amp * 0.78, -st.phase * 0.9, 0.82, 1.35)
+          );
+        }
+        if (innerWavePathRef.current) {
+          innerWavePathRef.current.setAttribute(
+            'd',
+            buildFastWavePath(NUCLEUS_LUT_INNER, 140, 140, 90, st.amp * 0.45, st.phase * 1.25, 0.82, 1.35)
+          );
+        }
+        centerSettledZero = st.amp <= 0.01 && targetCenterAmp <= 0.01;
       }
 
       if (st.amp > 0.01 || Math.abs(targetCenterAmp - st.amp) > 0.01) {
         keepAnimating = true;
       }
 
-      // 2. Update 6 Satellite Invariant Bubble Waves (when expanded)
+      // 2. Update 6 Satellite Invariant Bubble Waves (only when expanded or settling back to 0)
       for (let idx = 0; idx < 6; idx++) {
         const satSt = satWaveStatesRef.current[idx];
         const tAmp = targetSatAmps[idx];
@@ -1378,27 +1409,30 @@ function ThermodynamicAuditApp() {
           satSt.phase += satSpeed;
         }
 
-        const mainEl = satMainWaveRefs.current[idx];
-        const echoEl = satEchoWaveRefs.current[idx];
-        const innerEl = satInnerWaveRefs.current[idx];
+        if (satSt.amp > 0.01 || tAmp > 0.01 || !satSettledZero[idx]) {
+          const mainEl = satMainWaveRefs.current[idx];
+          const echoEl = satEchoWaveRefs.current[idx];
+          const innerEl = satInnerWaveRefs.current[idx];
 
-        if (mainEl) {
-          mainEl.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_MAIN, 70, 70, 45, satSt.amp, satSt.phase, 0.82, 1.35)
-          );
-        }
-        if (echoEl) {
-          echoEl.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_ECHO, 70, 70, 47.5, satSt.amp * 0.76, -satSt.phase * 0.88, 0.82, 1.35)
-          );
-        }
-        if (innerEl) {
-          innerEl.setAttribute(
-            'd',
-            buildFastWavePath(SAT_LUT_INNER, 70, 70, 39, satSt.amp * 0.44, satSt.phase * 1.22, 0.82, 1.35)
-          );
+          if (mainEl) {
+            mainEl.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_MAIN, 70, 70, 45, satSt.amp, satSt.phase, 0.82, 1.35)
+            );
+          }
+          if (echoEl) {
+            echoEl.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_ECHO, 70, 70, 47.5, satSt.amp * 0.76, -satSt.phase * 0.88, 0.82, 1.35)
+            );
+          }
+          if (innerEl) {
+            innerEl.setAttribute(
+              'd',
+              buildFastWavePath(SAT_LUT_INNER, 70, 70, 39, satSt.amp * 0.44, satSt.phase * 1.22, 0.82, 1.35)
+            );
+          }
+          satSettledZero[idx] = satSt.amp <= 0.01 && tAmp <= 0.01;
         }
 
         if (satSt.amp > 0.01 || Math.abs(tAmp - satSt.amp) > 0.01) {
@@ -1416,7 +1450,7 @@ function ThermodynamicAuditApp() {
         unsub();
         unsub = null;
       }
-    }, 45);
+    }, 30);
 
     return () => {
       if (unsub) unsub();
@@ -3305,7 +3339,7 @@ function ThermodynamicAuditApp() {
           }
         }
         .animate-stage-enter {
-          animation: stageCrossfade 460ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both;
+          animation: stageCrossfade 360ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
           will-change: transform, opacity;
         }
         @keyframes syncExpandDown {
@@ -3426,11 +3460,13 @@ function ThermodynamicAuditApp() {
           will-change: transform, opacity;
         }
         .bg-core-breath {
+          transform: translate3d(-50%, -50%, 0);
           animation: bgCoreBreath var(--bg-pulse-dur, 4.4s) ease-in-out infinite;
           backface-visibility: hidden;
           will-change: transform, opacity;
         }
         .bg-halo-wave {
+          transform: translate3d(-50%, -50%, 0);
           animation: bgHaloWave var(--bg-pulse-dur, 4.4s) cubic-bezier(0.22, 1, 0.36, 1) infinite;
           backface-visibility: hidden;
           will-change: transform, opacity;
@@ -3452,11 +3488,13 @@ function ThermodynamicAuditApp() {
           }
         }
         .genius-vortex-spin {
+          transform: translate3d(-50%, -50%, 0);
           animation: geniusVortexSpin var(--vortex-dur, 52s) linear infinite;
           backface-visibility: hidden;
           will-change: transform;
         }
         .genius-math-float {
+          transform: translate3d(-50%, -50%, 0) scale(var(--math-scale, 1));
           animation: geniusMathFloat var(--math-dur, 24s) ease-in-out infinite;
           animation-delay: var(--math-delay, 0s);
           backface-visibility: hidden;
@@ -3464,8 +3502,16 @@ function ThermodynamicAuditApp() {
         }
         @media (prefers-reduced-motion: reduce) {
           .genius-vortex-spin,
-          .genius-math-float {
+          .genius-math-float,
+          .animate-stage-enter,
+          .animate-pin-enter,
+          .animate-card-fade,
+          .animate-sync-expand-down,
+          .animate-modal-backdrop,
+          .animate-modal-sheet {
             animation: none;
+            opacity: 1;
+            transform: none;
           }
         }
         .bg-anim-paused .bg-field-pulse,
@@ -4076,6 +4122,11 @@ function ThermodynamicAuditApp() {
         <>
           <aside
             data-tutorial-id="passed-sidebar"
+            style={
+              displayMetrics.sidebarWidthPx
+                ? { width: `${displayMetrics.sidebarWidthPx}px` }
+                : undefined
+            }
             className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
           >
             <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
@@ -4114,6 +4165,7 @@ function ThermodynamicAuditApp() {
                     onSelectTicker={stableSelectTicker}
                     onTogglePin={stableTogglePin}
                     seedIndex={idx}
+                    sizePx={displayMetrics.sidebarBubbleSizePx}
                   />
                 ))}
               </div>
@@ -4134,6 +4186,7 @@ function ThermodynamicAuditApp() {
                         onSelectTicker={stableSelectTicker}
                         onTogglePin={stableTogglePin}
                         seedIndex={idx + 30}
+                        sizePx={displayMetrics.sidebarBubbleSizePx}
                       />
                     ))}
                   </div>
@@ -4144,6 +4197,11 @@ function ThermodynamicAuditApp() {
 
           <aside
             data-tutorial-id="failed-sidebar"
+            style={
+              displayMetrics.sidebarWidthPx
+                ? { width: `${displayMetrics.sidebarWidthPx}px` }
+                : undefined
+            }
             className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
           >
             <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
@@ -4182,6 +4240,7 @@ function ThermodynamicAuditApp() {
                     onSelectTicker={stableSelectTicker}
                     onTogglePin={stableTogglePin}
                     seedIndex={idx + 50}
+                    sizePx={displayMetrics.sidebarBubbleSizePx}
                   />
                 ))}
               </div>
@@ -4202,6 +4261,7 @@ function ThermodynamicAuditApp() {
                         onSelectTicker={stableSelectTicker}
                         onTogglePin={stableTogglePin}
                         seedIndex={idx + 80}
+                        sizePx={displayMetrics.sidebarBubbleSizePx}
                       />
                     ))}
                   </div>
@@ -4216,8 +4276,16 @@ function ThermodynamicAuditApp() {
           2B. CENTER ARENA (BLANK GOOGLE-STYLE LANDING, SINGLE SPHERE, OR 2–4 CONSTELLATIONS)
          ===================================================================== */}
       <main
-        className={`relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-6 flex flex-col items-center justify-start ${
-          !isLandingIdle && !isMultiStage ? 'pt-2 sm:pt-3' : 'pt-7 sm:pt-8'
+        style={
+          displayMetrics.mainHorizontalPadPx
+            ? {
+                paddingLeft: `${displayMetrics.mainHorizontalPadPx}px`,
+                paddingRight: `${displayMetrics.mainHorizontalPadPx}px`
+              }
+            : undefined
+        }
+        className={`relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-3 sm:pb-4 flex flex-col items-center justify-start ${
+          !isLandingIdle && !isMultiStage ? 'pt-0.5 sm:pt-2' : 'pt-7 sm:pt-8'
         }`}
       >
         {isLandingIdle ? (
@@ -4234,9 +4302,15 @@ function ThermodynamicAuditApp() {
               fourFormation,
               pinOrientationMode
             );
+            const widthFitScale = Math.max(0.32, (constellationWrapWidth - 8) / layout.width);
+            const heightFitScale =
+              pinOrientationMode === 'desktop'
+                ? Math.max(0.76, (viewportMetrics.height - 645) / Math.max(1, layout.height))
+                : displayMetrics.pinMaxScale;
             const responsiveScale = Math.min(
-              1,
-              Math.max(0.32, (constellationWrapWidth - 8) / layout.width)
+              displayMetrics.pinMaxScale,
+              widthFitScale,
+              heightFitScale
             );
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
 
@@ -4986,21 +5060,46 @@ function ThermodynamicAuditApp() {
             );
           })()
         ) : (
-          <div
-            ref={singleStageWrapRef}
-            className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
-          >
-            <div
-              ref={arenaRef}
-              data-tutorial-id="center-arena"
-              onMouseEnter={() => setIsArenaHovered(true)}
-              onMouseLeave={() => {
-                setIsArenaHovered(false);
-                setHoveredInvId(null);
-              }}
-              className="relative flex items-center justify-center select-none scale-[0.78] sm:scale-95 md:scale-[0.82] lg:scale-100 transition-transform"
-              style={{ width: `${stageSize}px`, height: `${stageSize}px` }}
-            >
+          (() => {
+            const nonLgScale = !isLgDesktop
+              ? viewportMetrics.width < 640
+                ? Math.min(0.76, Math.max(0.62, (viewportMetrics.width - 28) / stageSize))
+                : viewportMetrics.width < 768
+                ? 0.88
+                : 0.82
+              : displayMetrics.arenaScale;
+            const wrapperPx = isLgDesktop
+              ? displayMetrics.stageSizePx
+              : Math.round(stageSize * nonLgScale);
+
+            return (
+              <div
+                ref={singleStageWrapRef}
+                className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
+              >
+                <div
+                  className="flex items-center justify-center shrink-0"
+                  style={{
+                    width: `${wrapperPx}px`,
+                    height: `${wrapperPx}px`
+                  }}
+                >
+                  <div
+                    ref={arenaRef}
+                    data-tutorial-id="center-arena"
+                    onMouseEnter={() => setIsArenaHovered(true)}
+                    onMouseLeave={() => {
+                      setIsArenaHovered(false);
+                      setHoveredInvId(null);
+                    }}
+                    className="relative flex items-center justify-center select-none transition-transform"
+                    style={{
+                      width: `${stageSize}px`,
+                      height: `${stageSize}px`,
+                      transformOrigin: 'center center',
+                      transform: nonLgScale !== 1 ? `scale(${nonLgScale})` : undefined
+                    }}
+                  >
               <svg
                 width={stageSize}
                 height={stageSize}
@@ -5456,12 +5555,19 @@ function ThermodynamicAuditApp() {
                 )}
               </button>
             </div>
+            </div>
 
             {/* DOCKED PROGRESS TOAST (DURING AUDIT) & QUICK-SCAN HOVER CARD */}
             <div
               style={{ overflowAnchor: 'none' }}
-              className={`w-full max-w-xl min-h-[184px] flex flex-col items-center ${
-                isAuditing ? 'mt-3 sm:mt-5 justify-start' : 'mt-1 justify-start pt-1'
+              className={`w-full max-w-3xl flex flex-col items-center ${
+                isAuditing
+                  ? 'min-h-[184px] mt-3 sm:mt-5 justify-start'
+                  : activeHoveredInvariant
+                  ? 'min-h-[184px] mt-1 justify-start pt-1'
+                  : isMobileViewport
+                  ? 'min-h-0 mt-1 justify-start'
+                  : 'min-h-[108px] mt-0.5 justify-start'
               }`}
             >
               {isAuditing ? (
@@ -5577,7 +5683,13 @@ function ThermodynamicAuditApp() {
               ) : (
                 <div
                   key={`stage-prompt-${currentAudit.ticker}-${isPinned}`}
-                  className="animate-card-fade text-center space-y-2.5 pt-2"
+                  data-testid="stage-bottom-controls"
+                  style={{
+                    marginTop: `${
+                      isMobileViewport ? 4 : displayMetrics.bottomControlsOffsetPx
+                    }px`
+                  }}
+                  className="animate-card-fade text-center space-y-2 pt-0.5"
                 >
                   <ProvenanceBadgesStrip
                     audit={currentAudit}
@@ -5618,7 +5730,11 @@ function ThermodynamicAuditApp() {
                       : 'Hover center sphere (or tap to pin & compare up to 4 bubbles) to trigger 6-invariant radial fission'}
                   </p>
 
-                  <div className="flex flex-wrap items-center justify-center gap-2">
+                  <div
+                    data-testid="stage-bottom-buttons"
+                    style={{ marginTop: `${displayMetrics.buttonRowGapPx}px` }}
+                    className="flex flex-wrap items-center justify-center gap-2"
+                  >
                     <button
                       type="button"
                       data-tutorial-id="pin-compare"
@@ -5724,6 +5840,8 @@ function ThermodynamicAuditApp() {
               )}
             </div>
           </div>
+            );
+          })()
         )}
 
         {/* Mobile-Only (< 768px) Pass / Fail Lists */}
@@ -7595,15 +7713,16 @@ interface ErrorBoundaryProps {
 interface ErrorBoundaryState {
   hasError: boolean;
   errorMessage: string;
+  resetKey: number;
 }
 
 class AuditErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, errorMessage: '' };
+    this.state = { hasError: false, errorMessage: '', resetKey: 0 };
   }
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return {
       hasError: true,
       errorMessage: error?.message || 'Unexpected rendering exception.'
@@ -7613,6 +7732,23 @@ class AuditErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('Thermodynamic Audit UI caught an error:', error, info);
   }
+
+  private handleResetAndResume = () => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(LOCAL_AUDITS_STORAGE_KEY);
+        window.localStorage.removeItem(SANDBOX_AUDITS_STORAGE_KEY);
+        window.localStorage.removeItem(LOCAL_LOGS_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage access failures
+    }
+    this.setState((prev) => ({
+      hasError: false,
+      errorMessage: '',
+      resetKey: prev.resetKey + 1
+    }));
+  };
 
   render() {
     if (this.state.hasError) {
@@ -7627,7 +7763,7 @@ class AuditErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
             </p>
             <button
               type="button"
-              onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+              onClick={this.handleResetAndResume}
               className="px-4 py-2 rounded-full bg-[#49EACB] text-[#041713] text-xs font-bold hover:brightness-110 transition"
             >
               Reset Stage &amp; Resume
@@ -7636,7 +7772,7 @@ class AuditErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
         </div>
       );
     }
-    return this.props.children;
+    return <div key={this.state.resetKey}>{this.props.children}</div>;
   }
 }
 

@@ -60,24 +60,34 @@ export function TutorialOverlay({
 
   const measureTarget = useCallback(() => {
     if (!isOpen) return;
-    setViewport({
-      width: window.innerWidth,
-      height: window.innerHeight
-    });
+    const nextVw = window.innerWidth;
+    const nextVh = window.innerHeight;
+    setViewport((prev) =>
+      prev.width === nextVw && prev.height === nextVh ? prev : { width: nextVw, height: nextVh }
+    );
 
     const el = findVisibleTarget(step.targetId);
     if (!el) {
-      setTargetRect(null);
+      setTargetRect((prev) => (prev === null ? prev : null));
       return;
     }
     const r = el.getBoundingClientRect();
     const pad = 10;
-    setTargetRect({
+    const nextRect: SpotlightRect = {
       top: Math.max(4, Math.round(r.top - pad)),
       left: Math.max(4, Math.round(r.left - pad)),
       width: Math.round(r.width + pad * 2),
       height: Math.round(r.height + pad * 2)
-    });
+    };
+    setTargetRect((prev) =>
+      prev &&
+      Math.abs(prev.top - nextRect.top) <= 1 &&
+      Math.abs(prev.left - nextRect.left) <= 1 &&
+      Math.abs(prev.width - nextRect.width) <= 1 &&
+      Math.abs(prev.height - nextRect.height) <= 1
+        ? prev
+        : nextRect
+    );
   }, [isOpen, step.targetId]);
 
   useLayoutEffect(() => {
@@ -116,7 +126,7 @@ export function TutorialOverlay({
     alignMobileScroll();
     measureTarget();
 
-    // Re-sync scroll briefly if an entering target mounts/transforms (e.g. center-arena) and track layout animations
+    // Track continuously past the 740ms hero dock transform and settle cleanly afterwards
     let frameCount = 0;
     let rafId = 0;
     const track = () => {
@@ -125,14 +135,16 @@ export function TutorialOverlay({
       }
       measureTarget();
       frameCount++;
-      if (frameCount < 45) {
+      if (frameCount < 75) {
         rafId = requestAnimationFrame(track);
       }
     };
     rafId = requestAnimationFrame(track);
+    const t820 = window.setTimeout(measureTarget, 820);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
+      window.clearTimeout(t820);
     };
   }, [isOpen, stepIndex, step.targetId, measureTarget]);
 
@@ -141,6 +153,9 @@ export function TutorialOverlay({
     const onResizeOrScroll = () => measureTarget();
     window.addEventListener('resize', onResizeOrScroll);
     window.addEventListener('scroll', onResizeOrScroll, true);
+    document.addEventListener('transitionend', onResizeOrScroll, true);
+    document.addEventListener('animationend', onResizeOrScroll, true);
+    const syncInterval = window.setInterval(onResizeOrScroll, 180);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && cardRef.current) {
@@ -159,6 +174,9 @@ export function TutorialOverlay({
     return () => {
       window.removeEventListener('resize', onResizeOrScroll);
       window.removeEventListener('scroll', onResizeOrScroll, true);
+      document.removeEventListener('transitionend', onResizeOrScroll, true);
+      document.removeEventListener('animationend', onResizeOrScroll, true);
+      window.clearInterval(syncInterval);
       if (ro) ro.disconnect();
     };
   }, [isOpen, measureTarget]);

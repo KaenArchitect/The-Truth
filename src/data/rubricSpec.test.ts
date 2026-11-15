@@ -5,6 +5,7 @@ import {
   type InvariantData,
   canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
+  coerceDisplayText,
   computeRunningAuditAccent,
   deriveGradeFromTotal,
   enforceEnergyArbitrageLawOnAudit,
@@ -16,6 +17,8 @@ import {
   normalizeAuditPayload,
   resolveCanonicalAssetTicker,
   safeParseAuditJson,
+  sanitizeAuditData,
+  sanitizeInvLogsMap,
   sortAuditTickersByGrade
 } from './rubricSpec.ts';
 import { partitionTickersByEcosystem } from './auditProvenance.ts';
@@ -394,3 +397,65 @@ test('Fiat currencies enforce ZERO_JOULE_BFT, Grade F (0.0 / 6.0), and isUpperLa
   assert.equal(euroEnforced.grade, 'F');
   assert.equal(euroEnforced.totalScore, 0);
 });
+
+test('coerceDisplayText, sanitizeAuditData, and sanitizeInvLogsMap convert Firestore Timestamps and strip render-unsafe objects', () => {
+  const tsText = coerceDisplayText({ seconds: 1700000000, nanoseconds: 123000000 });
+  assert.equal(typeof tsText, 'string');
+  assert.ok(tsText.length > 0);
+  assert.equal(coerceDisplayText({ bad: 'object' }, 'fallback'), 'fallback');
+
+  const dirtyAudit = makeDummyAudit(
+    {
+      ticker: 'USD',
+      name: ({ nested: true } as unknown) as string,
+      lastFreshAuditAt: ({ seconds: 1700000000, nanoseconds: 0 } as unknown) as string,
+      archivedAtLabel: ({ toDate: () => new Date('2026-11-15T12:00:00Z') } as unknown) as string,
+      conclusion: ({ unexpected: 1 } as unknown) as string
+    },
+    [0, 0, 0, 0, 0, 0]
+  );
+  dirtyAudit.invariants[0].telemetry = ({ obj: 'bad' } as unknown) as string;
+  dirtyAudit.invariants[0].receipts = [
+    'Valid',
+    ({ broken: true } as unknown) as string
+  ];
+
+  const sanitized = sanitizeAuditData(dirtyAudit);
+  assert.equal(typeof sanitized.name, 'string');
+  assert.equal(typeof sanitized.lastFreshAuditAt, 'string');
+  assert.ok((sanitized.lastFreshAuditAt || '').length > 0);
+  assert.equal(typeof sanitized.archivedAtLabel, 'string');
+  assert.ok((sanitized.archivedAtLabel || '').length > 0);
+  assert.equal(sanitized.conclusion, '');
+  assert.equal(sanitized.invariants[0].telemetry, '');
+  assert.deepEqual(sanitized.invariants[0].receipts, ['Valid']);
+
+  const canonical = canonicalizeAuditsCollection({ USD: dirtyAudit });
+  assert.equal(typeof canonical.USD.lastFreshAuditAt, 'string');
+
+  const dirtyLogs = sanitizeInvLogsMap({
+    'KAS:01': [
+      {
+        id: 'log-1',
+        kind: 'CHALLENGE',
+        timestamp: { seconds: 1700000000, nanoseconds: 0 },
+        verdictTag: { label: 'REJECTED' },
+        verdictState: 'REJECTED',
+        headline: { text: 'Preserved' },
+        userPrompt: { bad: 1 },
+        body: 'Evidence checked.',
+        sources: [{ uri: 'https://example.com', title: { nested: 1 } }]
+      }
+    ],
+    corruptKey: 'not-an-array'
+  });
+
+  assert.equal(dirtyLogs.corruptKey, undefined);
+  assert.equal(dirtyLogs['KAS:01'].length, 1);
+  assert.equal(typeof dirtyLogs['KAS:01'][0].timestamp, 'string');
+  assert.equal(dirtyLogs['KAS:01'][0].verdictTag, 'REJECTED');
+  assert.equal(dirtyLogs['KAS:01'][0].headline, 'Preserved');
+  assert.equal(dirtyLogs['KAS:01'][0].userPrompt, null);
+  assert.equal(dirtyLogs['KAS:01'][0].sources[0].title, 'https://example.com');
+});
+
