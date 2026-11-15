@@ -1,0 +1,273 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'Bardazon@gmail.com' ||
+        request.auth.token.email == 'bardazon@gmail.com'
+      );
+    }
+
+    function isValidTickerId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 16 && id.matches('^[A-Z0-9_\\-]+$');
+    }
+
+    function isValidCohortId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 32 && id.matches('^[a-z0-9_\\-]+$');
+    }
+
+    function isValidGrade(grade) {
+      return grade is string && grade.size() >= 1 && grade.size() <= 4 &&
+        grade in ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'F'];
+    }
+
+    function isValidConsensusFamily(family) {
+      return family is string && family.size() >= 1 && family.size() <= 48 &&
+        family in [
+          'BLOCKDAG_POW',
+          'LINEAR_POW',
+          'PHYSICAL_COMMODITY',
+          'ENERGY_ARBITRAGED_POW',
+          'CARRIER_SUBORDINATED_OVERLAY',
+          'ZERO_JOULE_BFT'
+        ];
+    }
+
+    function isNum(val) {
+      return val is int || val is float;
+    }
+
+    function isValidArchivedAudit(data, tickerId) {
+      return data.keys().hasAll([
+          'ticker',
+          'name',
+          'consensusFamily',
+          'architecture',
+          'grade',
+          'totalScore',
+          'certainty',
+          'conclusion',
+          'invariants',
+          'queryAliases',
+          'isArchived',
+          'archivedAtMs',
+          'archivedAtLabel',
+          'archiveRevision',
+          'originalAuthorUid',
+          'archivedByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'ticker',
+          'name',
+          'consensusFamily',
+          'architecture',
+          'grade',
+          'totalScore',
+          'certainty',
+          'conclusion',
+          'invariants',
+          'queryAliases',
+          'archivedInvLogs',
+          'sources',
+          'isArchived',
+          'archivedAtMs',
+          'archivedAtLabel',
+          'archiveRevision',
+          'originalAuthorUid',
+          'archivedByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidTickerId(data.ticker) &&
+        data.ticker == tickerId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        isValidConsensusFamily(data.consensusFamily) &&
+        data.architecture is string && data.architecture.size() >= 1 && data.architecture.size() <= 400 &&
+        isValidGrade(data.grade) &&
+        isNum(data.totalScore) && data.totalScore >= 0.0 && data.totalScore <= 6.0 &&
+        data.certainty is string && data.certainty.size() >= 1 && data.certainty.size() <= 64 &&
+        data.conclusion is string && data.conclusion.size() >= 1 && data.conclusion.size() <= 4000 &&
+        data.invariants is list && data.invariants.size() == 6 && data.invariants[0] is map &&
+        data.queryAliases is list && data.queryAliases.size() >= 1 && data.queryAliases.size() <= 20 && data.queryAliases[0] is string &&
+        (!('archivedInvLogs' in data) || data.archivedInvLogs is map) &&
+        (!('sources' in data) || (data.sources is list && data.sources.size() <= 12)) &&
+        data.isArchived == true &&
+        isNum(data.archivedAtMs) && data.archivedAtMs > 0 &&
+        data.archivedAtLabel is string && data.archivedAtLabel.size() >= 1 && data.archivedAtLabel.size() <= 64 &&
+        data.archiveRevision is int && data.archiveRevision >= 1 &&
+        data.originalAuthorUid is string && data.originalAuthorUid.size() >= 1 && data.originalAuthorUid.size() <= 128 &&
+        data.archivedByUid is string && data.archivedByUid.size() >= 1 && data.archivedByUid.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidGainsCohortSnapshot(data, cohortId) {
+      return data.keys().hasAll([
+          'cohortId',
+          'isPublished',
+          'isCustomized',
+          'sourceLabel',
+          'passed',
+          'failed',
+          'updatedAtMs',
+          'updatedAtLabel',
+          'revision',
+          'originalAuthorUid',
+          'updatedByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'cohortId',
+          'isPublished',
+          'isCustomized',
+          'sourceLabel',
+          'passed',
+          'failed',
+          'updatedAtMs',
+          'updatedAtLabel',
+          'revision',
+          'originalAuthorUid',
+          'updatedByUid',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidCohortId(data.cohortId) &&
+        data.cohortId == cohortId &&
+        data.isPublished == true &&
+        data.isCustomized is bool &&
+        data.sourceLabel is string && data.sourceLabel.size() >= 1 && data.sourceLabel.size() <= 80 &&
+        data.passed is list && data.passed.size() >= 1 && data.passed.size() <= 60 && data.passed[0] is map &&
+        data.failed is list && data.failed.size() >= 1 && data.failed.size() <= 60 && data.failed[0] is map &&
+        isNum(data.updatedAtMs) && data.updatedAtMs > 0 &&
+        data.updatedAtLabel is string && data.updatedAtLabel.size() >= 1 && data.updatedAtLabel.size() <= 64 &&
+        data.revision is int && data.revision >= 1 &&
+        data.originalAuthorUid is string && data.originalAuthorUid.size() >= 1 && data.originalAuthorUid.size() <= 128 &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    match /archived_audits/{tickerId} {
+      allow get: if isValidTickerId(tickerId) &&
+        existing().isArchived == true &&
+        existing().ticker is string &&
+        existing().invariants is list &&
+        existing().invariants.size() == 6;
+
+      allow list: if existing().isArchived == true;
+
+      allow create: if isVerifiedUser() &&
+        isValidTickerId(tickerId) &&
+        isValidArchivedAudit(incoming(), tickerId) &&
+        incoming().originalAuthorUid == request.auth.uid &&
+        incoming().archivedByUid == request.auth.uid &&
+        incoming().archiveRevision == 1 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidTickerId(tickerId) &&
+        isValidArchivedAudit(incoming(), tickerId) &&
+        incoming().ticker == existing().ticker &&
+        incoming().originalAuthorUid == existing().originalAuthorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().archivedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().archiveRevision == existing().archiveRevision + 1 &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'consensusFamily',
+            'architecture',
+            'grade',
+            'totalScore',
+            'certainty',
+            'conclusion',
+            'invariants',
+            'queryAliases',
+            'archivedInvLogs',
+            'sources',
+            'archivedAtMs',
+            'archivedAtLabel',
+            'archiveRevision',
+            'archivedByUid',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isValidTickerId(tickerId) && isVerifiedUser() &&
+        (existing().originalAuthorUid == request.auth.uid || isAdmin());
+    }
+
+    match /gains_cohorts/{cohortId} {
+      allow get: if isValidCohortId(cohortId) &&
+        existing().isPublished == true &&
+        existing().passed is list &&
+        existing().failed is list;
+
+      allow list: if existing().isPublished == true;
+
+      allow create: if isVerifiedUser() &&
+        isValidCohortId(cohortId) &&
+        isValidGainsCohortSnapshot(incoming(), cohortId) &&
+        incoming().originalAuthorUid == request.auth.uid &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().revision == 1 &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser() &&
+        isValidCohortId(cohortId) &&
+        isValidGainsCohortSnapshot(incoming(), cohortId) &&
+        incoming().cohortId == existing().cohortId &&
+        incoming().originalAuthorUid == existing().originalAuthorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        incoming().revision == existing().revision + 1 &&
+        (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'isCustomized',
+            'sourceLabel',
+            'passed',
+            'failed',
+            'updatedAtMs',
+            'updatedAtLabel',
+            'revision',
+            'updatedByUid',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isValidCohortId(cohortId) && isVerifiedUser() &&
+        (existing().originalAuthorUid == request.auth.uid || isAdmin());
+    }
+  }
+}

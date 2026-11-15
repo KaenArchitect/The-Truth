@@ -1,0 +1,237 @@
+{
+  "entities": {
+    "ArchivedAudit": {
+      "title": "ArchivedAudit",
+      "description": "Persisted 6-invariant thermodynamic protocol or commodity audit stored in the shared 0-credit vault.",
+      "type": "object",
+      "properties": {
+        "ticker": {
+          "type": "string",
+          "description": "Uppercase normalized asset ticker symbol.",
+          "minLength": 1,
+          "maxLength": 16,
+          "pattern": "^[A-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable protocol or commodity name.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "consensusFamily": {
+          "type": "string",
+          "description": "Canonical physics consensus family classification.",
+          "enum": [
+            "BLOCKDAG_POW",
+            "LINEAR_POW",
+            "PHYSICAL_COMMODITY",
+            "ENERGY_ARBITRAGED_POW",
+            "CARRIER_SUBORDINATED_OVERLAY",
+            "ZERO_JOULE_BFT"
+          ],
+          "maxLength": 48
+        },
+        "architecture": {
+          "type": "string",
+          "description": "Architectural summary of consensus, supply, and execution model.",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "grade": {
+          "type": "string",
+          "description": "Terminal compliance letter grade.",
+          "enum": ["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F"],
+          "maxLength": 4
+        },
+        "totalScore": {
+          "type": "number",
+          "description": "Sum of all 6 invariant scores between 0.0 and 6.0."
+        },
+        "certainty": {
+          "type": "string",
+          "description": "GRADE evidence certainty label.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "conclusion": {
+          "type": "string",
+          "description": "High-density terminal synthesis conclusion paragraph.",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "invariants": {
+          "type": "array",
+          "description": "Exact 6-element ordered list of evaluated thermodynamic invariants (01..06)."
+        },
+        "queryAliases": {
+          "type": "array",
+          "description": "Bounded list of up to 20 search alias strings mapped to this ticker."
+        },
+        "archivedInvLogs": {
+          "type": "object",
+          "description": "Map of invariant IDs ('01'..'06') to bounded challenge/breakdown/re-audit log arrays."
+        },
+        "sources": {
+          "type": "array",
+          "description": "Optional bounded list of up to 12 Google Search grounding citations."
+        },
+        "isArchived": {
+          "type": "boolean",
+          "description": "Indicates this audit document is published to the shared vault."
+        },
+        "archivedAtMs": {
+          "type": "number",
+          "description": "Epoch milliseconds of last archive write."
+        },
+        "archivedAtLabel": {
+          "type": "string",
+          "description": "Formatted display timestamp string.",
+          "maxLength": 64
+        },
+        "archiveRevision": {
+          "type": "integer",
+          "description": "Monotonically increasing revision integer (>= 1)."
+        },
+        "originalAuthorUid": {
+          "type": "string",
+          "description": "Firebase UID of the verified user who originally archived this document.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "archivedByUid": {
+          "type": "string",
+          "description": "Firebase UID of the verified user who performed the latest update.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        }
+      },
+      "required": [
+        "ticker",
+        "name",
+        "consensusFamily",
+        "architecture",
+        "grade",
+        "totalScore",
+        "certainty",
+        "conclusion",
+        "invariants",
+        "queryAliases",
+        "isArchived",
+        "archivedAtMs",
+        "archivedAtLabel",
+        "archiveRevision",
+        "originalAuthorUid",
+        "archivedByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GainsCohortSnapshot": {
+      "title": "GainsCohortSnapshot",
+      "description": "Persisted E > 0 vs E = 0 thermodynamic gains cohort asset lists and synced spot price snapshots.",
+      "type": "object",
+      "properties": {
+        "cohortId": {
+          "type": "string",
+          "description": "Lowercase normalized cohort snapshot identifier (e.g. default).",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-z0-9_\\-]+$"
+        },
+        "isPublished": {
+          "type": "boolean",
+          "description": "Indicates this cohort snapshot is published to the shared vault."
+        },
+        "isCustomized": {
+          "type": "boolean",
+          "description": "Whether the cohort list or spot prices have been updated beyond canonical defaults."
+        },
+        "sourceLabel": {
+          "type": "string",
+          "description": "Display label describing the latest sync or edit source.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "passed": {
+          "type": "array",
+          "description": "Bounded list of up to 60 E > 0 cohort asset entries."
+        },
+        "failed": {
+          "type": "array",
+          "description": "Bounded list of up to 60 E = 0 cohort asset entries."
+        },
+        "updatedAtMs": {
+          "type": "number",
+          "description": "Epoch milliseconds of latest cohort update."
+        },
+        "updatedAtLabel": {
+          "type": "string",
+          "description": "Formatted timestamp string for the cohort update.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "revision": {
+          "type": "integer",
+          "description": "Monotonically increasing revision integer (>= 1)."
+        },
+        "originalAuthorUid": {
+          "type": "string",
+          "description": "Firebase UID of the verified user who created this cohort snapshot.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedByUid": {
+          "type": "string",
+          "description": "Firebase UID of the verified user who last updated this cohort snapshot.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of latest update."
+        }
+      },
+      "required": [
+        "cohortId",
+        "isPublished",
+        "isCustomized",
+        "sourceLabel",
+        "passed",
+        "failed",
+        "updatedAtMs",
+        "updatedAtLabel",
+        "revision",
+        "originalAuthorUid",
+        "updatedByUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/archived_audits/{tickerId}": {
+      "schema": { "$ref": "#/entities/ArchivedAudit" },
+      "description": "Publicly readable, verified-user writable persistent thermodynamic audit records cached at zero AI credit cost."
+    },
+    "/gains_cohorts/{cohortId}": {
+      "schema": { "$ref": "#/entities/GainsCohortSnapshot" },
+      "description": "Publicly readable, verified-user writable persisted gains cohort lists and live spot price snapshots."
+    }
+  }
+}

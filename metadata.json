@@ -1,0 +1,6 @@
+{
+  "name": "The Truth — Thermodynamic Audit",
+  "description": "Sovereign Thermodynamic Verification Engine grading Layer-1 protocols, overlays, and physical commodities across six immutable laws of physics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

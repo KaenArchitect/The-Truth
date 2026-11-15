@@ -1,0 +1,442 @@
+// ============================================================================
+// DAILY FULL-PULL QUOTA (2 / USER / DAY) & CMC TOP-150 MARKET SCOPE GATE
+// ============================================================================
+
+export const DAILY_NEW_FULL_PULL_LIMIT = 2;
+export const MAX_CMC_RANK_SCOPE = 150;
+
+export interface MarketCapEntry {
+  rank: number;
+  symbol: string;
+  name: string;
+  id?: string;
+}
+
+export interface QuotaLedgerEntry {
+  dayKey: string;
+  used: number;
+  updatedAtMs: number;
+}
+
+export type DailyQuotaLedger = Record<string, QuotaLedgerEntry>;
+
+export interface QuotaStatus {
+  limit: number;
+  used: number;
+  remaining: number;
+  allowed: boolean;
+  dayKey: string;
+  resetAtUtc: string;
+}
+
+export interface QuotaPrincipalResolution {
+  primaryKey: string;
+  allKeys: string[];
+  normalizedIp: string;
+}
+
+export interface MarketScopeResult {
+  allowed: boolean;
+  reason:
+    | 'CACHED_ARCHIVE'
+    | 'PHYSICAL_COMMODITY'
+    | 'TOP_150_CMC'
+    | 'OUTSIDE_TOP_150'
+    | 'UNRANKED_OR_OUTSIDE_TOP_150';
+  rank: number | null;
+  maxRank: number;
+  matchedSymbol: string | null;
+  matchedName: string | null;
+  bypassesScope: boolean;
+  audit: null | undefined;
+  message: string;
+}
+
+export const PHYSICAL_COMMODITY_ALLOWLIST: Record<string, { symbol: string; name: string }> = {
+  GOLD: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
+  XAU: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
+  GOLDXAU: { symbol: 'GOLD', name: 'Gold (Physical XAU)' },
+  SILVER: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
+  XAG: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
+  SILVERXAG: { symbol: 'SILVER', name: 'Silver (Physical XAG)' },
+  PLATINUM: { symbol: 'PLATINUM', name: 'Platinum (Physical XPT)' },
+  XPT: { symbol: 'PLATINUM', name: 'Platinum (Physical XPT)' },
+  PALLADIUM: { symbol: 'PALLADIUM', name: 'Palladium (Physical XPD)' },
+  XPD: { symbol: 'PLATINUM', name: 'Palladium (Physical XPD)' },
+  COPPER: { symbol: 'COPPER', name: 'Copper (Physical Cu)' },
+  RHODIUM: { symbol: 'RHODIUM', name: 'Rhodium (Physical Rh)' },
+  URANIUM: { symbol: 'URANIUM', name: 'Uranium (Physical U3O8)' },
+  NICKEL: { symbol: 'NICKEL', name: 'Nickel (Physical Ni)' },
+  ALUMINUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al)' },
+  ALUMINIUM: { symbol: 'ALUMINUM', name: 'Aluminum (Physical Al)' }
+};
+
+// Fix XPD symbol cleanly in case referenced directly
+PHYSICAL_COMMODITY_ALLOWLIST.XPD = { symbol: 'PALLADIUM', name: 'Palladium (Physical XPD)' };
+
+// Static fallback snapshot of major Top-150 crypto tickers used ONLY when all live public feeds are unreachable
+export const STATIC_TOP_150_FALLBACK_ENTRIES: MarketCapEntry[] = [
+  { rank: 1, symbol: 'BTC', name: 'Bitcoin', id: 'bitcoin' },
+  { rank: 2, symbol: 'ETH', name: 'Ethereum', id: 'ethereum' },
+  { rank: 3, symbol: 'USDT', name: 'Tether', id: 'tether' },
+  { rank: 4, symbol: 'BNB', name: 'BNB', id: 'binancecoin' },
+  { rank: 5, symbol: 'USDC', name: 'USDC', id: 'usd-coin' },
+  { rank: 6, symbol: 'XRP', name: 'XRP', id: 'ripple' },
+  { rank: 7, symbol: 'SOL', name: 'Solana', id: 'solana' },
+  { rank: 8, symbol: 'TRX', name: 'TRON', id: 'tron' },
+  { rank: 9, symbol: 'STETH', name: 'Lido Staked Ether', id: 'staked-ether' },
+  { rank: 10, symbol: 'HYPE', name: 'Hyperliquid', id: 'hyperliquid' },
+  { rank: 11, symbol: 'ZEC', name: 'Zcash', id: 'zcash' },
+  { rank: 12, symbol: 'DOGE', name: 'Dogecoin', id: 'dogecoin' },
+  { rank: 13, symbol: 'XMR', name: 'Monero', id: 'monero' },
+  { rank: 14, symbol: 'ADA', name: 'Cardano', id: 'cardano' },
+  { rank: 15, symbol: 'BCH', name: 'Bitcoin Cash', id: 'bitcoin-cash' },
+  { rank: 16, symbol: 'LEO', name: 'LEO Token', id: 'leo-token' },
+  { rank: 17, symbol: 'LINK', name: 'Chainlink', id: 'chainlink' },
+  { rank: 18, symbol: 'AVAX', name: 'Avalanche', id: 'avalanche-2' },
+  { rank: 19, symbol: 'XLM', name: 'Stellar', id: 'stellar' },
+  { rank: 20, symbol: 'SUI', name: 'Sui', id: 'sui' },
+  { rank: 21, symbol: 'TON', name: 'Toncoin', id: 'the-open-network' },
+  { rank: 22, symbol: 'SHIB', name: 'Shiba Inu', id: 'shiba-inu' },
+  { rank: 23, symbol: 'LTC', name: 'Litecoin', id: 'litecoin' },
+  { rank: 24, symbol: 'DOT', name: 'Polkadot', id: 'polkadot' },
+  { rank: 25, symbol: 'HBAR', name: 'Hedera', id: 'hedera-hashgraph' },
+  { rank: 26, symbol: 'PEPE', name: 'Pepe', id: 'pepe' },
+  { rank: 27, symbol: 'UNI', name: 'Uniswap', id: 'uniswap' },
+  { rank: 28, symbol: 'NEAR', name: 'NEAR Protocol', id: 'near' },
+  { rank: 29, symbol: 'APT', name: 'Aptos', id: 'aptos' },
+  { rank: 30, symbol: 'AAVE', name: 'Aave', id: 'aave' },
+  { rank: 31, symbol: 'ICP', name: 'Internet Computer', id: 'internet-computer' },
+  { rank: 32, symbol: 'ETC', name: 'Ethereum Classic', id: 'ethereum-classic' },
+  { rank: 33, symbol: 'KAS', name: 'Kaspa', id: 'kaspa' },
+  { rank: 34, symbol: 'POL', name: 'Polygon', id: 'polygon-ecosystem-token' },
+  { rank: 35, symbol: 'MATIC', name: 'Polygon', id: 'matic-network' },
+  { rank: 36, symbol: 'CRO', name: 'Cronos', id: 'crypto-com-chain' },
+  { rank: 37, symbol: 'VET', name: 'VeChain', id: 'vechain' },
+  { rank: 38, symbol: 'RENDER', name: 'Render', id: 'render-token' },
+  { rank: 39, symbol: 'FET', name: 'Artificial Superintelligence Alliance', id: 'fetch-ai' },
+  { rank: 40, symbol: 'TAO', name: 'Bittensor', id: 'bittensor' },
+  { rank: 41, symbol: 'ARB', name: 'Arbitrum', id: 'arbitrum' },
+  { rank: 42, symbol: 'OP', name: 'Optimism', id: 'optimism' },
+  { rank: 43, symbol: 'FIL', name: 'Filecoin', id: 'filecoin' },
+  { rank: 44, symbol: 'ATOM', name: 'Cosmos', id: 'cosmos' },
+  { rank: 45, symbol: 'INJ', name: 'Injective', id: 'injective-protocol' },
+  { rank: 46, symbol: 'ALGO', name: 'Algorand', id: 'algorand' },
+  { rank: 47, symbol: 'FTM', name: 'Fantom', id: 'fantom' },
+  { rank: 48, symbol: 'S', name: 'Sonic', id: 'sonic-3' },
+  { rank: 49, symbol: 'STX', name: 'Stacks', id: 'blockstack' },
+  { rank: 50, symbol: 'IMX', name: 'Immutable', id: 'immutable-x' },
+  { rank: 51, symbol: 'GRT', name: 'The Graph', id: 'the-graph' },
+  { rank: 52, symbol: 'TIA', name: 'Celestia', id: 'celestia' },
+  { rank: 53, symbol: 'SEI', name: 'Sei', id: 'sei-network' },
+  { rank: 54, symbol: 'WIF', name: 'dogwifhat', id: 'dogwifcoin' },
+  { rank: 55, symbol: 'BONK', name: 'Bonk', id: 'bonk' },
+  { rank: 56, symbol: 'JUP', name: 'Jupiter', id: 'jupiter-exchange-solana' },
+  { rank: 57, symbol: 'ENA', name: 'Ethena', id: 'ethena' },
+  { rank: 58, symbol: 'ONDO', name: 'Ondo', id: 'ondo-finance' },
+  { rank: 59, symbol: 'MKR', name: 'Maker', id: 'maker' },
+  { rank: 60, symbol: 'LDO', name: 'Lido DAO', id: 'lido-dao' },
+  { rank: 61, symbol: 'RUNE', name: 'THORChain', id: 'thorchain' },
+  { rank: 62, symbol: 'THETA', name: 'Theta Network', id: 'theta-token' },
+  { rank: 63, symbol: 'AR', name: 'Arweave', id: 'arweave' },
+  { rank: 64, symbol: 'FLOKI', name: 'FLOKI', id: 'floki' },
+  { rank: 65, symbol: 'QNT', name: 'Quant', id: 'quant-network' },
+  { rank: 66, symbol: 'PYTH', name: 'Pyth Network', id: 'pyth-network' },
+  { rank: 67, symbol: 'FLOW', name: 'Flow', id: 'flow' },
+  { rank: 68, symbol: 'EGLD', name: 'MultiversX', id: 'elrond-erd-2' },
+  { rank: 69, symbol: 'XTZ', name: 'Tezos', id: 'tezos' },
+  { rank: 70, symbol: 'EOS', name: 'EOS', id: 'eos' },
+  { rank: 71, symbol: 'AXS', name: 'Axie Infinity', id: 'axie-infinity' },
+  { rank: 72, symbol: 'SAND', name: 'The Sandbox', id: 'the-sandbox' },
+  { rank: 73, symbol: 'MANA', name: 'Decentraland', id: 'decentraland' },
+  { rank: 74, symbol: 'KCS', name: 'KuCoin Token', id: 'kucoin-shares' },
+  { rank: 75, symbol: 'BSV', name: 'Bitcoin SV', id: 'bitcoin-cash-sv' },
+  { rank: 76, symbol: 'NEO', name: 'NEO', id: 'neo' },
+  { rank: 77, symbol: 'IOTA', name: 'IOTA', id: 'iota' },
+  { rank: 78, symbol: 'KAIA', name: 'Kaia', id: 'kaia' },
+  { rank: 79, symbol: 'CHZ', name: 'Chiliz', id: 'chiliz' },
+  { rank: 80, symbol: 'CRV', name: 'Curve DAO Token', id: 'curve-dao-token' },
+  { rank: 81, symbol: 'CAKE', name: 'PancakeSwap', id: 'pancakeswap-token' },
+  { rank: 82, symbol: 'ENS', name: 'Ethereum Name Service', id: 'ethereum-name-service' },
+  { rank: 83, symbol: 'PENDLE', name: 'Pendle', id: 'pendle' },
+  { rank: 84, symbol: 'AERO', name: 'Aerodrome Finance', id: 'aerodrome-finance' },
+  { rank: 85, symbol: 'RAY', name: 'Raydium', id: 'raydium' },
+  { rank: 86, symbol: 'CFX', name: 'Conflux', id: 'conflux-token' },
+  { rank: 87, symbol: 'MINA', name: 'Mina', id: 'mina-protocol' },
+  { rank: 88, symbol: 'DASH', name: 'Dash', id: 'dash' },
+  { rank: 89, symbol: 'DCR', name: 'Decred', id: 'decred' },
+  { rank: 90, symbol: 'RVN', name: 'Ravencoin', id: 'ravencoin' },
+  { rank: 91, symbol: 'XEC', name: 'eCash', id: 'ecash' },
+  { rank: 92, symbol: 'ZRO', name: 'LayerZero', id: 'layerzero' },
+  { rank: 93, symbol: 'STRK', name: 'Starknet', id: 'starknet' },
+  { rank: 94, symbol: 'WLD', name: 'Worldcoin', id: 'worldcoin-wld' },
+  { rank: 95, symbol: 'PENGU', name: 'Pudgy Penguins', id: 'pudgy-penguins' },
+  { rank: 96, symbol: 'TRUMP', name: 'OFFICIAL TRUMP', id: 'official-trump' },
+  { rank: 97, symbol: 'PAXG', name: 'PAX Gold', id: 'pax-gold' },
+  { rank: 98, symbol: 'XAUT', name: 'Tether Gold', id: 'tether-gold' },
+  { rank: 99, symbol: 'NEXO', name: 'NEXO', id: 'nexo' },
+  { rank: 100, symbol: 'OKB', name: 'OKB', id: 'okb' }
+];
+
+export function normalizeMarketQuery(raw: string): string {
+  return String(raw || '')
+    .replace(/^\$/, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+export function getUtcDayKey(nowMs = Date.now()): string {
+  return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+export function getNextUtcMidnightIso(nowMs = Date.now()): string {
+  const d = new Date(nowMs);
+  const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 0, 0);
+  return new Date(next).toISOString();
+}
+
+export function sanitizePrincipalSegment(raw: string | null | undefined, maxLen = 64): string {
+  return String(raw || '')
+    .trim()
+    .replace(/[^A-Za-z0-9._:-]/g, '')
+    .slice(0, maxLen);
+}
+
+export function resolveQuotaPrincipalKeys(input: {
+  userId?: string | null;
+  clientId?: string | null;
+  ip?: string | null;
+}): QuotaPrincipalResolution {
+  const cleanUser = sanitizePrincipalSegment(input.userId, 80);
+  const cleanClient = sanitizePrincipalSegment(input.clientId, 80);
+  const cleanIp = sanitizePrincipalSegment(input.ip || 'unknown', 64) || 'unknown';
+
+  const keys = new Set<string>();
+  let primaryKey = `ip:${cleanIp}`;
+
+  if (cleanUser) {
+    primaryKey = `uid:${cleanUser}`;
+    keys.add(primaryKey);
+    if (cleanClient) keys.add(`client:${cleanClient}`);
+  } else {
+    keys.add(`ip:${cleanIp}`);
+    if (cleanClient) keys.add(`client:${cleanClient}`);
+  }
+
+  return {
+    primaryKey,
+    allKeys: Array.from(keys),
+    normalizedIp: cleanIp
+  };
+}
+
+export function pruneStaleQuotaDays(
+  ledger: DailyQuotaLedger,
+  nowMs = Date.now()
+): DailyQuotaLedger {
+  const today = getUtcDayKey(nowMs);
+  const next: DailyQuotaLedger = {};
+  for (const [k, entry] of Object.entries(ledger || {})) {
+    if (entry && entry.dayKey === today && typeof entry.used === 'number' && entry.used > 0) {
+      next[k] = entry;
+    }
+  }
+  return next;
+}
+
+export function getUserDailyQuotaStatus(
+  ledger: DailyQuotaLedger,
+  keys: string[],
+  nowMs = Date.now(),
+  limit = DAILY_NEW_FULL_PULL_LIMIT
+): QuotaStatus {
+  const dayKey = getUtcDayKey(nowMs);
+  const resetAtUtc = getNextUtcMidnightIso(nowMs);
+
+  let maxUsed = 0;
+  for (const key of keys) {
+    const entry = ledger?.[key];
+    if (entry && entry.dayKey === dayKey && Number.isFinite(entry.used)) {
+      maxUsed = Math.max(maxUsed, Math.max(0, Math.floor(entry.used)));
+    }
+  }
+
+  const remaining = Math.max(0, limit - maxUsed);
+  return {
+    limit,
+    used: maxUsed,
+    remaining,
+    allowed: remaining > 0,
+    dayKey,
+    resetAtUtc
+  };
+}
+
+export function consumeDailyPull(
+  ledger: DailyQuotaLedger,
+  keys: string[],
+  nowMs = Date.now(),
+  limit = DAILY_NEW_FULL_PULL_LIMIT
+): { allowed: boolean; status: QuotaStatus; nextLedger: DailyQuotaLedger } {
+  const current = getUserDailyQuotaStatus(ledger, keys, nowMs, limit);
+  if (!current.allowed) {
+    return {
+      allowed: false,
+      status: current,
+      nextLedger: ledger
+    };
+  }
+
+  const dayKey = current.dayKey;
+  const nextUsed = current.used + 1;
+  const nextLedger: DailyQuotaLedger = { ...ledger };
+
+  for (const key of keys) {
+    const prev = nextLedger[key];
+    const prevUsed = prev && prev.dayKey === dayKey ? prev.used : 0;
+    nextLedger[key] = {
+      dayKey,
+      used: Math.max(prevUsed + 1, nextUsed),
+      updatedAtMs: nowMs
+    };
+  }
+
+  const nextStatus = getUserDailyQuotaStatus(nextLedger, keys, nowMs, limit);
+  return {
+    allowed: true,
+    status: nextStatus,
+    nextLedger
+  };
+}
+
+export function refundDailyPull(
+  ledger: DailyQuotaLedger,
+  keys: string[],
+  nowMs = Date.now()
+): DailyQuotaLedger {
+  const dayKey = getUtcDayKey(nowMs);
+  const nextLedger: DailyQuotaLedger = { ...ledger };
+  for (const key of keys) {
+    const entry = nextLedger[key];
+    if (entry && entry.dayKey === dayKey && entry.used > 0) {
+      const decremented = entry.used - 1;
+      if (decremented <= 0) {
+        delete nextLedger[key];
+      } else {
+        nextLedger[key] = {
+          dayKey,
+          used: decremented,
+          updatedAtMs: nowMs
+        };
+      }
+    }
+  }
+  return nextLedger;
+}
+
+export function evaluateMarketScope(input: {
+  query: string;
+  cachedAuditHit: boolean;
+  isExplicitReaudit?: boolean;
+  marketEntries: MarketCapEntry[];
+  maxRank?: number;
+}): MarketScopeResult {
+  const maxRank = input.maxRank ?? MAX_CMC_RANK_SCOPE;
+  const norm = normalizeMarketQuery(input.query);
+
+  if (input.cachedAuditHit && !input.isExplicitReaudit) {
+    return {
+      allowed: true,
+      reason: 'CACHED_ARCHIVE',
+      rank: null,
+      maxRank,
+      matchedSymbol: null,
+      matchedName: null,
+      bypassesScope: true,
+      audit: undefined,
+      message: 'Resolved from 0-credit persistent archive.'
+    };
+  }
+
+  const commodity = PHYSICAL_COMMODITY_ALLOWLIST[norm];
+  if (commodity) {
+    return {
+      allowed: true,
+      reason: 'PHYSICAL_COMMODITY',
+      rank: null,
+      maxRank,
+      matchedSymbol: commodity.symbol,
+      matchedName: commodity.name,
+      bypassesScope: true,
+      audit: undefined,
+      message: `Physical commodity ${commodity.name} is permitted.`
+    };
+  }
+
+  if (!norm) {
+    return {
+      allowed: false,
+      reason: 'UNRANKED_OR_OUTSIDE_TOP_150',
+      rank: null,
+      maxRank,
+      matchedSymbol: null,
+      matchedName: null,
+      bypassesScope: false,
+      audit: null,
+      message: `Asset query is empty or outside Top ${maxRank} CMC scope (returned null; 0 API credits used).`
+    };
+  }
+
+  let bestMatch: MarketCapEntry | null = null;
+  for (const entry of input.marketEntries) {
+    if (!entry || !Number.isFinite(entry.rank) || entry.rank <= 0) continue;
+    const symNorm = normalizeMarketQuery(entry.symbol);
+    const nameNorm = normalizeMarketQuery(entry.name);
+    const idNorm = entry.id ? normalizeMarketQuery(entry.id) : '';
+    if (symNorm === norm || nameNorm === norm || (idNorm && idNorm === norm)) {
+      if (!bestMatch || entry.rank < bestMatch.rank) {
+        bestMatch = entry;
+      }
+    }
+  }
+
+  if (bestMatch && bestMatch.rank <= maxRank) {
+    return {
+      allowed: true,
+      reason: 'TOP_150_CMC',
+      rank: bestMatch.rank,
+      maxRank,
+      matchedSymbol: bestMatch.symbol.toUpperCase(),
+      matchedName: bestMatch.name,
+      bypassesScope: false,
+      audit: undefined,
+      message: `Verified #${bestMatch.rank} within Top ${maxRank} CMC scope.`
+    };
+  }
+
+  if (bestMatch && bestMatch.rank > maxRank) {
+    return {
+      allowed: false,
+      reason: 'OUTSIDE_TOP_150',
+      rank: bestMatch.rank,
+      maxRank,
+      matchedSymbol: bestMatch.symbol.toUpperCase(),
+      matchedName: bestMatch.name,
+      bypassesScope: false,
+      audit: null,
+      message: `Returned null: ${bestMatch.name} ($${bestMatch.symbol.toUpperCase()}) is ranked #${bestMatch.rank}, outside the Top ${maxRank} CMC audit scope (0 API credits spent).`
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: 'UNRANKED_OR_OUTSIDE_TOP_150',
+    rank: null,
+    maxRank,
+    matchedSymbol: null,
+    matchedName: null,
+    bypassesScope: false,
+    audit: null,
+    message: `Returned null: "${input.query.trim()}" is not within the Top ${maxRank} CMC rankings (0 API credits spent).`
+  };
+}
