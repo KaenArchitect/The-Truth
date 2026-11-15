@@ -1,4 +1,4 @@
-import type { AuditData } from './rubricSpec.ts';
+import { isOverlayArchitectureText, type AuditData } from './rubricSpec.ts';
 
 export type AuditCategory =
   | 'SOVEREIGN_L1_BENCHMARK'
@@ -41,7 +41,6 @@ export const CORE_REFERENCE_TICKERS = new Set<string>([
   'PI',
   'XLM',
   'SUI',
-  'STX',
   'ETH',
   'SOL',
   'XRP',
@@ -49,7 +48,179 @@ export const CORE_REFERENCE_TICKERS = new Set<string>([
   'TAO'
 ]);
 
-export const ECOSYSTEM_OVERLAY_TICKERS = new Set<string>(['GEEK', 'IGRA', 'LN']);
+export const ECOSYSTEM_OVERLAY_TICKERS = new Set<string>(['GEEK', 'IGRA', 'LN', 'STX']);
+
+export const KNOWN_CUSTOM_L1_TICKERS = new Set<string>([
+  'DOT',
+  'ATOM',
+  'TIA',
+  'HBAR',
+  'TON',
+  'TRX',
+  'BNB',
+  'APT',
+  'SEI',
+  'ICP',
+  'FIL',
+  'VET',
+  'EGLD',
+  'FTM',
+  'FLOW',
+  'KAVA',
+  'ROSE',
+  'MINA',
+  'OSMO',
+  'INJ',
+  'THETA',
+  'XTZ',
+  'EOS',
+  'NEO',
+  'QTUM',
+  'IOTA',
+  'BERA',
+  'MON',
+  'ERG',
+  'ETC',
+  'DOGE',
+  'RVN',
+  'KDA',
+  'CKB',
+  'XNO',
+  'ALPH',
+  'DNX',
+  'RXD',
+  'NEXA',
+  'DGB',
+  'ZANO',
+  'GRIN',
+  'BEAM',
+  'XVG',
+  'DASH',
+  'XEC',
+  'BSV',
+  'ZEN',
+  'FLUX',
+  'CFX',
+  'KSM',
+  'GLMR',
+  'ASTR',
+  'CORE',
+  'CRO',
+  'FLR',
+  'ZIL',
+  'ONE',
+  'WAVES',
+  'AR',
+  'SCRT',
+  'SYS',
+  'XDC',
+  'CSPR',
+  'KUB'
+]);
+
+export const KNOWN_CUSTOM_ECOSYSTEM_TICKERS = new Set<string>([
+  'ARB',
+  'OP',
+  'BASE',
+  'POL',
+  'MATIC',
+  'STRK',
+  'ZK',
+  'MNT',
+  'IMX',
+  'SCR',
+  'LINEA',
+  'BLAST',
+  'METIS',
+  'MANTA',
+  'TAIKO',
+  'MODE',
+  'BOBA',
+  'LRC',
+  'RON',
+  'MERL',
+  'BOB',
+  'RSK',
+  'RIF',
+  'MOVE',
+  'ALT',
+  'OMNI',
+  'ZKJ',
+  'USDT',
+  'USDC',
+  'DAI',
+  'USDE',
+  'FDUSD',
+  'TUSD',
+  'PYUSD',
+  'FRAX',
+  'WBTC',
+  'CBBTC',
+  'TBTC',
+  'STETH',
+  'WETH',
+  'CBETH',
+  'RETH',
+  'WEETH',
+  'UNI',
+  'AAVE',
+  'MKR',
+  'SKY',
+  'CRV',
+  'COMP',
+  'SNX',
+  'SUSHI',
+  'CAKE',
+  '1INCH',
+  'DYDX',
+  'GMX',
+  'JUP',
+  'RAY',
+  'ORCA',
+  'AERO',
+  'PENDLE',
+  'MORPHO',
+  'ONDO',
+  'ENA',
+  'LINK',
+  'PYTH',
+  'GRT',
+  'ENS',
+  'LDO',
+  'RPL',
+  'EIGEN',
+  'ETHFI',
+  'JTO',
+  'ZRO',
+  'W',
+  'AXL',
+  'QNT',
+  'WLD',
+  'RNDR',
+  'RENDER',
+  'SHIB',
+  'PEPE',
+  'BONK',
+  'WIF',
+  'FLOKI',
+  'PENGU',
+  'TRUMP',
+  'FET',
+  'ASI',
+  'CHZ',
+  'AXS',
+  'SAND',
+  'MANA',
+  'GALA',
+  'APE',
+  'BLUR',
+  'ORDI',
+  'SATS',
+  'NACHO',
+  'KASPY',
+  'KANGO',
+  'ZEAL'
+]);
 
 export function getAuditCategory(audit: AuditData | null | undefined): AuditCategory {
   if (!audit) return 'SOVEREIGN_L1_BENCHMARK';
@@ -63,12 +234,19 @@ export function getAuditCategory(audit: AuditData | null | undefined): AuditCate
   if (CORE_REFERENCE_TICKERS.has(tk)) {
     return 'SOVEREIGN_L1_BENCHMARK';
   }
-  const archText = `${audit.name || ''} ${audit.architecture || ''}`.toUpperCase();
   if (
-    /\b(KRC-20|KCC-20|BRC-20|LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|HTLC|PTLC|ROLLUP|LAYER-2|LAYER 2|\bL2\b|OVERLAY)\b/.test(
-      archText
-    )
+    audit.isUpperLayerOverlayOrChannel === true ||
+    (audit.consensusFamily as string) === 'CARRIER_SUBORDINATED_OVERLAY'
   ) {
+    return 'ECOSYSTEM_OVERLAY';
+  }
+  if (KNOWN_CUSTOM_ECOSYSTEM_TICKERS.has(tk)) {
+    return 'ECOSYSTEM_OVERLAY';
+  }
+  if (KNOWN_CUSTOM_L1_TICKERS.has(tk)) {
+    return 'SOVEREIGN_L1_BENCHMARK';
+  }
+  if (isOverlayArchitectureText(audit.name, audit.architecture)) {
     return 'ECOSYSTEM_OVERLAY';
   }
   return 'SOVEREIGN_L1_BENCHMARK';
@@ -516,6 +694,16 @@ export function getAuditRevisionAnalysis(
           'Physical elements have static nuclear constants (0.90–1.00 local bearer sovereignty, 0.0 TPS cross-ocean fiber teleportation); scores shift only if custodial wrappers or synthetic isotopes enter scope.'
       }
     ];
+  } else if (audit?.consensusFamily === 'ZERO_JOULE_BFT') {
+    triggers = [
+      {
+        direction: 'MONITOR',
+        invariantId: '02',
+        condition: isEcosystemOverlayAudit(audit)
+          ? 'Any L2/sidechain/token relying on 0-Joule Signers, centralized sequencers, or pre-printed supply stays locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy.'
+          : 'Any network finalizing blocks via 0-Joule stake voting remains locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy—software optimizations cannot overcome E = 0.'
+      }
+    ];
   } else if (isEcosystemOverlayAudit(audit)) {
     triggers = [
       {
@@ -529,15 +717,6 @@ export function getAuditRevisionAnalysis(
         invariantId: '03',
         condition:
           'Replacing PoS bridge attesters / off-chain indexers with pure L1 ZK verification + KIP-21 L1 sequencing lifts Immutability toward 0.95.'
-      }
-    ];
-  } else if (audit?.consensusFamily === 'ZERO_JOULE_BFT') {
-    triggers = [
-      {
-        direction: 'MONITOR',
-        invariantId: '02',
-        condition:
-          'Any network finalizing blocks via 0-Joule stake voting remains locked at Cost Floor = 0.00 and Terminal Grade F under Conservation of Energy—software optimizations cannot overcome E = 0.'
       }
     ];
   } else {

@@ -53,6 +53,7 @@ export interface AuditData {
   queryAliases?: string[];
   originalAuthorUid?: string;
   archivedByUid?: string;
+  isUpperLayerOverlayOrChannel?: boolean;
 }
 
 export interface InvariantLogEntry {
@@ -1109,6 +1110,29 @@ export function isValidCompleteAuditPayload(parsed: RawGeminiAuditPayload | null
   );
 }
 
+const OVERLAY_POSITIVE_REGEX =
+  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|RUNES|ORDINALS|TAPROOT ASSET|LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|PAYMENT-CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|ROLLUP|SIDECHAIN|LAYER-2|LAYER 2|L2|PARACHAIN|APPCHAIN|SUBNET TOKEN|OVERLAY|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|AUTOMATED MARKET MAKER|DEX|AMM|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN)\b/;
+
+const L1_HOST_MENTIONING_L2_REGEX =
+  /\b(CENTRALIZED L2|FOR L2|FOR ROLLUPS|FOR PARACHAIN|SUPPORTING L2|HOSTING L2|L2 SEQUENCERS|L2 ROLLUPS|DATA AVAILABILITY[^,;()]*\b(ROLLUP|L2)\b|RELAY CHAIN[^,;()]*\bPARACHAIN\b|(?:LAYER-1|LAYER 1|\bL1\b)[^,;()]*(?:WITH|HOSTING|SUPPORTING)\s+(?:L2|ROLLUP|CHANNEL))\b/;
+
+const EXPLICIT_OVERLAY_IDENTITY_REGEX =
+  /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|LIGHTNING|PAYMENT-CHANNEL|PAYMENT CHANNEL|STATE CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|SIDECHAIN|L1-SEQUENCED|OVER [A-Z0-9-]+ L1|ANCHORED TO [A-Z0-9-]+ L1|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN)\b/;
+
+export function isOverlayArchitectureText(
+  name?: string,
+  architecture?: string,
+  extraQuery?: string
+): boolean {
+  const text = `${name || ''} ${architecture || ''} ${extraQuery || ''}`.toUpperCase().trim();
+  if (!text) return false;
+  if (!OVERLAY_POSITIVE_REGEX.test(text)) return false;
+  if (L1_HOST_MENTIONING_L2_REGEX.test(text) && !EXPLICIT_OVERLAY_IDENTITY_REGEX.test(text)) {
+    return false;
+  }
+  return true;
+}
+
 export function normalizeAuditPayload(
   parsed: RawGeminiAuditPayload,
   rawQuery: string,
@@ -1172,9 +1196,7 @@ export function normalizeAuditPayload(
   const archAndNameText = `${parsed.name || ''} ${parsed.architecture || ''} ${rawQuery}`.toUpperCase();
   const isOverlay =
     parsed.isUpperLayerOverlayOrChannel === true ||
-    /\b(LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|HTLC|PTLC|ROLLUP|KRC-20|BRC-20|RUNES|SIDECHAIN|LAYER-2|LAYER 2|\bL2\b)\b/.test(
-      archAndNameText
-    );
+    isOverlayArchitectureText(parsed.name, parsed.architecture, rawQuery);
   const isSequentialCarrierOverlay =
     isOverlay &&
     !/\b(KASPA|KRC-20|KCC-20|GHOSTDAG|BLOCKDAG|IGRA|VIADUCT)\b/.test(archAndNameText);
@@ -1361,6 +1383,7 @@ export function normalizeAuditPayload(
     archiveRevision: (Number(existingBaseline?.archiveRevision) || 0) + 1,
     queryAliases: Array.from(
       new Set([cleanTicker, normalizedQuery, resolvedName.toUpperCase().replace(/[^A-Z0-9]/g, '')])
-    ).filter(Boolean)
+    ).filter(Boolean),
+    ...(isOverlay ? { isUpperLayerOverlayOrChannel: true } : {})
   };
 }

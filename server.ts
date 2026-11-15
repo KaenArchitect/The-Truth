@@ -18,6 +18,7 @@ import {
   isValidCompleteAuditPayload,
   normalizeAuditPayload,
   safeParseAuditJson,
+  sortAuditTickersByGrade,
   type AuditData,
   type GroundingSource,
   type RawGeminiAuditPayload
@@ -39,7 +40,24 @@ import {
   savePersistedGainsCohort,
   syncLivePricesAndPersistGainsCohort
 } from './src/server/gainsCohortStore.ts';
+import { initializeApp as initFirebaseApp, getApps as getFirebaseApps, getApp as getFirebaseApp } from 'firebase/app';
+import {
+  getFirestore as getClientFirestore,
+  collection as fsCollection,
+  query as fsQuery,
+  where as fsWhere,
+  getDocs as fsGetDocs
+} from 'firebase/firestore';
 import { classifyAuditQueryForSandbox } from './src/data/auditProvenance.ts';
+import {
+  MCP_ARCHIVE_TOOL_SCHEMAS,
+  answerArchiveResearchQuestion,
+  buildArchiveComparison,
+  buildOpenGraphMetaForUrl,
+  findArchivedAudit,
+  listArchivedAudits,
+  summarizeArchivedAudit
+} from './src/data/agentArchiveApi.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -127,6 +145,62 @@ function persistServerCacheToDisk(): void {
 }
 
 hydrateServerCacheFromDisk();
+
+let lastFirestoreSyncMs = 0;
+let inflightFirestoreSync: Promise<void> | null = null;
+const FIRESTORE_SYNC_TTL_MS = 5 * 60 * 1000;
+
+async function syncFirestoreArchivedAuditsToCache(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastFirestoreSyncMs < FIRESTORE_SYNC_TTL_MS) return;
+  if (inflightFirestoreSync) return inflightFirestoreSync;
+
+  inflightFirestoreSync = (async () => {
+    try {
+      const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+      if (!fs.existsSync(cfgPath)) return;
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as {
+        projectId?: string;
+        appId?: string;
+        apiKey?: string;
+        authDomain?: string;
+        firestoreDatabaseId?: string;
+      };
+      if (!cfg.projectId || !cfg.apiKey) return;
+      const fbApp = getFirebaseApps().length ? getFirebaseApp() : initFirebaseApp(cfg);
+      const db = getClientFirestore(fbApp, cfg.firestoreDatabaseId || '(default)');
+      const snap = await Promise.race([
+        fsGetDocs(fsQuery(fsCollection(db, 'archived_audits'), fsWhere('isArchived', '==', true))),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Firestore archive sync timeout')), 4000)
+        )
+      ]);
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as Record<string, unknown>;
+        if (!data || !data.ticker || !Array.isArray(data.invariants) || data.invariants.length < 6) {
+          return;
+        }
+        const tk = normalizeLookupKey(String(data.ticker));
+        if (!tk) return;
+        const candidate = {
+          ...(data as unknown as AuditData),
+          ticker: tk,
+          isArchived: true
+        };
+        indexAuditAliases(candidate);
+      });
+      lastFirestoreSyncMs = Date.now();
+    } catch {
+      // Non-fatal: preloaded benchmarks + local disk cache remain immediately available
+    } finally {
+      inflightFirestoreSync = null;
+    }
+  })();
+
+  return inflightFirestoreSync;
+}
+
+void syncFirestoreArchivedAuditsToCache(true);
 
 function lookupCachedAudit(rawQuery: string): AuditData | null {
   const norm = normalizeLookupKey(rawQuery);
@@ -456,7 +530,8 @@ async function createApp(): Promise<express.Express> {
       donate: {
         kasAddress: (process.env.DONATE_KAS_ADDRESS || '').trim(),
         btcAddress: (process.env.DONATE_BTC_ADDRESS || '').trim(),
-        url: (process.env.DONATE_URL || '').trim()
+        ethAddress: (process.env.DONATE_ETH_ADDRESS || '').trim(),
+        solAddress: (process.env.DONATE_SOL_ADDRESS || '').trim()
       }
     });
   });
@@ -1049,6 +1124,517 @@ ${
     }
   });
 
+  // ==========================================================================
+  // STRICTLY ARCHIVE-ONLY AI AGENT HOOKS, MCP, OPENAPI & DISCOVERY ENDPOINTS
+  // ==========================================================================
+  const getServerArchiveMap = (): Record<string, AuditData> => {
+    const out: Record<string, AuditData> = {};
+    serverAuditCache.forEach((val, key) => {
+      out[key] = val;
+    });
+    return out;
+  };
+
+  const getServerAliasObject = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    serverAliasCache.forEach((val, key) => {
+      out[key] = val;
+    });
+    return out;
+  };
+
+  const preloadedTickerSet = new Set(Object.keys(PRELOADED_AUDITS));
+
+  app.use(['/api/agent', '/mcp', '/sitemap.xml', '/llms.txt'], (_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+    if (_req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  app.get('/api/agent/archive', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const map = getServerArchiveMap();
+    const basket =
+      typeof req.query.basket === 'string'
+        ? (req.query.basket.toUpperCase() as 'ALL' | 'PASSED' | 'FAILED')
+        : 'ALL';
+    const category =
+      typeof req.query.category === 'string'
+        ? (req.query.category.toUpperCase() as never)
+        : 'ALL';
+    const family = typeof req.query.family === 'string' ? req.query.family : undefined;
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+
+    const audits = listArchivedAudits(map, { basket, category, family, q }, preloadedTickerSet);
+    const origin = resolvePublicOrigin(req);
+    res.json({
+      ok: true,
+      archiveOnly: true,
+      creditsUsed: 0,
+      totalArchived: Object.keys(map).length,
+      returnedCount: audits.length,
+      passedCount: audits.filter((a) => a.basket === 'PASSED').length,
+      failedCount: audits.filter((a) => a.basket === 'FAILED').length,
+      audits: audits.map((a) => ({
+        ...a,
+        absoluteUrl: `${origin}${a.deepLinkUrl}`
+      }))
+    });
+  });
+
+  app.get('/api/agent/audit/:ticker', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const map = getServerArchiveMap();
+    const aliases = getServerAliasObject();
+    const rawTicker = String(req.params.ticker || '').trim();
+    const hit = findArchivedAudit(map, rawTicker, aliases);
+    if (!hit) {
+      res.status(404).json({
+        ok: false,
+        archiveOnly: true,
+        archived: false,
+        creditsUsed: 0,
+        error: `Asset "${rawTicker}" is not in The Truth Archive. Strictly archive-only mode never triggers AI generation or fabricates scores.`,
+        availableCount: Object.keys(map).length
+      });
+      return;
+    }
+
+    const origin = resolvePublicOrigin(req);
+    const summary = summarizeArchivedAudit(hit, preloadedTickerSet);
+    res.json({
+      ok: true,
+      archiveOnly: true,
+      archived: true,
+      defaultMode: 'GENIUS',
+      creditsUsed: 0,
+      absoluteUrl: `${origin}${summary.deepLinkUrl}`,
+      summary,
+      audit: hit
+    });
+  });
+
+  app.get('/api/agent/compare', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const map = getServerArchiveMap();
+    const aliases = getServerAliasObject();
+    const rawTickers = String(req.query.tickers || req.query.compare || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const mode = String(req.query.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+
+    const result = buildArchiveComparison(map, rawTickers, {
+      mode,
+      dynamicAliases: aliases,
+      preloadedTickers: preloadedTickerSet,
+      cohortRecord: getPersistedGainsCohort()
+    });
+
+    if (!result.ok) {
+      res.status(result.missingTickers.length > 0 ? 404 : 400).json(result);
+      return;
+    }
+
+    const origin = resolvePublicOrigin(req);
+    res.json({
+      ...result,
+      absoluteUrl: `${origin}${result.deepLinkUrl}`
+    });
+  });
+
+  app.post('/api/agent/research', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const body = (req.body || {}) as { question?: string; query?: string; mode?: string };
+    const question = String(body.question || body.query || '').trim();
+    if (!question || question.length > 500) {
+      res.status(400).json({
+        ok: false,
+        archiveOnly: true,
+        creditsUsed: 0,
+        error: 'Provide a research question between 1 and 500 characters.'
+      });
+      return;
+    }
+
+    const mode = String(body.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+    const map = getServerArchiveMap();
+    const aliases = getServerAliasObject();
+    const answer = answerArchiveResearchQuestion(map, question, {
+      mode,
+      dynamicAliases: aliases,
+      preloadedTickers: preloadedTickerSet,
+      cohortRecord: getPersistedGainsCohort()
+    });
+
+    const origin = resolvePublicOrigin(req);
+    res.status(answer.ok ? 200 : 404).json({
+      ...answer,
+      absoluteUrl: answer.deepLinkUrl ? `${origin}${answer.deepLinkUrl}` : null
+    });
+  });
+
+  app.get('/mcp', (req: Request, res: Response) => {
+    const origin = resolvePublicOrigin(req);
+    res.json({
+      name: 'the-truth-thermodynamic-archive',
+      version: '1.0.0',
+      transport: 'streamable-http-jsonrpc',
+      archiveOnly: true,
+      creditsUsedPerCall: 0,
+      endpoint: `${origin}/mcp`,
+      tools: MCP_ARCHIVE_TOOL_SCHEMAS
+    });
+  });
+
+  app.post('/mcp', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const rpc = (req.body || {}) as {
+      jsonrpc?: string;
+      id?: string | number | null;
+      method?: string;
+      params?: Record<string, unknown>;
+    };
+    const id = rpc.id ?? null;
+    const method = String(rpc.method || '');
+    const map = getServerArchiveMap();
+    const aliases = getServerAliasObject();
+    const origin = resolvePublicOrigin(req);
+
+    if (method === 'initialize') {
+      res.json({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: '2025-03-26',
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: {
+            name: 'The Truth Thermodynamic Archive MCP',
+            version: '1.0.0'
+          }
+        }
+      });
+      return;
+    }
+
+    if (method === 'notifications/initialized') {
+      res.status(204).end();
+      return;
+    }
+
+    if (method === 'tools/list') {
+      res.json({
+        jsonrpc: '2.0',
+        id,
+        result: { tools: MCP_ARCHIVE_TOOL_SCHEMAS }
+      });
+      return;
+    }
+
+    if (method === 'tools/call') {
+      const toolName = String(rpc.params?.name || '');
+      const args = (rpc.params?.arguments || {}) as Record<string, unknown>;
+
+      if (toolName === 'list_archived_audits') {
+        const list = listArchivedAudits(
+          map,
+          {
+            basket: typeof args.basket === 'string' ? (args.basket.toUpperCase() as never) : 'ALL',
+            category:
+              typeof args.category === 'string' ? (args.category.toUpperCase() as never) : 'ALL',
+            family: typeof args.family === 'string' ? args.family : undefined,
+            q: typeof args.q === 'string' ? args.q : undefined
+          },
+          preloadedTickerSet
+        );
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    archiveOnly: true,
+                    creditsUsed: 0,
+                    count: list.length,
+                    audits: list.map((a) => ({ ...a, absoluteUrl: `${origin}${a.deepLinkUrl}` }))
+                  },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      if (toolName === 'get_archived_audit') {
+        const hit = findArchivedAudit(map, String(args.ticker || ''), aliases);
+        if (!hit) {
+          res.json({
+            jsonrpc: '2.0',
+            id,
+            result: {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: `Asset "${String(
+                    args.ticker || ''
+                  )}" is not in The Truth Archive. Strictly archive-only MCP refuses to run live AI pulls.`
+                }
+              ]
+            }
+          });
+          return;
+        }
+        const summary = summarizeArchivedAudit(hit, preloadedTickerSet);
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    archiveOnly: true,
+                    creditsUsed: 0,
+                    absoluteUrl: `${origin}${summary.deepLinkUrl}`,
+                    summary,
+                    audit: hit
+                  },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      if (toolName === 'compare_archived_audits') {
+        const tickers = Array.isArray(args.tickers) ? args.tickers.map(String) : [];
+        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+        const comp = buildArchiveComparison(map, tickers, {
+          mode,
+          dynamicAliases: aliases,
+          preloadedTickers: preloadedTickerSet,
+          cohortRecord: getPersistedGainsCohort()
+        });
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            isError: !comp.ok,
+            content: [
+              {
+                type: 'text',
+                text: comp.ok
+                  ? JSON.stringify({ ...comp, absoluteUrl: `${origin}${comp.deepLinkUrl}` }, null, 2)
+                  : comp.error
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      if (toolName === 'research_archive') {
+        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+        const ans = answerArchiveResearchQuestion(map, String(args.question || ''), {
+          mode,
+          dynamicAliases: aliases,
+          preloadedTickers: preloadedTickerSet,
+          cohortRecord: getPersistedGainsCohort()
+        });
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            isError: !ans.ok,
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  {
+                    ...ans,
+                    absoluteUrl: ans.deepLinkUrl ? `${origin}${ans.deepLinkUrl}` : null
+                  },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      res.json({
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32601, message: `Unknown archive tool "${toolName}".` }
+      });
+      return;
+    }
+
+    res.json({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32601, message: `Unsupported MCP method "${method}".` }
+    });
+  });
+
+  app.get('/openapi.json', (req: Request, res: Response) => {
+    const origin = resolvePublicOrigin(req);
+    res.json({
+      openapi: '3.1.0',
+      info: {
+        title: 'The Truth — Thermodynamic Archive Agent API',
+        version: '1.0.0',
+        description:
+          'Strictly read-only, 0-credit API exposing verified cryptocurrency and physical commodity audits from The Truth Vault for AI agent comparisons, education, and deep-linking.'
+      },
+      servers: [{ url: origin }],
+      paths: {
+        '/api/agent/archive': {
+          get: {
+            operationId: 'listArchivedAudits',
+            summary: 'List all archived audits (strictly archive-only, 0 AI credits).',
+            parameters: [
+              { name: 'basket', in: 'query', schema: { type: 'string', enum: ['ALL', 'PASSED', 'FAILED'] } },
+              { name: 'category', in: 'query', schema: { type: 'string' } },
+              { name: 'family', in: 'query', schema: { type: 'string' } },
+              { name: 'q', in: 'query', schema: { type: 'string' } }
+            ],
+            responses: { '200': { description: 'List of archived audit summaries' } }
+          }
+        },
+        '/api/agent/audit/{ticker}': {
+          get: {
+            operationId: 'getArchivedAudit',
+            summary: 'Fetch full 6-invariant thermodynamic audit for an archived asset.',
+            parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              '200': { description: 'Full archived audit' },
+              '404': { description: 'Not archived (strictly refuses live AI pull)' }
+            }
+          }
+        },
+        '/api/agent/compare': {
+          get: {
+            operationId: 'compareArchivedAudits',
+            summary: 'Run side-by-side 6-invariant comparison across 2–4 archived assets.',
+            parameters: [
+              { name: 'tickers', in: 'query', required: true, schema: { type: 'string' } },
+              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
+            ],
+            responses: {
+              '200': { description: 'Side-by-side comparison matrix and PoS vs PoW analysis' },
+              '404': { description: 'One or more requested tickers are not archived' }
+            }
+          }
+        },
+        '/api/agent/research': {
+          post: {
+            operationId: 'researchThermodynamicArchive',
+            summary: 'Answer coin comparison or PoS-vs-PoW questions using strictly archived audits.',
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['question'],
+                    properties: {
+                      question: { type: 'string' },
+                      mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] }
+                    }
+                  }
+                }
+              }
+            },
+            responses: {
+              '200': { description: 'Grounded archive-only answer with comparison matrix and deep-link' },
+              '404': { description: 'Unarchived asset requested' }
+            }
+          }
+        }
+      }
+    });
+  });
+
+  app.get('/llms.txt', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const origin = resolvePublicOrigin(req);
+    const ordered = sortAuditTickersByGrade(getServerArchiveMap());
+    const content = `# The Truth — Thermodynamic Audit
+> Sovereign Thermodynamic Verification Engine grading Layer-1 protocols, overlays, and physical commodities strictly against six immutable laws of physics.
+
+## Strictly Archive-Only AI Agent Policy (Zero Credit Guarantee & GENIUS Default)
+- External AI assistants, MCP clients, and browser agents may read, compare, and cite ONLY verified audits stored in the Archive.
+- All agent endpoints and MCP tools default to **GENIUS** mode (delivering complete codebase constants, mathematical proofs, consensus mechanics, receipts, AND concise normie summaries) so the calling AI has full understanding and can adapt its explanation to what its user will best understand.
+- Agent endpoints NEVER call Gemini generation, spend API credits, or invent scores for unarchived coins.
+
+## Live Machine Endpoints
+- Archive Directory JSON: ${origin}/api/agent/archive
+- Single Archived Audit: ${origin}/api/agent/audit/{TICKER}
+- Side-by-Side Comparison: ${origin}/api/agent/compare?tickers=KAS,ETH,SOL&mode=GENIUS
+- Archive Research QA (POST): ${origin}/api/agent/research
+- Streamable HTTP MCP Endpoint: ${origin}/mcp
+- OpenAPI 3.1 Spec: ${origin}/openapi.json
+- XML Sitemap: ${origin}/sitemap.xml
+
+## Deep-Link UI Routes (Shareable Comparisons)
+- Side-by-side constellation: ${origin}/?compare=KAS,ETH,SOL&mode=GENIUS
+- Single archived asset: ${origin}/?asset=BTC&mode=GENIUS
+- Wartime partition lab: ${origin}/?asset=SOL&lab=wartime
+- Empirical Cycle Gains chart: ${origin}/?gains=1
+- First-Principles Origin Thesis: ${origin}/?genesis=1
+
+## Currently Archived Tickers (${ordered.length})
+${ordered.join(', ')}
+`;
+    res.status(200).setHeader('Content-Type', 'text/plain; charset=utf-8').send(content);
+  });
+
+  app.get('/sitemap.xml', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const origin = resolvePublicOrigin(req);
+    const ordered = sortAuditTickersByGrade(getServerArchiveMap());
+    const urls = [
+      `${origin}/`,
+      `${origin}/?gains=1`,
+      `${origin}/?rubric=1`,
+      `${origin}/?genesis=1`,
+      `${origin}/?compare=KAS,BTC,ETH,SOL&mode=GENIUS`,
+      `${origin}/?compare=KAS,ETH&mode=GENIUS`,
+      `${origin}/?compare=KAS,SOL&mode=GENIUS`,
+      ...ordered.map((tk) => `${origin}/?asset=${encodeURIComponent(tk)}`)
+    ];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+      .map((u) => `  <url><loc>${u.replace(/&/g, '&amp;')}</loc></url>`)
+      .join('\n')}\n</urlset>\n`;
+    res.status(200).setHeader('Content-Type', 'application/xml; charset=utf-8').send(xml);
+  });
+
+  const escapeHtmlAttr = (val: string): string =>
+    val
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
   const resolvePublicOrigin = (req: Request): string => {
     const xfHost = String(req.headers['x-forwarded-host'] || '')
       .split(',')[0]
@@ -1068,7 +1654,42 @@ ${
 
   const injectSocialOrigin = (html: string, req: Request): string => {
     const origin = resolvePublicOrigin(req);
-    return html.replace(/https:\/\/the-truth\.ai\.studio/g, origin);
+    let out = html.replace(/https:\/\/the-truth\.ai\.studio/g, origin);
+    const meta = buildOpenGraphMetaForUrl(
+      req.originalUrl || '/',
+      getServerArchiveMap(),
+      getServerAliasObject()
+    );
+    const safeTitle = escapeHtmlAttr(meta.title);
+    const safeDesc = escapeHtmlAttr(meta.description);
+    const safeUrl = escapeHtmlAttr(`${origin}${meta.urlPath}`);
+    out = out
+      .replace(/<title>[\s\S]*?<\/title>/i, `<title>${safeTitle}</title>`)
+      .replace(
+        /<meta name="description" content="[^"]*"\s*\/?>/i,
+        `<meta name="description" content="${safeDesc}" />`
+      )
+      .replace(
+        /<meta property="og:url" content="[^"]*"\s*\/?>/i,
+        `<meta property="og:url" content="${safeUrl}" />`
+      )
+      .replace(
+        /<meta property="og:title" content="[^"]*"\s*\/?>/i,
+        `<meta property="og:title" content="${safeTitle}" />`
+      )
+      .replace(
+        /<meta property="og:description" content="[^"]*"\s*\/?>/i,
+        `<meta property="og:description" content="${safeDesc}" />`
+      )
+      .replace(
+        /<meta name="twitter:title" content="[^"]*"\s*\/?>/i,
+        `<meta name="twitter:title" content="${safeTitle}" />`
+      )
+      .replace(
+        /<meta name="twitter:description" content="[^"]*"\s*\/?>/i,
+        `<meta name="twitter:description" content="${safeDesc}" />`
+      );
+    return out;
   };
 
   app.get('/robots.txt', (_req: Request, res: Response) => {

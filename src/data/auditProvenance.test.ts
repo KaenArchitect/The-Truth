@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PRELOADED_AUDITS } from './preloadedAudits.ts';
+import type { AuditData } from './rubricSpec.ts';
 import {
   classifyAuditQueryForSandbox,
   getAuditCategory,
@@ -33,7 +34,7 @@ test('getAuditProvenance labels hardcoded core L1/commodities as Deterministic R
 });
 
 test('getAuditCategory and getAuditProvenance separate Ecosystem / Overlays tickers cleanly', () => {
-  for (const tk of ['GEEK', 'IGRA', 'LN']) {
+  for (const tk of ['GEEK', 'IGRA', 'LN', 'STX']) {
     assert.equal(getAuditCategory(PRELOADED_AUDITS[tk]), 'ECOSYSTEM_OVERLAY');
     const prov = getAuditProvenance(PRELOADED_AUDITS[tk], { preloadedTickers });
     assert.equal(prov.categoryBadge, 'Ecosystem / Overlays');
@@ -46,11 +47,83 @@ test('getAuditCategory and getAuditProvenance separate Ecosystem / Overlays tick
   assert.ok(coreTickers.includes('KAS'));
   assert.ok(coreTickers.includes('BTC'));
   assert.ok(coreTickers.includes('ETH'));
+  assert.ok(coreTickers.includes('TAO'));
   assert.ok(coreTickers.includes('XAU'));
   assert.ok(!coreTickers.includes('GEEK'));
   assert.ok(!coreTickers.includes('IGRA'));
   assert.ok(!coreTickers.includes('LN'));
-  assert.deepEqual(ecosystemTickers.sort(), ['GEEK', 'IGRA', 'LN']);
+  assert.ok(!coreTickers.includes('STX'));
+  assert.deepEqual(ecosystemTickers.sort(), ['GEEK', 'IGRA', 'LN', 'STX']);
+});
+
+test('Failed basket partitioning accurately places L2s, sidechains, stablecoins, and tokens in Ecosystem / Overlays while keeping L1 hosts in Core', () => {
+  const customFailedMap: Record<string, AuditData> = {
+    ...PRELOADED_AUDITS,
+    ARB: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'ARB',
+      name: 'Arbitrum',
+      architecture: 'Optimistic Rollup (Centralized Sequencer over Ethereum L1)',
+      isCustom: true
+    },
+    USDT: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'USDT',
+      name: 'Tether',
+      architecture: 'Custodial Fiat-Backed Stablecoin (ERC-20 / TRC-20 / SPL)',
+      isCustom: true
+    },
+    FOO: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'FOO',
+      name: 'FooSwap',
+      architecture: 'Ethereum ERC-20 DEX Governance Token',
+      isCustom: true
+    },
+    TIA: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'TIA',
+      name: 'Celestia',
+      architecture: 'Modular Data Availability PoS L1 for L2 Rollups',
+      isCustom: true
+    },
+    BARL1: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'BARL1',
+      name: 'BarChain',
+      architecture: 'Proof-of-Stake Layer-1 + Centralized L2 Sequencers',
+      isCustom: true
+    },
+    FLAGGED: {
+      ...PRELOADED_AUDITS.ETH,
+      ticker: 'FLAGGED',
+      name: 'Flagged Overlay',
+      architecture: 'Zero-Joule Protocol',
+      isUpperLayerOverlayOrChannel: true,
+      isCustom: true
+    }
+  };
+
+  const failedTickers = Object.keys(customFailedMap).filter(
+    (tk) => customFailedMap[tk].grade === 'F' || customFailedMap[tk].totalScore <= 1.0
+  );
+  const { coreTickers, ecosystemTickers } = partitionTickersByEcosystem(
+    failedTickers,
+    customFailedMap
+  );
+
+  for (const overlayTk of ['STX', 'ARB', 'USDT', 'FOO', 'FLAGGED']) {
+    assert.ok(ecosystemTickers.includes(overlayTk), `Expected ${overlayTk} in Failed Ecosystem / Overlays`);
+    assert.ok(!coreTickers.includes(overlayTk), `Expected ${overlayTk} excluded from Core Failed`);
+  }
+
+  for (const l1Tk of ['ETH', 'SOL', 'ADA', 'TAO', 'TIA', 'BARL1']) {
+    assert.ok(coreTickers.includes(l1Tk), `Expected ${l1Tk} in Core Failed L1s`);
+    assert.ok(!ecosystemTickers.includes(l1Tk), `Expected ${l1Tk} excluded from Failed Ecosystem / Overlays`);
+  }
+
+  const stxAnalysis = getAuditRevisionAnalysis(PRELOADED_AUDITS.STX, true);
+  assert.match(stxAnalysis.triggers[0].condition, /Cost Floor = 0\.00 and Terminal Grade F/i);
 });
 
 test('Live AI audits are labeled Live AI Heuristic Audit', () => {

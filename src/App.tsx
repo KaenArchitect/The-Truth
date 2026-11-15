@@ -140,6 +140,17 @@ import {
   isSandboxUrlEnabled,
   partitionTickersByEcosystem
 } from './data/auditProvenance.ts';
+import { GenesisThesisModal } from './components/GenesisThesisModal.tsx';
+import { GeniusSearchWaveRings } from './components/GeniusSearchWaveRings.tsx';
+import {
+  answerArchiveResearchQuestion,
+  buildArchiveComparison,
+  findArchivedAudit,
+  listArchivedAudits,
+  parseDeepLinkSearchParams,
+  summarizeArchivedAudit,
+  type ArchivedAuditListFilters
+} from './data/agentArchiveApi.ts';
 
 const INVARIANT_ICONS: Record<string, LucideIcon> = {
   '01': ShieldCheck,
@@ -399,15 +410,25 @@ function ThermodynamicAuditApp() {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isGainsModalOpen, setIsGainsModalOpen] = useState(false);
   const [isDonateModalOpen, setIsDonateModalOpen] = useState(false);
+  const [isGenesisModalOpen, setIsGenesisModalOpen] = useState(false);
+  const [truthDotHoldProgress, setTruthDotHoldProgress] = useState(0);
+  const [truthExplosionActive, setTruthExplosionActive] = useState(false);
+  const truthDotRafRef = useRef<number | null>(null);
+  const truthDotStartRef = useRef<number | null>(null);
+  const truthDotTriggeredRef = useRef(false);
+  const truthExplosionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPillRef = useRef<HTMLDivElement | null>(null);
   const [donateConfig, setDonateConfig] = useState<{
     kasAddress?: string;
     btcAddress?: string;
-    url?: string;
+    ethAddress?: string;
+    solAddress?: string;
   }>({});
   const [isTutorialOpen, setIsTutorialOpen] = useState(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1') return false;
+    if (parseDeepLinkSearchParams(window.location.search).hasDeepLink) return false;
     return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) !== '1';
   });
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
@@ -490,7 +511,12 @@ function ThermodynamicAuditApp() {
   );
 
   const isAnyModalOpen = Boolean(
-    modalInvId || isRubricOpen || isArchiveModalOpen || isGainsModalOpen || isDonateModalOpen
+    modalInvId ||
+      isRubricOpen ||
+      isArchiveModalOpen ||
+      isGainsModalOpen ||
+      isDonateModalOpen ||
+      isGenesisModalOpen
   );
 
   useEffect(() => {
@@ -544,7 +570,8 @@ function ThermodynamicAuditApp() {
     if (!isAnyModalOpen) return undefined;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (isDonateModalOpen) setIsDonateModalOpen(false);
+        if (isGenesisModalOpen) setIsGenesisModalOpen(false);
+        else if (isDonateModalOpen) setIsDonateModalOpen(false);
         else if (isGainsModalOpen) setIsGainsModalOpen(false);
         else if (isArchiveModalOpen) setIsArchiveModalOpen(false);
         else if (isRubricOpen) setIsRubricOpen(false);
@@ -555,6 +582,7 @@ function ThermodynamicAuditApp() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     isAnyModalOpen,
+    isGenesisModalOpen,
     isDonateModalOpen,
     isGainsModalOpen,
     isArchiveModalOpen,
@@ -667,7 +695,12 @@ function ThermodynamicAuditApp() {
           cfg: {
             strictCreditLock?: boolean;
             dailyQuota?: QuotaStatus;
-            donate?: { kasAddress?: string; btcAddress?: string; url?: string };
+            donate?: {
+              kasAddress?: string;
+              btcAddress?: string;
+              ethAddress?: string;
+              solAddress?: string;
+            };
           } | null
         ) => {
           if (!active || !cfg) return;
@@ -2452,6 +2485,444 @@ function ThermodynamicAuditApp() {
     [activeKey, closeTutorial]
   );
 
+  // =========================================================================
+  // 5-SECOND TRUTH DOT HOLD -> RADIAL SUPERNOVA EXPLOSION -> GENESIS THESIS
+  // =========================================================================
+  const cancelTruthDotHold = useCallback(() => {
+    if (truthDotRafRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(truthDotRafRef.current);
+      truthDotRafRef.current = null;
+    }
+    truthDotStartRef.current = null;
+    setTruthDotHoldProgress(0);
+  }, []);
+
+  const triggerTruthSupernova = useCallback(() => {
+    cancelTruthDotHold();
+    truthDotTriggeredRef.current = true;
+    setTruthExplosionActive(true);
+    if (truthExplosionTimerRef.current) clearTimeout(truthExplosionTimerRef.current);
+    setTimeout(() => {
+      setIsGenesisModalOpen(true);
+    }, 340);
+    truthExplosionTimerRef.current = setTimeout(() => {
+      setTruthExplosionActive(false);
+      truthDotTriggeredRef.current = false;
+    }, 820);
+  }, [cancelTruthDotHold]);
+
+  const startTruthDotHold = useCallback(() => {
+    if (typeof window === 'undefined' || isGenesisModalOpen || truthExplosionActive) return;
+    cancelTruthDotHold();
+    truthDotTriggeredRef.current = false;
+    const HOLD_DURATION_MS = 5000;
+    const startTs = performance.now();
+    truthDotStartRef.current = startTs;
+
+    const tick = (now: number) => {
+      if (truthDotStartRef.current === null) return;
+      const elapsed = now - truthDotStartRef.current;
+      const ratio = Math.min(1, Math.max(0, elapsed / HOLD_DURATION_MS));
+      setTruthDotHoldProgress(ratio);
+      if (ratio >= 1) {
+        triggerTruthSupernova();
+        return;
+      }
+      truthDotRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    truthDotRafRef.current = window.requestAnimationFrame(tick);
+  }, [cancelTruthDotHold, isGenesisModalOpen, triggerTruthSupernova, truthExplosionActive]);
+
+  useEffect(() => {
+    return () => {
+      if (truthDotRafRef.current !== null && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(truthDotRafRef.current);
+      }
+      if (truthExplosionTimerRef.current) clearTimeout(truthExplosionTimerRef.current);
+    };
+  }, []);
+
+  // =========================================================================
+  // URL DEEP-LINK INITIALIZATION (?compare=, ?asset=, ?mode=, ?lab=, ?genesis=)
+  // =========================================================================
+  const pendingDeepLinkRef = useRef<ReturnType<typeof parseDeepLinkSearchParams> | null>(
+    typeof window !== 'undefined' ? parseDeepLinkSearchParams(window.location.search) : null
+  );
+  const deepLinkFlagsAppliedRef = useRef(false);
+
+  useEffect(() => {
+    const dl = pendingDeepLinkRef.current;
+    if (!dl || !dl.hasDeepLink) return;
+
+    if (!deepLinkFlagsAppliedRef.current) {
+      deepLinkFlagsAppliedRef.current = true;
+      if (dl.mode === 'NORMIE') setIsGeniusMode(false);
+      else if (dl.mode === 'GENIUS' || dl.compareTickers.length > 0 || dl.assetTicker) {
+        setIsGeniusMode(true);
+      }
+      if (dl.openGainsModal) setIsGainsModalOpen(true);
+      if (dl.openRubricModal) setIsRubricOpen(true);
+      if (dl.openGenesisModal) setIsGenesisModalOpen(true);
+    }
+
+    if (dl.compareTickers.length >= 2) {
+      const resolved = dl.compareTickers
+        .map((tk) => findArchivedAudit(audits, tk, dynamicAliases)?.ticker || null)
+        .filter((t): t is string => Boolean(t));
+      if (resolved.length === dl.compareTickers.length) {
+        setPinnedKeys(resolved);
+        setActiveKey(resolved[0]);
+        setIsTutorialOpen(false);
+        pendingDeepLinkRef.current = null;
+        return;
+      }
+    }
+
+    if (dl.assetTicker) {
+      const hit = findArchivedAudit(audits, dl.assetTicker, dynamicAliases);
+      if (hit) {
+        setPinnedKeys([]);
+        setActiveKey(hit.ticker);
+        setIsTutorialOpen(false);
+        if (dl.openWartimeLab) {
+          setEssayViewMode(false);
+          setModalInvId('04');
+          scrollToWartimeSim();
+        } else if (dl.invariantId) {
+          setEssayViewMode(false);
+          setModalInvId(dl.invariantId);
+        }
+        pendingDeepLinkRef.current = null;
+      }
+    }
+  }, [audits, dynamicAliases]);
+
+  // =========================================================================
+  // GLOBAL ARCHIVE-ONLY BROWSER AGENT HOOK & WEBMCP TOOL REGISTRATION
+  // =========================================================================
+  const agentSnapshotRef = useRef({
+    audits,
+    dynamicAliases,
+    isGeniusMode,
+    activeKey,
+    validPinnedKeys,
+    isAnyModalOpen
+  });
+  agentSnapshotRef.current = {
+    audits,
+    dynamicAliases,
+    isGeniusMode,
+    activeKey,
+    validPinnedKeys,
+    isAnyModalOpen
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const preloadedSet = new Set(Object.keys(PRELOADED_AUDITS));
+
+    const openAgentModal = (
+      kind: 'RUBRIC' | 'ARCHIVE' | 'GAINS' | 'GENESIS_EASTER_EGG' | 'WARTIME_LAB' | null
+    ) => {
+      setModalInvId(null);
+      setIsRubricOpen(false);
+      setIsArchiveModalOpen(false);
+      setIsGainsModalOpen(false);
+      setIsDonateModalOpen(false);
+      setIsGenesisModalOpen(false);
+      if (kind === 'RUBRIC') setIsRubricOpen(true);
+      else if (kind === 'ARCHIVE') setIsArchiveModalOpen(true);
+      else if (kind === 'GAINS') setIsGainsModalOpen(true);
+      else if (kind === 'GENESIS_EASTER_EGG') setIsGenesisModalOpen(true);
+      else if (kind === 'WARTIME_LAB') {
+        const snap = agentSnapshotRef.current;
+        if (!snap.activeKey) setActiveKey('KAS');
+        setEssayViewMode(false);
+        setModalInvId('04');
+        scrollToWartimeSim();
+      }
+      return { ok: true, archiveOnly: true, opened: kind };
+    };
+
+    const agentApi = {
+      isArchiveOnly: true as const,
+      version: '1.0.0',
+      getState: () => {
+        const snap = agentSnapshotRef.current;
+        return {
+          archiveOnly: true as const,
+          creditsUsed: 0,
+          activeTicker: snap.activeKey,
+          pinnedTickers: snap.validPinnedKeys,
+          mode: snap.isGeniusMode ? ('GENIUS' as const) : ('NORMIE' as const),
+          archivedCount: Object.keys(snap.audits).length,
+          isModalOpen: snap.isAnyModalOpen
+        };
+      },
+      listArchived: (filters: ArchivedAuditListFilters = {}) => {
+        const snap = agentSnapshotRef.current;
+        const list = listArchivedAudits(snap.audits, filters, preloadedSet);
+        return {
+          ok: true,
+          archiveOnly: true as const,
+          creditsUsed: 0,
+          count: list.length,
+          audits: list
+        };
+      },
+      getAudit: (ticker: string) => {
+        const snap = agentSnapshotRef.current;
+        const hit = findArchivedAudit(snap.audits, ticker, snap.dynamicAliases);
+        if (!hit) {
+          return {
+            ok: false,
+            archiveOnly: true as const,
+            archived: false,
+            creditsUsed: 0,
+            error: `Asset "${ticker}" is not in the Archive. Strictly archive-only hook never calls Gemini.`
+          };
+        }
+        return {
+          ok: true,
+          archiveOnly: true as const,
+          archived: true,
+          creditsUsed: 0,
+          summary: summarizeArchivedAudit(hit, preloadedSet),
+          audit: hit
+        };
+      },
+      selectAsset: (
+        ticker: string,
+        opts: { mode?: 'NORMIE' | 'GENIUS'; lab?: 'wartime'; invId?: string } = {}
+      ) => {
+        const snap = agentSnapshotRef.current;
+        const hit = findArchivedAudit(snap.audits, ticker, snap.dynamicAliases);
+        if (!hit) {
+          return {
+            ok: false,
+            archiveOnly: true as const,
+            archived: false,
+            creditsUsed: 0,
+            error: `Asset "${ticker}" is not archived.`
+          };
+        }
+        setIsTutorialOpen(false);
+        setPinnedKeys([]);
+        setActiveKey(hit.ticker);
+        setHoveredInvId(null);
+        setModalInvId(null);
+        if (opts.mode === 'NORMIE') setIsGeniusMode(false);
+        else setIsGeniusMode(true);
+        if (opts.lab === 'wartime') {
+          setEssayViewMode(false);
+          setModalInvId('04');
+          scrollToWartimeSim();
+        } else if (opts.invId && /^0?[1-6]$/.test(opts.invId)) {
+          setEssayViewMode(false);
+          setModalInvId(opts.invId.padStart(2, '0'));
+        }
+        return {
+          ok: true,
+          archiveOnly: true as const,
+          creditsUsed: 0,
+          selectedTicker: hit.ticker,
+          summary: summarizeArchivedAudit(hit, preloadedSet),
+          audit: hit
+        };
+      },
+      compareArchived: (
+        tickers: string[],
+        mode?: 'NORMIE' | 'GENIUS'
+      ) => {
+        const snap = agentSnapshotRef.current;
+        const resolvedMode = mode === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+        const comp = buildArchiveComparison(snap.audits, tickers, {
+          mode: resolvedMode,
+          dynamicAliases: snap.dynamicAliases,
+          preloadedTickers: preloadedSet
+        });
+        if (comp.ok) {
+          setIsTutorialOpen(false);
+          setModalInvId(null);
+          setIsRubricOpen(false);
+          setIsArchiveModalOpen(false);
+          setIsGainsModalOpen(false);
+          setIsGenesisModalOpen(false);
+          setIsGeniusMode(resolvedMode === 'GENIUS');
+          setPinnedKeys(comp.tickers);
+          setActiveKey(comp.tickers[0]);
+          setHoveredInvId(null);
+        }
+        return comp;
+      },
+      researchArchive: (
+        question: string,
+        opts: { mode?: 'NORMIE' | 'GENIUS'; syncUi?: boolean } = {}
+      ) => {
+        const snap = agentSnapshotRef.current;
+        const resolvedMode = opts.mode === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+        const result = answerArchiveResearchQuestion(snap.audits, question, {
+          mode: resolvedMode,
+          dynamicAliases: snap.dynamicAliases,
+          preloadedTickers: preloadedSet
+        });
+        if (opts.syncUi !== false && result.ok && result.matchedTickers.length > 0) {
+          setIsTutorialOpen(false);
+          setIsGeniusMode(resolvedMode === 'GENIUS');
+          if (result.matchedTickers.length >= 2) {
+            setPinnedKeys(result.matchedTickers);
+            setActiveKey(result.matchedTickers[0]);
+          } else {
+            setPinnedKeys([]);
+            setActiveKey(result.matchedTickers[0]);
+          }
+        }
+        return result;
+      },
+      clearSelection: () => {
+        setPinnedKeys([]);
+        setActiveKey(null);
+        setHoveredInvId(null);
+        setExpandedSyncInvId(null);
+        setModalInvId(null);
+        return { ok: true, archiveOnly: true as const };
+      },
+      setDepthMode: (mode: 'NORMIE' | 'GENIUS') => {
+        setIsGeniusMode(mode === 'GENIUS');
+        return { ok: true, mode: mode === 'GENIUS' ? 'GENIUS' : 'NORMIE' };
+      },
+      openModal: openAgentModal
+    };
+
+    const win = window as unknown as {
+      __THE_TRUTH_AGENT__?: typeof agentApi;
+    };
+    win.__THE_TRUTH_AGENT__ = agentApi;
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event?.data as
+        | { type?: string; id?: string | number; action?: string; payload?: Record<string, unknown> }
+        | undefined;
+      if (!data || data.type !== 'THE_TRUTH_AGENT_COMMAND') return;
+      let result: unknown = { ok: false, error: 'Unsupported command.' };
+      const p = data.payload || {};
+      if (data.action === 'getState') result = agentApi.getState();
+      else if (data.action === 'listArchived')
+        result = agentApi.listArchived(p as ArchivedAuditListFilters);
+      else if (data.action === 'getAudit') result = agentApi.getAudit(String(p.ticker || ''));
+      else if (data.action === 'selectAsset')
+        result = agentApi.selectAsset(String(p.ticker || ''), p as never);
+      else if (data.action === 'compareArchived')
+        result = agentApi.compareArchived(
+          Array.isArray(p.tickers) ? p.tickers.map(String) : [],
+          p.mode as never
+        );
+      else if (data.action === 'researchArchive')
+        result = agentApi.researchArchive(String(p.question || ''), p as never);
+      else if (data.action === 'clearSelection') result = agentApi.clearSelection();
+      else if (data.action === 'setDepthMode')
+        result = agentApi.setDepthMode(String(p.mode || 'NORMIE') as never);
+      else if (data.action === 'openModal')
+        result = agentApi.openModal((p.kind as never) || null);
+
+      if (event.source && typeof (event.source as Window).postMessage === 'function') {
+        (event.source as Window).postMessage(
+          { type: 'THE_TRUTH_AGENT_RESPONSE', id: data.id ?? null, result },
+          event.origin && event.origin !== 'null' ? event.origin : '*'
+        );
+      }
+    };
+    window.addEventListener('message', onMessage);
+
+    // Optional W3C WebMCP navigator.modelContext tool registration (strictly archive-only)
+    const navWithMcp = navigator as Navigator & {
+      modelContext?: {
+        registerTool?: (tool: {
+          name: string;
+          description: string;
+          inputSchema: Record<string, unknown>;
+          execute: (args: Record<string, unknown>) => Promise<unknown> | unknown;
+        }) => void;
+        unregisterTool?: (name: string) => void;
+      };
+    };
+    const registeredWebMcpNames: string[] = [];
+    if (navWithMcp.modelContext?.registerTool) {
+      const webMcpDefs = [
+        {
+          name: 'truth_list_archived',
+          description:
+            'List verified archived crypto & physical commodity audits in The Truth (0 AI credits).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              basket: { type: 'string', enum: ['ALL', 'PASSED', 'FAILED'] },
+              q: { type: 'string' }
+            }
+          },
+          execute: (args: Record<string, unknown>) =>
+            agentApi.listArchived(args as ArchivedAuditListFilters)
+        },
+        {
+          name: 'truth_compare_archived',
+          description:
+            'Compare 2–4 archived assets side-by-side inside the UI constellation (strictly archive-only).',
+          inputSchema: {
+            type: 'object',
+            required: ['tickers'],
+            properties: {
+              tickers: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 4 },
+              mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] }
+            }
+          },
+          execute: (args: Record<string, unknown>) =>
+            agentApi.compareArchived(
+              Array.isArray(args.tickers) ? args.tickers.map(String) : [],
+              args.mode as never
+            )
+        },
+        {
+          name: 'truth_research_archive',
+          description:
+            'Answer cryptocurrency comparison or Proof-of-Stake vs Proof-of-Work questions strictly from archived audits.',
+          inputSchema: {
+            type: 'object',
+            required: ['question'],
+            properties: {
+              question: { type: 'string' },
+              mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] }
+            }
+          },
+          execute: (args: Record<string, unknown>) =>
+            agentApi.researchArchive(String(args.question || ''), { mode: args.mode as never })
+        }
+      ];
+      for (const toolDef of webMcpDefs) {
+        try {
+          navWithMcp.modelContext.registerTool(toolDef);
+          registeredWebMcpNames.push(toolDef.name);
+        } catch {
+          // Ignore browser WebMCP differences
+        }
+      }
+    }
+
+    return () => {
+      window.removeEventListener('message', onMessage);
+      delete win.__THE_TRUTH_AGENT__;
+      if (navWithMcp.modelContext?.unregisterTool) {
+        for (const tName of registeredWebMcpNames) {
+          try {
+            navWithMcp.modelContext.unregisterTool(tName);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+      }
+    };
+  }, []);
+
   const stageSize = 440;
   const centerCoord = stageSize / 2;
   const orbitRadius = 152;
@@ -2667,6 +3138,32 @@ function ThermodynamicAuditApp() {
         .bg-anim-paused .bg-halo-wave {
           animation-play-state: paused;
         }
+        @keyframes truthShockwave {
+          0% {
+            transform: translate(-50%, -50%) scale(0.3);
+            opacity: 0.96;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(16);
+            opacity: 0;
+          }
+        }
+        @keyframes truthSparkOut {
+          0% {
+            transform: translate(-50%, -50%) rotate(var(--spark-angle, 0deg)) translateX(4px) scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) rotate(var(--spark-angle, 0deg)) translateX(88px) scale(0.15);
+            opacity: 0;
+          }
+        }
+        .truth-shockwave-ring {
+          animation: truthShockwave 700ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .truth-spark-ray {
+          animation: truthSparkOut 660ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
@@ -2830,56 +3327,191 @@ function ThermodynamicAuditApp() {
               : 'translate-y-0'
           }`}
         >
-          <button
-            type="button"
-            onClick={() => {
-              if (!isLandingIdle && !isAuditing) {
-                setActiveKey(null);
-                setPinnedKeys([]);
-                setHoveredInvId(null);
-                setExpandedSyncInvId(null);
-                setConfirmFullReauditKey(null);
-              }
-            }}
-            title={!isLandingIdle && !isAuditing ? 'Return to centered search' : undefined}
-            className={`hero-title-scale pointer-events-auto flex flex-col items-center justify-center text-center select-none bg-transparent focus:outline-none ${
-              isLandingIdle ? 'scale-[1.22] sm:scale-[1.36]' : 'scale-100 cursor-pointer'
+          <div
+            className={`hero-title-scale pointer-events-auto flex flex-col items-center justify-center text-center select-none bg-transparent ${
+              isLandingIdle ? 'scale-[1.22] sm:scale-[1.36]' : 'scale-100'
             }`}
           >
             <div className="relative inline-flex items-center justify-center">
-              <span
-                className="color-glide absolute -left-5 w-2.5 h-2.5 rounded-full"
-                style={{
-                  backgroundColor: accent.primary,
-                  boxShadow: `0 0 12px ${accent.primary}`
+              <button
+                type="button"
+                data-testid="truth-dot-trigger"
+                aria-label="Hold The Truth dot for 5 seconds to reveal the origin thesis"
+                onPointerDown={(e) => {
+                  if (e.button === 0 || e.pointerType !== 'mouse') {
+                    try {
+                      e.currentTarget.setPointerCapture?.(e.pointerId);
+                    } catch {
+                      // Ignore synthetic events without active pointerId
+                    }
+                    startTruthDotHold();
+                  }
                 }}
-              />
-              <h1 className="font-display text-2xl sm:text-[30px] font-bold tracking-tight text-white leading-none">
-                The Truth
-              </h1>
+                onPointerUp={(e) => {
+                  try {
+                    e.currentTarget.releasePointerCapture?.(e.pointerId);
+                  } catch {
+                    // Ignore
+                  }
+                  if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                }}
+                onPointerLeave={() => {
+                  if (truthDotStartRef.current === null && !truthDotTriggeredRef.current) {
+                    cancelTruthDotHold();
+                  }
+                }}
+                onPointerCancel={() => {
+                  if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                }}
+                onKeyDown={(e) => {
+                  if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
+                    e.preventDefault();
+                    startTruthDotHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === ' ' || e.key === 'Enter') {
+                    if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                  }
+                }}
+                className="absolute -left-[29px] top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center bg-transparent focus:outline-none cursor-pointer touch-none"
+              >
+                {truthDotHoldProgress > 0 && (
+                  <svg
+                    data-testid="truth-dot-charge-ring"
+                    viewBox="0 0 28 28"
+                    className="absolute inset-0 w-7 h-7 -rotate-90 pointer-events-none"
+                  >
+                    <circle
+                      cx="14"
+                      cy="14"
+                      r="11"
+                      fill="none"
+                      stroke="rgba(255,255,255,0.16)"
+                      strokeWidth="2"
+                    />
+                    <circle
+                      cx="14"
+                      cy="14"
+                      r="11"
+                      fill="none"
+                      stroke={accent.primary}
+                      strokeWidth="2.4"
+                      strokeLinecap="round"
+                      strokeDasharray={2 * Math.PI * 11}
+                      strokeDashoffset={2 * Math.PI * 11 * (1 - truthDotHoldProgress)}
+                    />
+                  </svg>
+                )}
+
+                {truthExplosionActive && (
+                  <div
+                    data-testid="truth-dot-explosion"
+                    className="pointer-events-none absolute inset-0 overflow-visible z-50"
+                  >
+                    <span
+                      className="truth-shockwave-ring absolute left-1/2 top-1/2 w-5 h-5 rounded-full border-2"
+                      style={{
+                        borderColor: accent.primary,
+                        boxShadow: `0 0 28px ${accent.primary}, inset 0 0 14px ${accent.secondary}`
+                      }}
+                    />
+                    <span
+                      className="truth-shockwave-ring absolute left-1/2 top-1/2 w-3.5 h-3.5 rounded-full"
+                      style={{
+                        background: `radial-gradient(circle, ${accent.primary}AA 0%, transparent 72%)`,
+                        animationDelay: '45ms'
+                      }}
+                    />
+                    {Array.from({ length: 14 }, (_, idx) => (
+                      <span
+                        key={idx}
+                        className="truth-spark-ray absolute left-1/2 top-1/2 w-2.5 h-1 rounded-full"
+                        style={{
+                          ['--spark-angle' as string]: `${idx * (360 / 14)}deg`,
+                          backgroundColor: idx % 2 === 0 ? accent.primary : accent.secondary,
+                          boxShadow: `0 0 10px ${accent.primary}`
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <span
+                  className="color-glide w-2.5 h-2.5 rounded-full block"
+                  style={{
+                    backgroundColor: accent.primary,
+                    transform:
+                      truthDotHoldProgress > 0
+                        ? `scale(${(1 + truthDotHoldProgress * 0.55).toFixed(2)})`
+                        : undefined,
+                    boxShadow:
+                      truthDotHoldProgress > 0
+                        ? `0 0 ${Math.round(12 + truthDotHoldProgress * 22)}px ${accent.primary}`
+                        : `0 0 12px ${accent.primary}`
+                  }}
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isLandingIdle && !isAuditing) {
+                    setActiveKey(null);
+                    setPinnedKeys([]);
+                    setHoveredInvId(null);
+                    setExpandedSyncInvId(null);
+                    setConfirmFullReauditKey(null);
+                  }
+                }}
+                title={!isLandingIdle && !isAuditing ? 'Return to centered search' : undefined}
+                className={`bg-transparent focus:outline-none ${
+                  !isLandingIdle && !isAuditing ? 'cursor-pointer' : 'cursor-default'
+                }`}
+              >
+                <h1 className="font-display text-2xl sm:text-[30px] font-bold tracking-tight text-white leading-none">
+                  The Truth
+                </h1>
+              </button>
             </div>
-            <span
-              className="color-glide mt-1 font-mono text-[11px] sm:text-xs lowercase tracking-[0.24em] font-medium"
+            <button
+              type="button"
+              onClick={() => {
+                if (!isLandingIdle && !isAuditing) {
+                  setActiveKey(null);
+                  setPinnedKeys([]);
+                  setHoveredInvId(null);
+                  setExpandedSyncInvId(null);
+                  setConfirmFullReauditKey(null);
+                }
+              }}
+              className={`color-glide mt-1 font-mono text-[11px] sm:text-xs lowercase tracking-[0.24em] font-medium bg-transparent focus:outline-none ${
+                !isLandingIdle && !isAuditing ? 'cursor-pointer' : 'cursor-default'
+              }`}
               style={{
                 color: accent.secondary,
                 textShadow: `0 0 16px ${accent.glow}`
               }}
             >
               thermodynamic audit
-            </span>
-          </button>
+            </button>
+          </div>
 
-          <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2">
+          <div
+            className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2 ${
+              isLandingIdle ? '-mt-0.5 sm:-mt-1' : '-mt-0.5'
+            }`}
+          >
             <div
               data-tutorial-id="mode-controls"
-              className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[11px] shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
+              className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10.5px] leading-none shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
               role="group"
               aria-label="Audit Depth Mode Switch"
             >
               <button
                 type="button"
                 onClick={() => setIsGeniusMode(false)}
-                className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
+                className={`color-glide h-full px-3 rounded-full inline-flex items-center justify-center gap-1.5 border border-transparent leading-none ${
                   !isGeniusMode
                     ? 'bg-[#1D212A] text-white font-semibold shadow-sm'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -2890,7 +3522,7 @@ function ThermodynamicAuditApp() {
               <button
                 type="button"
                 onClick={() => setIsGeniusMode(true)}
-                className={`color-glide px-3.5 py-1 rounded-full flex items-center gap-1.5 ${
+                className={`color-glide h-full px-3 rounded-full inline-flex items-center justify-center gap-1.5 leading-none ${
                   isGeniusMode ? 'font-bold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
                 }`}
                 style={
@@ -2903,7 +3535,7 @@ function ThermodynamicAuditApp() {
                     : { border: '1px solid transparent' }
                 }
               >
-                <Sparkles className="w-3 h-3" />
+                <Sparkles className="w-3 h-3 shrink-0" />
                 <span>GENIUS</span>
               </button>
             </div>
@@ -2914,7 +3546,7 @@ function ThermodynamicAuditApp() {
               onClick={() => setIsSandboxMode((prev) => !prev)}
               aria-pressed={isSandboxMode}
               title="Sandbox / Local Preview: stores test & unverified lookups strictly in your browser localStorage instead of persisting them to the shared public archive."
-              className={`color-glide px-3 py-1 rounded-full border font-mono text-[10.5px] flex items-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)] ${
+              className={`color-glide h-7 px-3 rounded-full border font-mono text-[10.5px] leading-none inline-flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)] ${
                 isSandboxMode
                   ? 'bg-amber-500/15 text-amber-300 border-amber-400/50 font-semibold'
                   : 'bg-[#121418] text-neutral-400 hover:text-neutral-200 border-white/10'
@@ -2925,16 +3557,33 @@ function ThermodynamicAuditApp() {
             </button>
           </div>
 
-          <div className="relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl flex flex-col items-center">
+          <div
+            className={`relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
+              isLandingIdle ? 'mt-9 sm:mt-10' : isGeniusMode ? 'mt-8 sm:mt-9' : 'mt-2'
+            }`}
+          >
             <form
               data-tutorial-id="search-dock"
               onSubmit={handleSearchSubmit}
               className="pointer-events-auto w-full transition-all duration-700 relative"
             >
+              <GeniusSearchWaveRings
+                active={isGeniusMode}
+                isAuditing={isAuditing}
+                targetRef={searchPillRef}
+              />
+
               <div
-                className="color-glide flex items-center rounded-full bg-[#121418]/[0.96] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.55)]"
+                ref={searchPillRef}
+                className="color-glide relative z-10 flex items-center rounded-full bg-[#121418]/[0.96] px-4 py-2.5 shadow-[0_12px_36px_rgba(0,0,0,0.55)]"
                 style={{
-                  border: `1px solid ${isAuditing ? accent.primary : 'rgba(255,255,255,0.1)'}`
+                  border: `1px solid ${
+                    isAuditing
+                      ? accent.primary
+                      : isGeniusMode
+                      ? 'rgba(73, 234, 203, 0.35)'
+                      : 'rgba(255,255,255,0.1)'
+                  }`
                 }}
               >
                 <Search className="w-4 h-4 text-neutral-400 shrink-0 mr-3" />
@@ -3634,11 +4283,11 @@ function ThermodynamicAuditApp() {
                             </div>
 
                             <div className="w-full sm:w-auto flex flex-nowrap items-center justify-between sm:justify-end gap-1.5 sm:gap-2">
-                              <div className="p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 flex items-center font-mono text-[9.5px] sm:text-[10px] shrink-0">
+                              <div className="h-7 p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => setIsGeniusMode(false)}
-                                  className={`px-2 sm:px-2.5 py-1 rounded-full transition ${
+                                  className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
                                     !isGeniusMode
                                       ? 'bg-[#1D212A] text-white font-semibold'
                                       : 'text-neutral-400 hover:text-neutral-200'
@@ -3649,13 +4298,13 @@ function ThermodynamicAuditApp() {
                                 <button
                                   type="button"
                                   onClick={() => setIsGeniusMode(true)}
-                                  className={`px-2 sm:px-2.5 py-1 rounded-full transition flex items-center gap-1 ${
+                                  className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center gap-1 border leading-none ${
                                     isGeniusMode
-                                      ? 'bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/40 font-bold'
-                                      : 'text-neutral-400 hover:text-neutral-200'
+                                      ? 'bg-[#49EACB]/15 text-[#49EACB] border-[#49EACB]/40 font-bold'
+                                      : 'border-transparent text-neutral-400 hover:text-neutral-200'
                                   }`}
                                 >
-                                  <Sparkles className="w-2.5 h-2.5" />
+                                  <Sparkles className="w-2.5 h-2.5 shrink-0" />
                                   <span>GENIUS</span>
                                 </button>
                               </div>
@@ -4871,11 +5520,11 @@ function ThermodynamicAuditApp() {
               </div>
 
               <div className="w-full flex flex-nowrap items-center justify-between gap-2">
-                <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] sm:text-[10.5px] shrink-0">
+                <div className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
                   <button
                     type="button"
                     onClick={() => setIsGeniusMode(false)}
-                    className={`px-2.5 py-0.5 sm:py-1 rounded-full transition text-center ${
+                    className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
                       !isGeniusMode
                         ? 'bg-[#1D212A] text-white font-semibold'
                         : 'text-neutral-400 hover:text-neutral-200'
@@ -4886,7 +5535,7 @@ function ThermodynamicAuditApp() {
                   <button
                     type="button"
                     onClick={() => setIsGeniusMode(true)}
-                    className={`px-2.5 py-0.5 sm:py-1 rounded-full transition flex items-center justify-center gap-1 ${
+                    className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center gap-1 leading-none ${
                       isGeniusMode ? 'font-bold' : 'text-neutral-400 hover:text-neutral-200'
                     }`}
                     style={
@@ -4896,10 +5545,10 @@ function ThermodynamicAuditApp() {
                             color: accent.primary,
                             border: `1px solid ${accent.border}`
                           }
-                        : undefined
+                        : { border: '1px solid transparent' }
                     }
                   >
-                    <Sparkles className="w-2.5 h-2.5" />
+                    <Sparkles className="w-2.5 h-2.5 shrink-0" />
                     <span>GENIUS</span>
                   </button>
                 </div>
@@ -4907,7 +5556,7 @@ function ThermodynamicAuditApp() {
                 <button
                   type="button"
                   onClick={() => setEssayViewMode((prev) => !prev)}
-                  className={`px-2.5 sm:px-3 py-1 rounded-full font-mono text-[10px] sm:text-[10.5px] transition flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
+                  className={`h-7 px-2.5 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
                     essayViewMode
                       ? 'font-bold shadow-sm'
                       : 'bg-[#0B0C0E] text-neutral-300 hover:text-white border border-white/10'
@@ -4919,7 +5568,7 @@ function ThermodynamicAuditApp() {
                           color: accent.primary,
                           border: `1px solid ${accent.border}`
                         }
-                      : undefined
+                      : { border: '1px solid rgba(255,255,255,0.1)' }
                   }
                 >
                   <Layers className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
@@ -6176,13 +6825,16 @@ function ThermodynamicAuditApp() {
               </button>
             </div>
 
-            <div className="p-5 sm:p-6 space-y-4 text-sm text-neutral-300">
+            <div className="p-5 sm:p-6 space-y-4 text-sm text-neutral-300 max-h-[82vh] overflow-y-auto">
               <p className="text-[13.5px] leading-relaxed text-neutral-300">
                 Preloaded and archived audits run at zero API credit cost, while live Gemini 4 +
                 Google Search protocol verifications consume real compute and electrical energy.
               </p>
 
-              {(donateConfig.kasAddress || donateConfig.btcAddress || donateConfig.url) ? (
+              {(donateConfig.kasAddress ||
+                donateConfig.btcAddress ||
+                donateConfig.ethAddress ||
+                donateConfig.solAddress) ? (
                 <div className="space-y-2.5">
                   {donateConfig.kasAddress && (
                     <div className="rounded-2xl bg-[#0B0C0E] border border-white/10 p-3.5 space-y-2">
@@ -6242,21 +6894,62 @@ function ThermodynamicAuditApp() {
                     </div>
                   )}
 
-                  {donateConfig.url && (
-                    <a
-                      href={donateConfig.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full min-h-[42px] px-4 py-2.5 rounded-xl font-mono text-xs font-bold flex items-center justify-center gap-2 hover:brightness-110 transition"
-                      style={{
-                        backgroundImage: accent.gradientCss,
-                        color: accent.textOnAccent
-                      }}
-                    >
-                      <span>Open Direct Support Page</span>
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
+                  {donateConfig.ethAddress && (
+                    <div className="rounded-2xl bg-[#0B0C0E] border border-white/10 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                        <span className="font-bold text-indigo-300">Ethereum ($ETH) Address</span>
+                        <button
+                          type="button"
+                          onClick={() => copyTextToClipboard(donateConfig.ethAddress!, 'donate-eth')}
+                          className="px-2.5 py-1 rounded-full bg-[#171A21] hover:bg-[#1F242D] border border-white/10 text-neutral-200 inline-flex items-center gap-1"
+                        >
+                          {copiedTarget === 'donate-eth' ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <div className="font-mono text-xs text-neutral-400 break-all">
+                        {donateConfig.ethAddress}
+                      </div>
+                    </div>
                   )}
+
+                  {donateConfig.solAddress && (
+                    <div className="rounded-2xl bg-[#0B0C0E] border border-white/10 p-3.5 space-y-2">
+                      <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                        <span className="font-bold text-violet-300">Solana ($SOL) Address</span>
+                        <button
+                          type="button"
+                          onClick={() => copyTextToClipboard(donateConfig.solAddress!, 'donate-sol')}
+                          className="px-2.5 py-1 rounded-full bg-[#171A21] hover:bg-[#1F242D] border border-white/10 text-neutral-200 inline-flex items-center gap-1"
+                        >
+                          {copiedTarget === 'donate-sol' ? (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <div className="font-mono text-xs text-neutral-400 break-all">
+                        {donateConfig.solAddress}
+                      </div>
+                    </div>
+                  )}
+
                 </div>
               ) : (
                 <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-2 font-mono text-xs">
@@ -6264,10 +6957,11 @@ function ThermodynamicAuditApp() {
                     No direct tip address configured yet
                   </div>
                   <p className="text-neutral-400 leading-relaxed font-sans text-[12.5px]">
-                    Operators can enable direct PoW or web tips by setting{' '}
+                    Operators can enable direct crypto tips by setting{' '}
                     <code className="text-neutral-200">DONATE_KAS_ADDRESS</code>,{' '}
-                    <code className="text-neutral-200">DONATE_BTC_ADDRESS</code>, or{' '}
-                    <code className="text-neutral-200">DONATE_URL</code> in environment secrets.
+                    <code className="text-neutral-200">DONATE_BTC_ADDRESS</code>,{' '}
+                    <code className="text-neutral-200">DONATE_ETH_ADDRESS</code>, or{' '}
+                    <code className="text-neutral-200">DONATE_SOL_ADDRESS</code> in environment secrets.
                   </p>
                 </div>
               )}
@@ -6313,7 +7007,20 @@ function ThermodynamicAuditApp() {
       )}
 
       {/* =====================================================================
-          9. INTERACTIVE INTRODUCTORY TUTORIAL OVERLAY
+          9. GENESIS THESIS EASTER EGG MODAL (5-SECOND TRUTH DOT HOLD)
+         ===================================================================== */}
+      <GenesisThesisModal
+        isOpen={isGenesisModalOpen}
+        onClose={() => setIsGenesisModalOpen(false)}
+        accent={accent}
+        isGeniusMode={isGeniusMode}
+        onSetGeniusMode={setIsGeniusMode}
+        onCopyFullThesis={(fullText) => copyTextToClipboard(fullText, 'genesis-thesis')}
+        copiedTarget={copiedTarget}
+      />
+
+      {/* =====================================================================
+          10. INTERACTIVE INTRODUCTORY TUTORIAL OVERLAY
          ===================================================================== */}
       <TutorialOverlay
         isOpen={isTutorialOpen}
