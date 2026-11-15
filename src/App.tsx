@@ -2454,7 +2454,7 @@ function ThermodynamicAuditApp() {
         if (syncComparisonAnchorRef.current) {
           syncComparisonAnchorRef.current.scrollIntoView({
             behavior: 'smooth',
-            block: 'start'
+            block: 'nearest'
           });
         }
       }, 70);
@@ -4640,62 +4640,78 @@ function ThermodynamicAuditApp() {
                       );
                     })()
                   ) : (
-                    hoveredInvId && (
-                      <div
-                        key={`sync-grid-${hoveredInvId}`}
-                        className={`animate-card-fade grid grid-cols-1 ${
-                          pinOrientationMode === 'vertical'
-                            ? ''
-                            : count === 2
-                            ? 'sm:grid-cols-2'
-                            : count === 3
-                            ? 'sm:grid-cols-3'
-                            : 'sm:grid-cols-2 xl:grid-cols-4'
-                        } gap-2.5`}
-                      >
-                        {stageTickers.map((tk) => {
-                          const item = audits[tk];
-                          const inv = item?.invariants?.find((i) => i.id === hoveredInvId);
-                          if (!item || !inv) return null;
-                          const sStyle = getScoreStyle(inv.score);
-                          return (
-                            <button
-                              key={tk}
-                              type="button"
-                              onClick={() => {
-                                setActiveKey(tk);
-                                setEssayViewMode(false);
-                                setModalInvId(inv.id);
-                              }}
-                              className="color-glide text-left rounded-2xl bg-[#121418]/95 p-3.5 cursor-pointer hover:brightness-110 space-y-1.5"
-                              style={{ border: `1px solid ${sStyle.border}` }}
-                            >
-                              <div className="flex items-center justify-between gap-2 font-mono text-xs">
-                                <span className="font-bold text-white">
-                                  ${item.ticker} // {inv.shortName}
-                                </span>
-                                <span
-                                  className="color-glide px-2 py-0.5 rounded-full text-[10.5px] font-bold"
-                                  style={{
-                                    color: sStyle.color,
-                                    backgroundColor: sStyle.bg,
-                                    border: `1px solid ${sStyle.border}`
-                                  }}
-                                >
-                                  {formatScore(inv.score)}/1.0
-                                </span>
-                              </div>
-                              <p className="text-xs text-neutral-300 leading-relaxed line-clamp-3">
-                                {inv.quickSummary}
-                              </p>
-                              <div className="font-mono text-[10px] text-neutral-500 truncate">
-                                {inv.telemetry}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )
+                    <div
+                      style={{ overflowAnchor: 'none' }}
+                      className={`w-full ${
+                        pinOrientationMode === 'vertical'
+                          ? 'min-h-[300px]'
+                          : count === 4
+                          ? 'min-h-[344px] xl:min-h-[172px]'
+                          : 'min-h-[172px]'
+                      } flex flex-col justify-start`}
+                    >
+                      {hoveredInvId ? (
+                        <div
+                          className={`grid grid-cols-1 ${
+                            pinOrientationMode === 'vertical'
+                              ? ''
+                              : count === 2
+                              ? 'sm:grid-cols-2'
+                              : count === 3
+                              ? 'sm:grid-cols-3'
+                              : 'sm:grid-cols-2 xl:grid-cols-4'
+                          } gap-2.5`}
+                        >
+                          {stageTickers.map((tk) => {
+                            const item = audits[tk];
+                            const inv = item?.invariants?.find((i) => i.id === hoveredInvId);
+                            if (!item || !inv) return null;
+                            const sStyle = getScoreStyle(inv.score);
+                            return (
+                              <button
+                                key={tk}
+                                type="button"
+                                onClick={() => {
+                                  setActiveKey(tk);
+                                  setEssayViewMode(false);
+                                  setModalInvId(inv.id);
+                                }}
+                                className="color-glide text-left rounded-2xl bg-[#121418]/95 p-3.5 cursor-pointer hover:brightness-110 space-y-1.5"
+                                style={{ border: `1px solid ${sStyle.border}` }}
+                              >
+                                <div className="flex items-center justify-between gap-2 font-mono text-xs">
+                                  <span className="font-bold text-white">
+                                    ${item.ticker} // {inv.shortName}
+                                  </span>
+                                  <span
+                                    className="color-glide px-2 py-0.5 rounded-full text-[10.5px] font-bold"
+                                    style={{
+                                      color: sStyle.color,
+                                      backgroundColor: sStyle.bg,
+                                      border: `1px solid ${sStyle.border}`
+                                    }}
+                                  >
+                                    {formatScore(inv.score)}/1.0
+                                  </span>
+                                </div>
+                                <p className="text-xs text-neutral-300 leading-relaxed line-clamp-3">
+                                  {inv.quickSummary}
+                                </p>
+                                <div className="font-mono text-[10px] text-neutral-500 truncate">
+                                  {inv.telemetry}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="w-full py-5 px-4 rounded-2xl border border-dashed border-white/[0.06] bg-[#121418]/35 flex items-center justify-center text-center">
+                          <span className="font-mono text-[11px] text-neutral-500">
+                            Hover any invariant bubble or pill above to compare summaries • Click to expand full breakdown
+                          </span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -5171,8 +5187,9 @@ function ThermodynamicAuditApp() {
 
             {/* DOCKED PROGRESS TOAST (DURING AUDIT) & QUICK-SCAN HOVER CARD */}
             <div
-              className={`w-full max-w-xl min-h-[120px] flex flex-col items-center ${
-                isAuditing ? 'mt-3 sm:mt-5 justify-start' : 'mt-1 justify-center'
+              style={{ overflowAnchor: 'none' }}
+              className={`w-full max-w-xl min-h-[184px] flex flex-col items-center ${
+                isAuditing ? 'mt-3 sm:mt-5 justify-start' : 'mt-1 justify-start pt-1'
               }`}
             >
               {isAuditing ? (
