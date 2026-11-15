@@ -878,10 +878,17 @@ export function clampSingleInvariantByPhysics(
       ? 'LINEAR_POW'
       : targetAudit?.consensusFamily || 'LINEAR_POW';
 
+  const isPhysicalMetal = isPhysicalMetalAuditPayload(
+    targetAudit?.name,
+    targetAudit?.architecture,
+    targetAudit?.ticker,
+    fam
+  );
   const archAndNameText = `${targetAudit?.name || ''} ${targetAudit?.architecture || ''} ${
     targetAudit?.ticker || ''
   }`.toUpperCase();
   const isOverlay =
+    !isPhysicalMetal &&
     /\b(LIGHTNING|STATE CHANNEL|PAYMENT CHANNEL|HTLC|PTLC|ROLLUP|KRC-20|BRC-20|RUNES|SIDECHAIN|LAYER-2|LAYER 2|\bL2\b|\bLN\b)\b/.test(
       archAndNameText
     );
@@ -1119,11 +1126,99 @@ const L1_HOST_MENTIONING_L2_REGEX =
 const EXPLICIT_OVERLAY_IDENTITY_REGEX =
   /\b(KRC-20|KCC-20|BRC-20|ERC-20|ERC20|BEP-20|TRC-20|SPL-20|SRC-20|ARC-20|SPL TOKEN|SOLANA SPL|LIGHTNING|PAYMENT-CHANNEL|PAYMENT CHANNEL|STATE CHANNEL|HTLC|PTLC|ZK-ROLLUP|ZK ROLLUP|ZKEVM|ZK-EVM|OPTIMISTIC ROLLUP|BASED ROLLUP|VALIDIUM|OPTIMIUM|SIDECHAIN|L1-SEQUENCED|OVER [A-Z0-9-]+ L1|ANCHORED TO [A-Z0-9-]+ L1|STABLECOIN|WRAPPED TOKEN|WRAPPED BITCOIN|LIQUID STAKING|RESTAKING|GOVERNANCE TOKEN|UTILITY TOKEN|MEMECOIN|MEME COIN|DEFI PROTOCOL|LENDING PROTOCOL|ORACLE NETWORK|CROSS-CHAIN BRIDGE|BRIDGE TOKEN)\b/;
 
+const RAW_METAL_TICKER_SET = new Set<string>([
+  'GOLD', 'AU', 'XAU', 'BULLION',
+  'SILVER', 'AG', 'XAG',
+  'COPPER', 'CU', 'XCU',
+  'PLATINUM', 'PT', 'XPT',
+  'PALLADIUM', 'PD', 'XPD',
+  'RHODIUM', 'RH',
+  'TITANIUM', 'TI',
+  'TUNGSTEN', 'WOLFRAM',
+  'URANIUM', 'U3O8', 'YELLOWCAKE',
+  'NICKEL', 'NI',
+  'ALUMINUM', 'ALUMINIUM', 'AL',
+  'IRON', 'FE', 'STEEL',
+  'ZINC', 'ZN',
+  'TIN', 'SN',
+  'LEAD', 'PB',
+  'COBALT', 'CO',
+  'LITHIUM', 'LI',
+  'IRIDIUM', 'IR',
+  'OSMIUM', 'OS',
+  'RUTHENIUM', 'RU',
+  'CHROMIUM', 'CR',
+  'MERCURY', 'HG',
+  'GALLIUM', 'GA',
+  'MOLYBDENUM', 'MO',
+  'TANTALUM', 'TA',
+  'BISMUTH', 'BI',
+  'ANTIMONY', 'SB',
+  'MAGNESIUM', 'MG',
+  'MANGANESE', 'MN',
+  'INDIUM', 'VANADIUM', 'RAREEARTH'
+]);
+
+const METAL_NAME_REGEX =
+  /\b(GOLD|SILVER|COPPER|PLATINUM|PALLADIUM|RHODIUM|TITANIUM|TUNGSTEN|URANIUM|NICKEL|ALUMINUM|ALUMINIUM|IRON|STEEL|ZINC|TIN|LEAD|COBALT|LITHIUM|IRIDIUM|OSMIUM|RUTHENIUM|CHROMIUM|MERCURY|GALLIUM|INDIUM|MOLYBDENUM|TANTALUM|BISMUTH|ANTIMONY|MAGNESIUM|MANGANESE|VANADIUM|BULLION|PHYSICAL\s+METAL|PHYSICAL\s+COMMODITY|ELEMENTAL\s+[A-Z]+)\b/;
+
+const EXPLICIT_TOKENIZED_COMMODITY_REGEX =
+  /\b(PAXG|XAUT|WBTC|ERC-20|ERC20|SPL TOKEN|BEP-20|TOKENIZED\s+(GOLD|SILVER|COPPER|PLATINUM|PALLADIUM|METAL|COMMODITY)|WRAPPED\s+(GOLD|SILVER|COPPER|PLATINUM|PALLADIUM|METAL)|STABLECOIN|ETF|ETN)\b/;
+
+export function isPhysicalMetalAuditPayload(
+  name?: string,
+  architecture?: string,
+  ticker?: string,
+  consensusFamily?: string,
+  extraQuery?: string
+): boolean {
+  const cleanTicker = String(ticker || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const cleanQuery = String(extraQuery || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  const nameAndTicker = `${cleanTicker} ${String(name || '').toUpperCase()}`.trim();
+
+  if (
+    cleanTicker === 'PAXG' ||
+    cleanTicker === 'XAUT' ||
+    EXPLICIT_TOKENIZED_COMMODITY_REGEX.test(nameAndTicker)
+  ) {
+    return false;
+  }
+
+  if (consensusFamily === 'PHYSICAL_COMMODITY') {
+    return true;
+  }
+
+  if (RAW_METAL_TICKER_SET.has(cleanTicker) || RAW_METAL_TICKER_SET.has(cleanQuery)) {
+    return true;
+  }
+
+  if (METAL_NAME_REGEX.test(nameAndTicker)) {
+    return true;
+  }
+
+  const archText = String(architecture || '').toUpperCase();
+  if (
+    /\bPHYSICAL\s+(COMMODITY|METAL|ELEMENT|BULLION|BULLION\s+SUBSTRATE)\b/.test(archText) &&
+    !EXPLICIT_TOKENIZED_COMMODITY_REGEX.test(nameAndTicker)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isOverlayArchitectureText(
   name?: string,
   architecture?: string,
   extraQuery?: string
 ): boolean {
+  if (isPhysicalMetalAuditPayload(name, architecture, undefined, undefined, extraQuery)) {
+    return false;
+  }
   const text = `${name || ''} ${architecture || ''} ${extraQuery || ''}`.toUpperCase().trim();
   if (!text) return false;
   if (!OVERLAY_POSITIVE_REGEX.test(text)) return false;
@@ -1193,16 +1288,27 @@ export function normalizeAuditPayload(
     'PHYSICAL_COMMODITY',
     'ZERO_JOULE_BFT'
   ];
+  const candidateTicker = existingBaseline?.ticker || parsed.ticker || rawQuery;
+  const isPhysicalMetal = isPhysicalMetalAuditPayload(
+    parsed.name || existingBaseline?.name,
+    parsed.architecture || existingBaseline?.architecture,
+    candidateTicker,
+    parsed.consensusFamily || existingBaseline?.consensusFamily,
+    rawQuery
+  );
   const archAndNameText = `${parsed.name || ''} ${parsed.architecture || ''} ${rawQuery}`.toUpperCase();
   const isOverlay =
-    parsed.isUpperLayerOverlayOrChannel === true ||
-    isOverlayArchitectureText(parsed.name, parsed.architecture, rawQuery);
+    !isPhysicalMetal &&
+    (parsed.isUpperLayerOverlayOrChannel === true ||
+      isOverlayArchitectureText(parsed.name, parsed.architecture, rawQuery));
   const isSequentialCarrierOverlay =
     isOverlay &&
     !/\b(KASPA|KRC-20|KCC-20|GHOSTDAG|BLOCKDAG|IGRA|VIADUCT)\b/.test(archAndNameText);
 
   const detectedFamily: ConsensusFamily = forceZeroJoule
     ? 'ZERO_JOULE_BFT'
+    : isPhysicalMetal
+    ? 'PHYSICAL_COMMODITY'
     : isSequentialCarrierOverlay
     ? 'LINEAR_POW'
     : parsed.consensusFamily &&
@@ -1220,8 +1326,8 @@ export function normalizeAuditPayload(
       inv.score = 0;
     });
   } else {
-    const hasPremineOrPrealloc = parsed.hasGenesisPremineOrVcOrIco === true;
-    const hasDevTaxOrKillSwitch = parsed.hasProtocolDevTaxOrKillSwitch === true;
+    const hasPremineOrPrealloc = !isPhysicalMetal && parsed.hasGenesisPremineOrVcOrIco === true;
+    const hasDevTaxOrKillSwitch = !isPhysicalMetal && parsed.hasProtocolDevTaxOrKillSwitch === true;
     if (hasPremineOrPrealloc || hasDevTaxOrKillSwitch) {
       cleanInvariants[0].score = 0;
     } else if (isOverlay) {

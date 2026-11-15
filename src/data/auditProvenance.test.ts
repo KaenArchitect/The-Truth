@@ -199,3 +199,57 @@ test('getAuditRevisionAnalysis returns canonical brackets and benchmark-specific
   assert.equal(lnAnalysis.brackets[4].shortName, 'State Topology');
   assert.ok(lnAnalysis.triggers.some((t) => /M_overlay < M_L1/i.test(t.condition)));
 });
+
+test('All physical metals are strictly treated as Layer-1 primary substrates (never Ecosystem / Overlays), while PAXG/XAUT stay overlays', () => {
+  const metalCases = [
+    { ticker: 'CU', name: 'Copper (Physical Cu-29)', architecture: 'Elemental Metal — Physical Extraction Substrate (unlike ERC-20 tokens)' },
+    { ticker: 'PLATINUM', name: 'Platinum (Physical Pt-78)', architecture: 'Physical Noble Metal Substrate (Cu-free, no L2 rollup wrapper)' },
+    { ticker: 'PT', name: 'Platinum', architecture: 'Physical Metal (Pt-78)' },
+    { ticker: 'PD', name: 'Palladium', architecture: 'Physical Commodity' },
+    { ticker: 'TI', name: 'Titanium', architecture: 'Industrial Physical Metal (Ti-22)' },
+    { ticker: 'RH', name: 'Rhodium', architecture: 'Physical Noble Metal' },
+    { ticker: 'NI', name: 'Nickel', architecture: 'Physical Metal' },
+    { ticker: 'FE', name: 'Iron', architecture: 'Physical Commodity' }
+  ];
+
+  const mockAudits: Record<string, AuditData> = { ...PRELOADED_AUDITS };
+  const metalTickers: string[] = [];
+
+  for (const m of metalCases) {
+    const audit: AuditData = {
+      ...PRELOADED_AUDITS.XAU,
+      ticker: m.ticker,
+      name: m.name,
+      architecture: m.architecture,
+      consensusFamily: 'PHYSICAL_COMMODITY',
+      isUpperLayerOverlayOrChannel: true, // even if mistakenly set, raw metals force Layer-1
+      isCustom: true
+    };
+    mockAudits[m.ticker] = audit;
+    metalTickers.push(m.ticker);
+    assert.equal(getAuditCategory(audit), 'PHYSICAL_COMMODITY', `Expected ${m.ticker} to classify as PHYSICAL_COMMODITY`);
+    assert.equal(getAuditProvenance(audit, { preloadedTickers }).categoryBadge, null);
+  }
+
+  const paxg: AuditData = {
+    ...PRELOADED_AUDITS.ETH,
+    ticker: 'PAXG',
+    name: 'PAX Gold (ERC-20 Tokenized Gold)',
+    architecture: 'Ethereum ERC-20 Custodial Token',
+    isUpperLayerOverlayOrChannel: true,
+    isCustom: true
+  };
+  mockAudits.PAXG = paxg;
+  assert.equal(getAuditCategory(paxg), 'ECOSYSTEM_OVERLAY');
+
+  const { coreTickers, ecosystemTickers } = partitionTickersByEcosystem(
+    [...metalTickers, 'PAXG'],
+    mockAudits
+  );
+  for (const tk of metalTickers) {
+    assert.ok(coreTickers.includes(tk), `Expected ${tk} in primary/core tickers`);
+    assert.ok(!ecosystemTickers.includes(tk), `Expected ${tk} excluded from Ecosystem / Overlays`);
+  }
+  assert.ok(ecosystemTickers.includes('PAXG'));
+});
+

@@ -137,3 +137,17 @@ test('Refunding daily pull restores slot if upstream audit fails before delivery
   assert.equal(afterRefund.used, 0);
   assert.equal(afterRefund.remaining, 2);
 });
+
+test('Elemental metal symbols like CU, XCU, PT, PD, TI, RH, AU, AG resolve cleanly to Layer-1 physical commodities', () => {
+  for (const sym of ['CU', 'cu', 'XCU', 'PT', 'PD', 'TI', 'RH', 'AU', 'AG', 'NI', 'FE', 'PB']) {
+    const res = evaluateMarketScope({
+      query: sym,
+      cachedAuditHit: false,
+      marketEntries: SAMPLE_ENTRIES
+    });
+    assert.equal(res.allowed, true, `Expected metal symbol ${sym} allowed`);
+    assert.equal(res.reason, 'PHYSICAL_COMMODITY', `Expected ${sym} reason PHYSICAL_COMMODITY`);
+    assert.ok(res.matchedName && res.matchedName.length > 0);
+  }
+});
+

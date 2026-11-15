@@ -142,6 +142,9 @@ import {
 } from './data/auditProvenance.ts';
 import { GenesisThesisModal } from './components/GenesisThesisModal.tsx';
 import { GeniusSearchWaveRings } from './components/GeniusSearchWaveRings.tsx';
+import { AuditChaosWaveRings } from './components/AuditChaosWaveRings.tsx';
+import { GeniusUniverseBackground } from './components/GeniusUniverseBackground.tsx';
+import { ARCHIVE_PULL_STAGE_MS } from './data/auditChaosWave.ts';
 import {
   answerArchiveResearchQuestion,
   buildArchiveComparison,
@@ -1449,6 +1452,96 @@ function ThermodynamicAuditApp() {
       .join(' vs ')}\n\n${blocks}`;
   };
 
+  // Replays a deterministic 6-second chaotic-to-harmonic reveal animation when pulling from the Archive (0 API credits)
+  const performArchivePullAudit = async (cachedKey: string) => {
+    const targetAudit = audits[cachedKey];
+    if (!targetAudit || isAuditing) return;
+
+    setSearchInput('');
+    setHoveredInvId(null);
+    setAuditError(null);
+    setConfirmFullReauditKey(null);
+    setModalInvId(null);
+
+    setIsAuditing(true);
+    setScanTargetTicker(targetAudit.ticker);
+    setScanStepIdx(0);
+    setScanCodeTick(0);
+    setScanProgressPct(3);
+    setResolvedStepColors({});
+    setResolvedStepScores({});
+    setAuditStatusMsg(
+      `[ARCHIVE // 0 CREDITS] Pulling verified proof for $${targetAudit.ticker}...`
+    );
+
+    try {
+      const pullStartMs = Date.now();
+      const ticksPerStage = 8;
+
+      for (let step = 0; step < 6; step++) {
+        const stage = CORE_SCAN_STAGES[step];
+        const inv = targetAudit.invariants[step];
+        const stageEndMs = pullStartMs + (step + 1) * ARCHIVE_PULL_STAGE_MS;
+        setScanStepIdx(step);
+        setAuditStatusMsg(
+          `[${stage.id}/06] Retrieving ${stage.title} for $${targetAudit.ticker} from Vault...`
+        );
+
+        for (let tick = 0; tick < ticksPerStage; tick++) {
+          setScanCodeTick(tick);
+          const pct = Math.min(
+            99,
+            Math.max(4, Math.round(((step + (tick + 1) / ticksPerStage) / 6) * 100))
+          );
+          setScanProgressPct(pct);
+          const targetTickEndMs =
+            pullStartMs +
+            step * ARCHIVE_PULL_STAGE_MS +
+            Math.round(((tick + 1) / ticksPerStage) * ARCHIVE_PULL_STAGE_MS);
+          const waitMs = targetTickEndMs - Date.now();
+          if (waitMs > 4) {
+            await new Promise((r) => setTimeout(r, waitMs));
+          }
+        }
+
+        const remainMs = stageEndMs - Date.now();
+        if (remainMs > 4) {
+          await new Promise((r) => setTimeout(r, remainMs));
+        }
+
+        const stepScore = inv ? Number(inv.score) : undefined;
+        const stepColor =
+          stepScore !== undefined && Number.isFinite(stepScore)
+            ? getScoreStyle(stepScore).color
+            : stage.color;
+
+        setResolvedStepColors((prev) => ({ ...prev, [step]: stepColor }));
+        if (typeof stepScore === 'number' && Number.isFinite(stepScore)) {
+          setResolvedStepScores((prev) => ({ ...prev, [step]: stepScore }));
+        }
+        setScanProgressPct(Math.round(((step + 1) / 6) * 100));
+      }
+
+      setZeroTokenHits((c) => c + 1);
+      if (validPinnedKeys.length > 0 && !validPinnedKeys.includes(cachedKey)) {
+        const nextPinned =
+          validPinnedKeys.length < 4
+            ? [...validPinnedKeys, cachedKey]
+            : [...validPinnedKeys.slice(0, 3), cachedKey];
+        setPinnedKeys(nextPinned);
+      }
+      setActiveKey(cachedKey);
+      triggerScanPulse();
+      flashArchiveToast(
+        `Archive Hit: Pulled $${targetAudit.ticker} (${targetAudit.grade}) from Vault • 0 API Credits Used`,
+        'hit'
+      );
+    } finally {
+      setIsAuditing(false);
+      setAuditStatusMsg('');
+    }
+  };
+
   // Executes SSE-streamed 6-invariant grounded audit via server.ts (/api/audit -> gemini-4-hydrogen)
   const performLiveGroundedAudit = async (
     rawQuery: string,
@@ -1475,6 +1568,7 @@ function ThermodynamicAuditApp() {
       : normalized.slice(0, 8) || 'ASSET';
 
     setIsAuditing(true);
+    setSearchInput('');
     setHoveredInvId(null);
     setAuditError(null);
     setScanTargetTicker(displayTarget);
@@ -2337,26 +2431,7 @@ function ThermodynamicAuditApp() {
         });
 
     if (cachedKey) {
-      const targetAudit = audits[cachedKey];
-      setSearchInput('');
-      setHoveredInvId(null);
-      setAuditError(null);
-      setConfirmFullReauditKey(null);
-      setZeroTokenHits((c) => c + 1);
-
-      if (validPinnedKeys.length > 0 && !validPinnedKeys.includes(cachedKey)) {
-        const nextPinned =
-          validPinnedKeys.length < 4
-            ? [...validPinnedKeys, cachedKey]
-            : [...validPinnedKeys.slice(0, 3), cachedKey];
-        setPinnedKeys(nextPinned);
-      }
-      setActiveKey(cachedKey);
-      triggerScanPulse();
-      flashArchiveToast(
-        `Archive Hit: Pulled $${targetAudit.ticker} (${targetAudit.grade}) from Vault • 0 API Credits Used`,
-        'hit'
-      );
+      await performArchivePullAudit(cachedKey);
       return;
     }
 
@@ -3133,9 +3208,46 @@ function ThermodynamicAuditApp() {
           backface-visibility: hidden;
           will-change: transform, opacity;
         }
+        @keyframes geniusVortexSpin {
+          0% {
+            transform: translate3d(-50%, -50%, 0) rotate(0deg);
+          }
+          100% {
+            transform: translate3d(-50%, -50%, 0) rotate(360deg);
+          }
+        }
+        @keyframes geniusMathFloat {
+          0%, 100% {
+            transform: translate3d(-50%, -50%, 0) translate3d(0px, 0px, 0) rotate(0deg) scale(var(--math-scale, 1));
+          }
+          50% {
+            transform: translate3d(-50%, -50%, 0) translate3d(var(--math-dx, 14px), var(--math-dy, -12px), 0) rotate(var(--math-rot, 1.5deg)) scale(var(--math-scale, 1));
+          }
+        }
+        .genius-vortex-spin {
+          animation: geniusVortexSpin 52s linear infinite;
+          backface-visibility: hidden;
+          will-change: transform;
+        }
+        .genius-math-float {
+          animation: geniusMathFloat var(--math-dur, 24s) ease-in-out infinite;
+          animation-delay: var(--math-delay, 0s);
+          backface-visibility: hidden;
+          will-change: transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .genius-vortex-spin,
+          .genius-math-float {
+            animation: none;
+          }
+        }
         .bg-anim-paused .bg-field-pulse,
         .bg-anim-paused .bg-core-breath,
-        .bg-anim-paused .bg-halo-wave {
+        .bg-anim-paused .bg-halo-wave,
+        .bg-anim-paused .genius-vortex-spin,
+        .bg-anim-paused .genius-math-float,
+        .genius-vortex-spin.bg-anim-paused,
+        .genius-math-float.bg-anim-paused {
           animation-play-state: paused;
         }
         @keyframes truthShockwave {
@@ -3168,7 +3280,7 @@ function ThermodynamicAuditApp() {
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      {/* Zero-Blur GPU-Composited Pulsing 1-Step Gradient Background */}
+      {/* Zero-Blur GPU-Composited Pulsing Gradient (NORMIE) <-> Swirling Universe + Physics Laws (GENIUS) */}
       {(() => {
         const pulseDur = isAuditing
           ? '2.2s'
@@ -3186,43 +3298,54 @@ function ThermodynamicAuditApp() {
           : 0.32;
 
         return (
-          <div
-            className={`pointer-events-none fixed inset-0 overflow-hidden z-0 ${
-              isAnyModalOpen ? 'bg-anim-paused' : ''
-            }`}
-            style={{
-              ['--bg-pulse-dur' as string]: pulseDur,
-              contain: 'strict'
-            }}
-          >
+          <>
             <div
-              className="bg-field-pulse absolute inset-0"
+              data-testid="normie-pulse-bg"
+              className={`pointer-events-none fixed inset-0 overflow-hidden z-0 transition-opacity duration-700 ${
+                isGeniusMode ? 'opacity-0 bg-anim-paused' : 'opacity-100'
+              } ${isAnyModalOpen ? 'bg-anim-paused' : ''}`}
               style={{
-                background: `radial-gradient(circle at 50% 47%, ${accent.primary}29 0%, ${accent.secondary}14 42%, rgba(11, 12, 14, 0) 74%)`
-              }}
-            />
-
-            <div
-              className="absolute inset-0"
-              style={{
-                opacity: coreBaseOpacity,
-                transition: 'opacity 500ms ease'
+                ['--bg-pulse-dur' as string]: pulseDur,
+                contain: 'strict'
               }}
             >
               <div
-                className="bg-core-breath absolute left-1/2 top-[47%] w-[680px] h-[680px] sm:w-[980px] sm:h-[980px] rounded-full"
+                className="bg-field-pulse absolute inset-0"
                 style={{
-                  background: `radial-gradient(circle, ${accent.primary}58 0%, ${accent.secondary}2E 32%, ${accent.secondary}0F 54%, rgba(11, 12, 14, 0) 72%)`
+                  background: `radial-gradient(circle at 50% 47%, ${accent.primary}29 0%, ${accent.secondary}14 42%, rgba(11, 12, 14, 0) 74%)`
                 }}
               />
+
               <div
-                className="bg-halo-wave absolute left-1/2 top-[47%] w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full"
+                className="absolute inset-0"
                 style={{
-                  background: `radial-gradient(circle, rgba(11, 12, 14, 0) 16%, ${accent.secondary}3B 42%, ${accent.primary}14 58%, rgba(11, 12, 14, 0) 72%)`
+                  opacity: coreBaseOpacity,
+                  transition: 'opacity 500ms ease'
                 }}
-              />
+              >
+                <div
+                  className="bg-core-breath absolute left-1/2 top-[47%] w-[680px] h-[680px] sm:w-[980px] sm:h-[980px] rounded-full"
+                  style={{
+                    background: `radial-gradient(circle, ${accent.primary}58 0%, ${accent.secondary}2E 32%, ${accent.secondary}0F 54%, rgba(11, 12, 14, 0) 72%)`
+                  }}
+                />
+                <div
+                  className="bg-halo-wave absolute left-1/2 top-[47%] w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full"
+                  style={{
+                    background: `radial-gradient(circle, rgba(11, 12, 14, 0) 16%, ${accent.secondary}3B 42%, ${accent.primary}14 58%, rgba(11, 12, 14, 0) 72%)`
+                  }}
+                />
+              </div>
             </div>
-          </div>
+
+            <GeniusUniverseBackground
+              active={isGeniusMode}
+              isAuditing={isAuditing}
+              paused={isAnyModalOpen}
+              primaryColor={accent.primary}
+              secondaryColor={accent.secondary}
+            />
+          </>
         );
       })()}
 
@@ -3592,11 +3715,16 @@ function ThermodynamicAuditApp() {
                 </label>
                 <input
                   id="truth-audit-search"
+                  name="truth-audit-query"
                   type="text"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="Audit any crypto OR physical metal (e.g., GOLD, SILVER, PLATINUM, KAS, BTC, SOL)..."
-                  className="w-full bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none font-mono"
+                  className="w-full appearance-none bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none font-mono"
                 />
                 {isAuditing ? (
                   <span
@@ -3623,7 +3751,11 @@ function ThermodynamicAuditApp() {
             </form>
 
             {((archiveToast && !isAuditing) || auditStatusMsg || auditError) && (
-              <div className="pointer-events-none absolute top-full left-0 right-0 mt-2 z-30 flex flex-col items-center gap-2">
+              <div
+                className={`pointer-events-none absolute top-full left-0 right-0 z-30 flex flex-col items-center gap-2 ${
+                  isGeniusMode ? 'mt-8 sm:mt-11' : 'mt-2'
+                }`}
+              >
                 {archiveToast && !isAuditing && (
                   <div
                     className="pointer-events-auto animate-card-fade color-glide max-w-full px-4 py-1.5 rounded-full font-mono text-[11px] flex items-center justify-center gap-2 text-center bg-[#121418]/95 shadow-[0_10px_28px_rgba(0,0,0,0.68)]"
@@ -4845,6 +4977,13 @@ function ThermodynamicAuditApp() {
                   })}
                 </svg>
               )}
+
+              <AuditChaosWaveRings
+                active={isAuditing}
+                progressPct={scanProgressPct}
+                projectedGrade={runningAuditState?.projectedGrade || 'A+'}
+                projectedTotal={runningAuditState?.projectedTotal ?? null}
+              />
 
               {/* Central Grade Nucleus Sphere */}
               <button
@@ -6697,8 +6836,8 @@ function ThermodynamicAuditApp() {
                         key={tk}
                         type="button"
                         onClick={() => {
-                          selectCachedAudit(tk);
                           setIsArchiveModalOpen(false);
+                          void performArchivePullAudit(tk);
                         }}
                         className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-white/[0.07] text-left transition flex flex-col justify-between gap-1"
                       >
@@ -6740,8 +6879,8 @@ function ThermodynamicAuditApp() {
                             key={tk}
                             type="button"
                             onClick={() => {
-                              selectCachedAudit(tk);
                               setIsArchiveModalOpen(false);
+                              void performArchivePullAudit(tk);
                             }}
                             className="p-2.5 rounded-xl bg-[#0B0C0E] hover:bg-[#161922] border border-indigo-400/20 text-left transition flex flex-col justify-between gap-1"
                           >

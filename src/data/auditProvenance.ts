@@ -1,4 +1,8 @@
-import { isOverlayArchitectureText, type AuditData } from './rubricSpec.ts';
+import {
+  isOverlayArchitectureText,
+  isPhysicalMetalAuditPayload,
+  type AuditData
+} from './rubricSpec.ts';
 
 export type AuditCategory =
   | 'SOVEREIGN_L1_BENCHMARK'
@@ -228,7 +232,14 @@ export function getAuditCategory(audit: AuditData | null | undefined): AuditCate
   if (ECOSYSTEM_OVERLAY_TICKERS.has(tk)) {
     return 'ECOSYSTEM_OVERLAY';
   }
-  if (audit.consensusFamily === 'PHYSICAL_COMMODITY') {
+  if (
+    isPhysicalMetalAuditPayload(
+      audit.name,
+      audit.architecture,
+      audit.ticker,
+      audit.consensusFamily
+    )
+  ) {
     return 'PHYSICAL_COMMODITY';
   }
   if (CORE_REFERENCE_TICKERS.has(tk)) {

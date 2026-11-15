@@ -25,11 +25,13 @@ import {
 } from './src/data/rubricSpec.ts';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
+  TOKENIZED_COMMODITY_WRAPPER_TICKERS,
   consumeDailyPull,
   evaluateMarketScope,
   getUserDailyQuotaStatus,
   pruneStaleQuotaDays,
   refundDailyPull,
+  resolvePhysicalCommodityQuery,
   resolveQuotaPrincipalKeys,
   type DailyQuotaLedger
 } from './src/data/auditQuotaAndScope.ts';
@@ -58,6 +60,7 @@ import {
   listArchivedAudits,
   summarizeArchivedAudit
 } from './src/data/agentArchiveApi.ts';
+import { buildSsrRootInnerHtml, injectSsrRootHtml } from './src/data/ssrSnapshotHtml.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -478,7 +481,7 @@ RE-AUDIT CALIBRATION & DEPTH RULES:
   return `Run a complete, rigorous 6-Invariant Thermodynamic Audit on the cryptocurrency network, token, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
 ${baselineContext}${freshIntelContext}
 IMPORTANT:
-- If "${targetQuery}" refers to a physical metal or element (such as Gold, Silver, Platinum, Palladium, Copper, Rhodium, Uranium, etc.), audit the ACTUAL physical metal on the periodic table (classify consensusFamily as "PHYSICAL_COMMODITY")—NEVER substitute a cryptocurrency fork!
+- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Note: "CU" / "XCU" means Physical Copper (Cu-29).
 - Classify consensusFamily strictly as "BLOCKDAG_POW", "LINEAR_POW", "PHYSICAL_COMMODITY", or "ZERO_JOULE_BFT" based on LIVE ACTIVE MAINNET consensus today (never classify live hardware PoW as ZERO_JOULE_BFT due to unactivated roadmap proposals, and NEVER classify a payment-channel mesh or state-channel overlay over sequential PoW as BLOCKDAG_POW—set isUpperLayerOverlayOrChannel = true and consensusFamily = "LINEAR_POW"!).
 - CARRIER-SUBORDINATED VELOCITY LAW (M_overlay < M_carrier < 1.0): Off-chain HTLC/PTLC channel signature exchanges burn 0.0 Joules (deferred IOUs, NOT M = 1.0 Proof-of-Work!). If "${targetQuery}" is a Layer-2 payment-channel network, state-channel protocol, rollup, or inscription overlay, set isUpperLayerOverlayOrChannel = true, set carrierLayerOneVelocityCap to its base Layer-1 carrier's Velocity score (e.g., 0.20 for Bitcoin, 1.00 for Kaspa), and score Invariant 06 STRICTLY BELOW its sequential L1 carrier (0.05–0.18, e.g., 0.15)!
 - Strictly obey the project-agnostic quantitative rubric brackets in your system instructions!
@@ -735,8 +738,16 @@ async function createApp(): Promise<express.Express> {
     };
 
     try {
+      const commodityMatch = !existingBaseline
+        ? resolvePhysicalCommodityQuery(rawQuery, normalizeLookupKey(rawQuery))
+        : null;
+      const isRawPhysicalMetalQuery = Boolean(
+        commodityMatch && !TOKENIZED_COMMODITY_WRAPPER_TICKERS.has(commodityMatch.symbol)
+      );
       const querySubject = existingBaseline
         ? `${existingBaseline.name} (${existingBaseline.ticker})`
+        : isRawPhysicalMetalQuery && commodityMatch
+        ? `${commodityMatch.name} (${commodityMatch.symbol})`
         : rawQuery;
 
       const freshBundle = await fetchFreshGroundedWebIntel(ai, querySubject, existingBaseline);
@@ -1654,50 +1665,94 @@ ${ordered.join(', ')}
 
   const injectSocialOrigin = (html: string, req: Request): string => {
     const origin = resolvePublicOrigin(req);
-    let out = html.replace(/https:\/\/the-truth\.ai\.studio/g, origin);
+    let out = html.replace(/https:\/\/the-truth\.ai\.studio/g, () => origin);
+    const archiveMap = getServerArchiveMap();
+    const aliasObj = getServerAliasObject();
     const meta = buildOpenGraphMetaForUrl(
       req.originalUrl || '/',
-      getServerArchiveMap(),
-      getServerAliasObject()
+      archiveMap,
+      aliasObj
     );
     const safeTitle = escapeHtmlAttr(meta.title);
     const safeDesc = escapeHtmlAttr(meta.description);
     const safeUrl = escapeHtmlAttr(`${origin}${meta.urlPath}`);
     out = out
-      .replace(/<title>[\s\S]*?<\/title>/i, `<title>${safeTitle}</title>`)
+      .replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${safeTitle}</title>`)
       .replace(
         /<meta name="description" content="[^"]*"\s*\/?>/i,
-        `<meta name="description" content="${safeDesc}" />`
+        () => `<meta name="description" content="${safeDesc}" />`
       )
       .replace(
         /<meta property="og:url" content="[^"]*"\s*\/?>/i,
-        `<meta property="og:url" content="${safeUrl}" />`
+        () => `<meta property="og:url" content="${safeUrl}" />`
       )
       .replace(
         /<meta property="og:title" content="[^"]*"\s*\/?>/i,
-        `<meta property="og:title" content="${safeTitle}" />`
+        () => `<meta property="og:title" content="${safeTitle}" />`
       )
       .replace(
         /<meta property="og:description" content="[^"]*"\s*\/?>/i,
-        `<meta property="og:description" content="${safeDesc}" />`
+        () => `<meta property="og:description" content="${safeDesc}" />`
       )
       .replace(
         /<meta name="twitter:title" content="[^"]*"\s*\/?>/i,
-        `<meta name="twitter:title" content="${safeTitle}" />`
+        () => `<meta name="twitter:title" content="${safeTitle}" />`
       )
       .replace(
         /<meta name="twitter:description" content="[^"]*"\s*\/?>/i,
-        `<meta name="twitter:description" content="${safeDesc}" />`
+        () => `<meta name="twitter:description" content="${safeDesc}" />`
       );
-    return out;
+    const ssrInnerHtml = buildSsrRootInnerHtml(
+      req.originalUrl || '/',
+      origin,
+      archiveMap,
+      aliasObj
+    );
+    return injectSsrRootHtml(out, ssrInnerHtml);
   };
 
-  app.get('/robots.txt', (_req: Request, res: Response) => {
+  app.get('/robots.txt', (req: Request, res: Response) => {
+    const origin = resolvePublicOrigin(req);
     res
       .status(200)
       .setHeader('Content-Type', 'text/plain; charset=utf-8')
-      .send('User-agent: *\nAllow: /\n\nUser-agent: Twitterbot\nAllow: /\n');
+      .send(
+        [
+          'User-agent: GPTBot',
+          'Allow: /',
+          '',
+          'User-agent: ChatGPT-User',
+          'Allow: /',
+          '',
+          'User-agent: OAI-SearchBot',
+          'Allow: /',
+          '',
+          'User-agent: ClaudeBot',
+          'Allow: /',
+          '',
+          'User-agent: PerplexityBot',
+          'Allow: /',
+          '',
+          'User-agent: Googlebot',
+          'Allow: /',
+          '',
+          'User-agent: Twitterbot',
+          'Allow: /',
+          '',
+          'User-agent: *',
+          'Allow: /',
+          '',
+          `Sitemap: ${origin}/sitemap.xml`,
+          ''
+        ].join('\n')
+      );
   });
+
+  const syncArchiveForSsrTimeout = () =>
+    Promise.race([
+      syncFirestoreArchivedAuditsToCache(),
+      new Promise<void>((resolve) => setTimeout(resolve, 1200))
+    ]);
 
   // Frontend Hosting (Vite middleware in dev; dist static in prod)
   if (!IS_PROD) {
@@ -1714,11 +1769,12 @@ ${ordered.join(', ')}
         return;
       }
       try {
+        await syncArchiveForSsrTimeout();
         const indexPath = path.resolve(process.cwd(), 'index.html');
         const template = fs.readFileSync(indexPath, 'utf8');
         const transformed = await viteServer.transformIndexHtml(req.originalUrl, template);
         const html = injectSocialOrigin(transformed, req);
-        res.status(200).setHeader('Content-Type', 'text/html').end(html);
+        res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(html);
       } catch (err) {
         viteServer.ssrFixStacktrace(err as Error);
         next(err);
@@ -1727,16 +1783,17 @@ ${ordered.join(', ')}
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distDir, { index: false }));
-    app.get('*', (req: Request, res: Response, next) => {
+    app.get('*', async (req: Request, res: Response, next) => {
       if (req.path.startsWith('/api')) {
         next();
         return;
       }
       try {
+        await syncArchiveForSsrTimeout();
         const indexPath = path.join(distDir, 'index.html');
         const template = fs.readFileSync(indexPath, 'utf8');
         const html = injectSocialOrigin(template, req);
-        res.status(200).setHeader('Content-Type', 'text/html').end(html);
+        res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(html);
       } catch {
         res.sendFile(path.join(distDir, 'index.html'));
       }
