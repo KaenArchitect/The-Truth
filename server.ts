@@ -68,6 +68,10 @@ import {
   verifyFirebaseBearerToken,
   type VerifiedFirebaseUser
 } from './src/server/firebaseTokenVerifier.ts';
+import {
+  injectCanonicalSocialMeta,
+  resolvePublicOriginFromHeaders
+} from './src/server/socialOrigin.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -1889,33 +1893,29 @@ ${ordered.join(', ')}
     res.status(200).setHeader('Content-Type', 'application/xml; charset=utf-8').send(xml);
   });
 
-  const escapeHtmlAttr = (val: string): string =>
-    val
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-
-  const resolvePublicOrigin = (req: Request): string => {
-    const xfHost = String(req.headers['x-forwarded-host'] || '')
-      .split(',')[0]
-      .trim();
-    const configured = (process.env.APP_URL || '').trim().replace(/\/+$/, '');
-    const rawHost = xfHost || req.get('host') || '';
-    const isLocal = /^localhost(?::|$)|^127\.0\.0\.1(?::|$)|^0\.0\.0\.0(?::|$)/.test(rawHost);
-    if (!xfHost && configured) return configured;
-    const host = rawHost;
-    if (!host) return configured || 'https://the-truth.ai.studio';
-    const xfProto = String(req.headers['x-forwarded-proto'] || '')
-      .split(',')[0]
-      .trim();
-    const proto = xfProto || (isLocal ? req.protocol || 'http' : 'https');
-    return `${proto}://${host}`;
-  };
+  const resolvePublicOrigin = (req: Request): string =>
+    resolvePublicOriginFromHeaders({
+      host: req.get('host'),
+      xForwardedHost: typeof req.headers['x-forwarded-host'] === 'string'
+        ? req.headers['x-forwarded-host']
+        : Array.isArray(req.headers['x-forwarded-host'])
+        ? req.headers['x-forwarded-host'][0]
+        : undefined,
+      xForwardedProto: typeof req.headers['x-forwarded-proto'] === 'string'
+        ? req.headers['x-forwarded-proto']
+        : Array.isArray(req.headers['x-forwarded-proto'])
+        ? req.headers['x-forwarded-proto'][0]
+        : undefined,
+      xOriginalHost: typeof req.headers['x-original-host'] === 'string'
+        ? req.headers['x-original-host']
+        : undefined,
+      forwarded: typeof req.headers.forwarded === 'string' ? req.headers.forwarded : undefined,
+      protocol: req.protocol,
+      configuredAppUrl: process.env.APP_URL
+    });
 
   const injectSocialOrigin = (html: string, req: Request): string => {
     const origin = resolvePublicOrigin(req);
-    let out = html.replace(/https:\/\/the-truth\.ai\.studio/g, () => origin);
     const archiveMap = getServerArchiveMap();
     const aliasObj = getServerAliasObject();
     const meta = buildOpenGraphMetaForUrl(
@@ -1923,42 +1923,19 @@ ${ordered.join(', ')}
       archiveMap,
       aliasObj
     );
-    const safeTitle = escapeHtmlAttr(meta.title);
-    const safeDesc = escapeHtmlAttr(meta.description);
-    const safeUrl = escapeHtmlAttr(`${origin}${meta.urlPath}`);
-    out = out
-      .replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${safeTitle}</title>`)
-      .replace(
-        /<meta name="description" content="[^"]*"\s*\/?>/i,
-        () => `<meta name="description" content="${safeDesc}" />`
-      )
-      .replace(
-        /<meta property="og:url" content="[^"]*"\s*\/?>/i,
-        () => `<meta property="og:url" content="${safeUrl}" />`
-      )
-      .replace(
-        /<meta property="og:title" content="[^"]*"\s*\/?>/i,
-        () => `<meta property="og:title" content="${safeTitle}" />`
-      )
-      .replace(
-        /<meta property="og:description" content="[^"]*"\s*\/?>/i,
-        () => `<meta property="og:description" content="${safeDesc}" />`
-      )
-      .replace(
-        /<meta name="twitter:title" content="[^"]*"\s*\/?>/i,
-        () => `<meta name="twitter:title" content="${safeTitle}" />`
-      )
-      .replace(
-        /<meta name="twitter:description" content="[^"]*"\s*\/?>/i,
-        () => `<meta name="twitter:description" content="${safeDesc}" />`
-      );
+    const withMeta = injectCanonicalSocialMeta(html, {
+      origin,
+      title: meta.title,
+      description: meta.description,
+      urlPath: meta.urlPath
+    });
     const ssrInnerHtml = buildSsrRootInnerHtml(
       req.originalUrl || '/',
       origin,
       archiveMap,
       aliasObj
     );
-    return injectSsrRootHtml(out, ssrInnerHtml);
+    return injectSsrRootHtml(withMeta, ssrInnerHtml);
   };
 
   app.get('/robots.txt', (req: Request, res: Response) => {
@@ -1998,11 +1975,62 @@ ${ordered.join(', ')}
       );
   });
 
-  const syncArchiveForSsrTimeout = () =>
-    Promise.race([
+  const SOCIAL_STATIC_ASSETS: Record<string, { file: string; contentType: string }> = {
+    '/og-card.jpg': { file: 'og-card.jpg', contentType: 'image/jpeg' },
+    '/logo-512.png': { file: 'logo-512.png', contentType: 'image/png' },
+    '/apple-touch-icon.png': { file: 'apple-touch-icon.png', contentType: 'image/png' },
+    '/favicon.ico': { file: 'favicon.ico', contentType: 'image/png' }
+  };
+
+  for (const [routePath, assetMeta] of Object.entries(SOCIAL_STATIC_ASSETS)) {
+    app.get(routePath, (req: Request, res: Response, next) => {
+      const distAsset = path.resolve(process.cwd(), 'dist', assetMeta.file);
+      const publicAsset = path.resolve(process.cwd(), 'public', assetMeta.file);
+      const resolvedPath =
+        IS_PROD && fs.existsSync(distAsset)
+          ? distAsset
+          : fs.existsSync(publicAsset)
+          ? publicAsset
+          : fs.existsSync(distAsset)
+          ? distAsset
+          : null;
+      if (!resolvedPath) {
+        next();
+        return;
+      }
+      res.setHeader('Content-Type', assetMeta.contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400, no-transform');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Robots-Tag', 'all');
+      if (req.method === 'HEAD') {
+        const stat = fs.statSync(resolvedPath);
+        res.setHeader('Content-Length', String(stat.size));
+        res.status(200).end();
+        return;
+      }
+      res.sendFile(resolvedPath);
+    });
+  }
+
+  const syncArchiveForSsrIfNeeded = async (originalUrl: string): Promise<void> => {
+    const qIdx = originalUrl.indexOf('?');
+    if (qIdx === -1) {
+      // Do not stall `/` or social card crawlers on Firestore cold-start sync when preloaded audits are ready.
+      void syncFirestoreArchivedAuditsToCache();
+      return;
+    }
+    const qs = originalUrl.slice(qIdx);
+    if (!/(?:^|[?&])(?:asset|compare|tickers)=/i.test(qs)) {
+      void syncFirestoreArchivedAuditsToCache();
+      return;
+    }
+    await Promise.race([
       syncFirestoreArchivedAuditsToCache(),
-      new Promise<void>((resolve) => setTimeout(resolve, 1200))
+      new Promise<void>((resolve) => setTimeout(resolve, 400))
     ]);
+  };
 
   // Frontend Hosting (Vite middleware in dev; dist static in prod)
   if (!IS_PROD) {
@@ -2020,7 +2048,7 @@ ${ordered.join(', ')}
         return;
       }
       try {
-        await syncArchiveForSsrTimeout();
+        await syncArchiveForSsrIfNeeded(req.originalUrl || '/');
         const template = await fs.promises.readFile(indexPath, 'utf8');
         const transformed = await viteServer.transformIndexHtml(req.originalUrl, template);
         const html = injectSocialOrigin(transformed, req);
@@ -2041,7 +2069,7 @@ ${ordered.join(', ')}
         return;
       }
       try {
-        await syncArchiveForSsrTimeout();
+        await syncArchiveForSsrIfNeeded(req.originalUrl || '/');
         if (cachedProdIndexHtml === null) {
           cachedProdIndexHtml = await fs.promises.readFile(distIndexPath, 'utf8');
         }
