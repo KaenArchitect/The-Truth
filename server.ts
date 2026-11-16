@@ -98,6 +98,7 @@ function createGeminiClient(): GoogleGenAI {
 // ============================================================================
 const serverAuditCache = new Map<string, AuditData>();
 const serverAliasCache = new Map<string, string>();
+let serverCacheRevision = 1;
 
 function normalizeLookupKey(raw: string): string {
   return String(raw || '')
@@ -125,6 +126,7 @@ function indexAuditAliases(audit: AuditData): void {
       if (norm) serverAliasCache.set(norm, tk);
     });
   }
+  serverCacheRevision++;
 }
 
 function hydrateServerCacheFromDisk(): void {
@@ -146,18 +148,26 @@ function hydrateServerCacheFromDisk(): void {
   }
 }
 
+let cacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
 function persistServerCacheToDisk(): void {
-  try {
-    const customEntries: Record<string, AuditData> = {};
-    serverAuditCache.forEach((val, key) => {
-      if (!PRELOADED_AUDITS[key] || val.lastFreshAuditAt) {
-        customEntries[key] = val;
-      }
-    });
-    fs.writeFileSync(CACHE_FILE_PATH, JSON.stringify(customEntries), 'utf8');
-  } catch (err) {
-    console.warn('Could not persist audit disk cache:', err);
-  }
+  if (cacheWriteTimer) clearTimeout(cacheWriteTimer);
+  cacheWriteTimer = setTimeout(() => {
+    cacheWriteTimer = null;
+    try {
+      const customEntries: Record<string, AuditData> = {};
+      serverAuditCache.forEach((val, key) => {
+        if (!PRELOADED_AUDITS[key] || val.lastFreshAuditAt) {
+          customEntries[key] = val;
+        }
+      });
+      void fs.promises
+        .writeFile(CACHE_FILE_PATH, JSON.stringify(customEntries), 'utf8')
+        .catch((err) => console.warn('Could not persist audit disk cache:', err));
+    } catch (err) {
+      console.warn('Could not serialize audit disk cache:', err);
+    }
+  }, 120);
 }
 
 hydrateServerCacheFromDisk();
@@ -165,6 +175,13 @@ hydrateServerCacheFromDisk();
 let lastFirestoreSyncMs = 0;
 let inflightFirestoreSync: Promise<void> | null = null;
 const FIRESTORE_SYNC_TTL_MS = 5 * 60 * 1000;
+let cachedFirebaseCfg: {
+  projectId?: string;
+  appId?: string;
+  apiKey?: string;
+  authDomain?: string;
+  firestoreDatabaseId?: string;
+} | null | undefined;
 
 async function syncFirestoreArchivedAuditsToCache(force = false): Promise<void> {
   const now = Date.now();
@@ -173,16 +190,14 @@ async function syncFirestoreArchivedAuditsToCache(force = false): Promise<void> 
 
   inflightFirestoreSync = (async () => {
     try {
-      const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-      if (!fs.existsSync(cfgPath)) return;
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')) as {
-        projectId?: string;
-        appId?: string;
-        apiKey?: string;
-        authDomain?: string;
-        firestoreDatabaseId?: string;
-      };
-      if (!cfg.projectId || !cfg.apiKey) return;
+      if (cachedFirebaseCfg === undefined) {
+        const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+        cachedFirebaseCfg = fs.existsSync(cfgPath)
+          ? (JSON.parse(await fs.promises.readFile(cfgPath, 'utf8')) as typeof cachedFirebaseCfg)
+          : null;
+      }
+      const cfg = cachedFirebaseCfg;
+      if (!cfg?.projectId || !cfg?.apiKey) return;
       const fbApp = getFirebaseApps().length ? getFirebaseApp() : initFirebaseApp(cfg);
       const db = getClientFirestore(fbApp, cfg.firestoreDatabaseId || '(default)');
       const snap = await Promise.race([
@@ -288,13 +303,17 @@ function hydrateDailyQuotaLedger(): void {
   }
 }
 
+let quotaWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
 function persistDailyQuotaLedger(): void {
-  try {
-    dailyQuotaLedger = pruneStaleQuotaDays(dailyQuotaLedger);
-    fs.writeFileSync(DAILY_QUOTA_FILE_PATH, JSON.stringify(dailyQuotaLedger), 'utf8');
-  } catch (err) {
-    console.warn('Could not persist daily quota ledger:', err);
-  }
+  dailyQuotaLedger = pruneStaleQuotaDays(dailyQuotaLedger);
+  if (quotaWriteTimer) clearTimeout(quotaWriteTimer);
+  quotaWriteTimer = setTimeout(() => {
+    quotaWriteTimer = null;
+    void fs.promises
+      .writeFile(DAILY_QUOTA_FILE_PATH, JSON.stringify(dailyQuotaLedger), 'utf8')
+      .catch((err) => console.warn('Could not persist daily quota ledger:', err));
+  }, 120);
 }
 
 hydrateDailyQuotaLedger();
@@ -660,10 +679,11 @@ async function createApp(): Promise<express.Express> {
     if (!admin) return;
     serverAuditCache.clear();
     serverAliasCache.clear();
+    serverCacheRevision++;
     Object.values(PRELOADED_AUDITS).forEach((item) => indexAuditAliases(item));
     try {
       if (fs.existsSync(CACHE_FILE_PATH)) {
-        fs.unlinkSync(CACHE_FILE_PATH);
+        await fs.promises.unlink(CACHE_FILE_PATH);
       }
     } catch {
       // Non-fatal
@@ -698,6 +718,7 @@ async function createApp(): Promise<express.Express> {
       indexAuditAliases(PRELOADED_AUDITS[tk]);
     } else {
       serverAuditCache.delete(tk);
+      serverCacheRevision++;
     }
     persistServerCacheToDisk();
     res.json({
@@ -1356,19 +1377,30 @@ ${
   // ==========================================================================
   // STRICTLY ARCHIVE-ONLY AI AGENT HOOKS, MCP, OPENAPI & DISCOVERY ENDPOINTS
   // ==========================================================================
+  let cachedArchiveMapRev = -1;
+  let cachedArchiveMap: Record<string, AuditData> = {};
+  let cachedAliasObjRev = -1;
+  let cachedAliasObj: Record<string, string> = {};
+
   const getServerArchiveMap = (): Record<string, AuditData> => {
+    if (cachedArchiveMapRev === serverCacheRevision) return cachedArchiveMap;
     const out: Record<string, AuditData> = {};
     serverAuditCache.forEach((val, key) => {
       out[key] = val;
     });
+    cachedArchiveMap = out;
+    cachedArchiveMapRev = serverCacheRevision;
     return out;
   };
 
   const getServerAliasObject = (): Record<string, string> => {
+    if (cachedAliasObjRev === serverCacheRevision) return cachedAliasObj;
     const out: Record<string, string> = {};
     serverAliasCache.forEach((val, key) => {
       out[key] = val;
     });
+    cachedAliasObj = out;
+    cachedAliasObjRev = serverCacheRevision;
     return out;
   };
 
@@ -1981,6 +2013,7 @@ ${ordered.join(', ')}
     });
     app.use(viteServer.middlewares);
 
+    const indexPath = path.resolve(process.cwd(), 'index.html');
     app.get('*', async (req: Request, res: Response, next) => {
       if (req.path.startsWith('/api')) {
         next();
@@ -1988,8 +2021,7 @@ ${ordered.join(', ')}
       }
       try {
         await syncArchiveForSsrTimeout();
-        const indexPath = path.resolve(process.cwd(), 'index.html');
-        const template = fs.readFileSync(indexPath, 'utf8');
+        const template = await fs.promises.readFile(indexPath, 'utf8');
         const transformed = await viteServer.transformIndexHtml(req.originalUrl, template);
         const html = injectSocialOrigin(transformed, req);
         res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(html);
@@ -2000,7 +2032,9 @@ ${ordered.join(', ')}
     });
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir, { index: false }));
+    const distIndexPath = path.join(distDir, 'index.html');
+    let cachedProdIndexHtml: string | null = null;
+    app.use(express.static(distDir, { index: false, maxAge: '1h' }));
     app.get('*', async (req: Request, res: Response, next) => {
       if (req.path.startsWith('/api')) {
         next();
@@ -2008,12 +2042,13 @@ ${ordered.join(', ')}
       }
       try {
         await syncArchiveForSsrTimeout();
-        const indexPath = path.join(distDir, 'index.html');
-        const template = fs.readFileSync(indexPath, 'utf8');
-        const html = injectSocialOrigin(template, req);
+        if (cachedProdIndexHtml === null) {
+          cachedProdIndexHtml = await fs.promises.readFile(distIndexPath, 'utf8');
+        }
+        const html = injectSocialOrigin(cachedProdIndexHtml, req);
         res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8').end(html);
       } catch {
-        res.sendFile(path.join(distDir, 'index.html'));
+        res.sendFile(distIndexPath);
       }
     });
   }

@@ -55,7 +55,7 @@ export function GeniusSearchWaveRings({
   }, [active, targetRef]);
 
   const samples = useMemo(
-    () => buildStadiumPerimeterSamples(boxSize.width, boxSize.height, WAVE_SVG_PAD, 168),
+    () => buildStadiumPerimeterSamples(boxSize.width, boxSize.height, WAVE_SVG_PAD, 96),
     [boxSize.width, boxSize.height]
   );
 
@@ -93,7 +93,7 @@ export function GeniusSearchWaveRings({
     };
 
     renderAll(0);
-    return subscribeSharedWave((dt) => renderAll(dt), 24);
+    return subscribeSharedWave((dt) => renderAll(dt), isAuditing ? 24 : 20);
   }, [active, isAuditing, samples, radialScale]);
 
   if (!active) return null;

@@ -252,59 +252,62 @@ export function ThermodynamicGainsModal({
     return () => clearInterval(timer);
   }, [feedMode, syncLiveExchangeSpots]);
 
-  const enrichAsset = (item: CohortAssetEntry): EnrichedCohortAsset => {
-    const liveAudit = auditsMap?.[item.ticker];
-    const resolvedGrade = liveAudit?.grade || item.grade;
-    const resolvedScore =
-      liveAudit && Number.isFinite(Number(liveAudit.totalScore))
-        ? Number(liveAudit.totalScore)
-        : item.auditScore;
+  const { passedEnriched, failedEnriched, passedLiquid, failedLiquid } = useMemo(() => {
+    const enrichAsset = (item: CohortAssetEntry): EnrichedCohortAsset => {
+      const liveAudit = auditsMap?.[item.ticker];
+      const resolvedGrade = liveAudit?.grade || item.grade;
+      const resolvedScore =
+        liveAudit && Number.isFinite(Number(liveAudit.totalScore))
+          ? Number(liveAudit.totalScore)
+          : item.auditScore;
 
-    const liveVal = feedMode === 'LIVE' ? liveSpots[item.ticker] : undefined;
-    const hasLive = feedMode === 'LIVE' && Number.isFinite(liveVal);
-    const spotPrice = hasLive
-      ? (liveVal as number)
-      : item.snapshotSpot !== null && Number.isFinite(item.snapshotSpot)
-      ? item.snapshotSpot
-      : null;
+      const liveVal = feedMode === 'LIVE' ? liveSpots[item.ticker] : undefined;
+      const hasLive = feedMode === 'LIVE' && Number.isFinite(liveVal);
+      const spotPrice = hasLive
+        ? (liveVal as number)
+        : item.snapshotSpot !== null && Number.isFinite(item.snapshotSpot)
+        ? item.snapshotSpot
+        : null;
 
-    if (!item.liquidCycle || !item.basePrice || !spotPrice) {
+      if (!item.liquidCycle || !item.basePrice || !spotPrice) {
+        return {
+          ...item,
+          grade: resolvedGrade,
+          auditScore: resolvedScore,
+          spotPrice,
+          isLiveTick: hasLive,
+          cyclePct: null,
+          multiple: null
+        };
+      }
+
+      const cyclePct = ((spotPrice - item.basePrice) / item.basePrice) * 100;
+      const multiple = spotPrice / item.basePrice;
+
       return {
         ...item,
         grade: resolvedGrade,
         auditScore: resolvedScore,
         spotPrice,
         isLiveTick: hasLive,
-        cyclePct: null,
-        multiple: null
+        cyclePct,
+        multiple
       };
-    }
-
-    const cyclePct = ((spotPrice - item.basePrice) / item.basePrice) * 100;
-    const multiple = spotPrice / item.basePrice;
-
-    return {
-      ...item,
-      grade: resolvedGrade,
-      auditScore: resolvedScore,
-      spotPrice,
-      isLiveTick: hasLive,
-      cyclePct,
-      multiple
     };
-  };
 
-  const passedEnriched = cohortRecord.passed.map(enrichAsset);
-  const failedEnriched = cohortRecord.failed.map(enrichAsset);
+    const pEnriched = cohortRecord.passed.map(enrichAsset);
+    const fEnriched = cohortRecord.failed.map(enrichAsset);
+    return {
+      passedEnriched: pEnriched,
+      failedEnriched: fEnriched,
+      passedLiquid: pEnriched.filter((i) => i.liquidCycle),
+      failedLiquid: fEnriched.filter((i) => i.liquidCycle)
+    };
+  }, [cohortRecord.passed, cohortRecord.failed, auditsMap, feedMode, liveSpots]);
 
-  const passedLiquid = passedEnriched.filter((i) => i.liquidCycle);
-  const failedLiquid = failedEnriched.filter((i) => i.liquidCycle);
-
-  const summary = computeCohortAggregateSummary(
-    passedLiquid,
-    failedLiquid,
-    allocPerAsset,
-    false
+  const summary = useMemo(
+    () => computeCohortAggregateSummary(passedLiquid, failedLiquid, allocPerAsset, false),
+    [passedLiquid, failedLiquid, allocPerAsset]
   );
   const {
     passCycleAvg,
@@ -324,60 +327,62 @@ export function ThermodynamicGainsModal({
     portfolioVictoryMultiple
   } = summary;
 
-  const btcCyclePct = passedEnriched.find((a) => a.ticker === 'BTC')?.cyclePct ?? null;
-  const failedLagBtcCount =
-    btcCyclePct !== null
-      ? failedLiquid.filter((a) => (a.cyclePct ?? 0) < btcCyclePct).length
-      : failNegativeCount;
-  const maxPassMultiple = passedLiquid.reduce(
-    (max, a) => Math.max(max, a.multiple ?? 0),
-    0
-  );
-  const minFailCyclePct = failedLiquid.reduce(
-    (min, a) => Math.min(min, a.cyclePct ?? 0),
-    0
-  );
+  const { btcCyclePct, failedLagBtcCount, maxPassMultiple, minFailCyclePct } = useMemo(() => {
+    const btcPct = passedEnriched.find((a) => a.ticker === 'BTC')?.cyclePct ?? null;
+    return {
+      btcCyclePct: btcPct,
+      failedLagBtcCount:
+        btcPct !== null
+          ? failedLiquid.filter((a) => (a.cyclePct ?? 0) < btcPct).length
+          : failNegativeCount,
+      maxPassMultiple: passedLiquid.reduce((max, a) => Math.max(max, a.multiple ?? 0), 0),
+      minFailCyclePct: failedLiquid.reduce((min, a) => Math.min(min, a.cyclePct ?? 0), 0)
+    };
+  }, [passedEnriched, passedLiquid, failedLiquid, failNegativeCount]);
 
   const passInvested = passedLiquid.length * allocPerAsset;
   const failInvested = failedLiquid.length * allocPerAsset;
 
-  const rawSeries =
-    horizon === 'TACTICAL_90D'
-      ? TACTICAL_90D_TRAJECTORY.map((pt) => ({
-          label: pt.label,
-          event: pt.event,
-          passPrimary: pt.passAll,
-          passSecondary: pt.passMed as number | null,
-          failPrimary: pt.failAll,
-          failSecondary: pt.failMed as number | null
-        }))
-      : MACRO_CYCLE_TRAJECTORY.map((pt, idx, arr) => {
-          const isLast = idx === arr.length - 1;
-          const livePassMult = isLast ? Math.max(0.2, 1 + passCycleAvg / 100) : pt.passAll;
-          const livePassExMult = isLast ? Math.max(0.2, 1 + passExKasAvg / 100) : pt.passEx;
-          const liveFailMult = isLast ? Math.max(0.2, 1 + failCycleAvg / 100) : pt.failAll;
-          const liveFailExMult = isLast
-            ? Math.max(0.2, 1 + failExOutlierAvg / 100)
-            : pt.failEx;
+  const rawSeries = useMemo(
+    () =>
+      horizon === 'TACTICAL_90D'
+        ? TACTICAL_90D_TRAJECTORY.map((pt) => ({
+            label: pt.label,
+            event: pt.event,
+            passPrimary: pt.passAll,
+            passSecondary: pt.passMed as number | null,
+            failPrimary: pt.failAll,
+            failSecondary: pt.failMed as number | null
+          }))
+        : MACRO_CYCLE_TRAJECTORY.map((pt, idx, arr) => {
+            const isLast = idx === arr.length - 1;
+            const livePassMult = isLast ? Math.max(0.2, 1 + passCycleAvg / 100) : pt.passAll;
+            const livePassExMult = isLast ? Math.max(0.2, 1 + passExKasAvg / 100) : pt.passEx;
+            const liveFailMult = isLast ? Math.max(0.2, 1 + failCycleAvg / 100) : pt.failAll;
+            const liveFailExMult = isLast
+              ? Math.max(0.2, 1 + failExOutlierAvg / 100)
+              : pt.failEx;
 
-          return horizon === 'EX_OUTLIER'
-            ? {
-                label: pt.label,
-                event: pt.event,
-                passPrimary: livePassExMult,
-                passSecondary: null as number | null,
-                failPrimary: liveFailExMult,
-                failSecondary: liveFailMult as number | null
-              }
-            : {
-                label: pt.label,
-                event: pt.event,
-                passPrimary: livePassMult,
-                passSecondary: livePassExMult as number | null,
-                failPrimary: liveFailMult,
-                failSecondary: liveFailExMult as number | null
-              };
-        });
+            return horizon === 'EX_OUTLIER'
+              ? {
+                  label: pt.label,
+                  event: pt.event,
+                  passPrimary: livePassExMult,
+                  passSecondary: null as number | null,
+                  failPrimary: liveFailExMult,
+                  failSecondary: liveFailMult as number | null
+                }
+              : {
+                  label: pt.label,
+                  event: pt.event,
+                  passPrimary: livePassMult,
+                  passSecondary: livePassExMult as number | null,
+                  failPrimary: liveFailMult,
+                  failSecondary: liveFailExMult as number | null
+                };
+          }),
+    [horizon, passCycleAvg, passExKasAvg, failCycleAvg, failExOutlierAvg]
+  );
 
   const svgH = 248;
   const padL = 58;

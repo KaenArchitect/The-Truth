@@ -921,15 +921,20 @@ export function TopologyMeshCanvas({
     if (!canvas || !container) return undefined;
 
     let rafId: number | null = null;
+    let isVisible = true;
     let width = 480;
     const height = 178;
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const updateSize = () => {
       const rect = container.getBoundingClientRect();
       width = Math.max(280, Math.floor(rect.width));
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
@@ -967,12 +972,12 @@ export function TopologyMeshCanvas({
       ctx.closePath();
     };
 
-    const renderFrame = (now: number) => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        rafId = requestAnimationFrame(renderFrame);
+    const renderFrame = (now: number, forceSingleDraw = false) => {
+      if (!forceSingleDraw && (!isVisible || (typeof document !== 'undefined' && document.hidden))) {
+        rafId = null;
         return;
       }
-      if (lastDrawMs !== 0 && now - lastDrawMs < 32) {
+      if (!forceSingleDraw && lastDrawMs !== 0 && now - lastDrawMs < 36) {
         rafId = requestAnimationFrame(renderFrame);
         return;
       }
@@ -1693,12 +1698,42 @@ export function TopologyMeshCanvas({
         }
       }
 
-      rafId = requestAnimationFrame(renderFrame);
+      if (!reducedMotion && !forceSingleDraw && isVisible) {
+        rafId = requestAnimationFrame(renderFrame);
+      } else {
+        rafId = null;
+      }
     };
 
-    rafId = requestAnimationFrame(renderFrame);
+    renderFrame(performance.now(), true);
+
+    let io: IntersectionObserver | null = null;
+    if (!reducedMotion && typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[0];
+          if (!entry) return;
+          isVisible = entry.isIntersecting;
+          if (isVisible && rafId === null) {
+            lastDrawMs = 0;
+            rafId = requestAnimationFrame(renderFrame);
+          } else if (!isVisible && rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+        },
+        { threshold: 0.05 }
+      );
+      io.observe(container);
+    }
+
+    if (!reducedMotion) {
+      rafId = requestAnimationFrame(renderFrame);
+    }
+
     return () => {
-      if (rafId) cancelAnimationFrame(rafId);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (io) io.disconnect();
       if (ro) ro.disconnect();
       else window.removeEventListener('resize', updateSize);
     };

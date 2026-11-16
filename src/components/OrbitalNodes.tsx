@@ -190,19 +190,37 @@ let sharedWaveRafId: number | null = null;
 let sharedWavePaused = false;
 let lastSharedFrameMs = 0;
 
+let reducedMotionMql: MediaQueryList | null = null;
+let reducedMotionActive = false;
+
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  reducedMotionMql = window.matchMedia('(prefers-reduced-motion: reduce)');
+  reducedMotionActive = reducedMotionMql.matches;
+  const onMotionChange = (e: MediaQueryListEvent) => {
+    reducedMotionActive = e.matches;
+    if (reducedMotionActive && sharedWaveRafId !== null) {
+      cancelAnimationFrame(sharedWaveRafId);
+      sharedWaveRafId = null;
+    } else if (!reducedMotionActive) {
+      ensureSharedWaveLoop();
+    }
+  };
+  if (reducedMotionMql.addEventListener) {
+    reducedMotionMql.addEventListener('change', onMotionChange);
+  } else if (reducedMotionMql.addListener) {
+    reducedMotionMql.addListener(onMotionChange);
+  }
+}
+
 function isReducedMotionPreferred(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
+  return reducedMotionActive;
 }
 
 function runSharedWaveLoop(now: number): void {
   if (
     waveSubscribers.size === 0 ||
     sharedWavePaused ||
-    isReducedMotionPreferred() ||
+    reducedMotionActive ||
     (typeof document !== 'undefined' && document.hidden)
   ) {
     sharedWaveRafId = null;
@@ -225,7 +243,7 @@ function ensureSharedWaveLoop(): void {
   if (
     sharedWaveRafId === null &&
     !sharedWavePaused &&
-    !isReducedMotionPreferred() &&
+    !reducedMotionActive &&
     waveSubscribers.size > 0 &&
     (typeof document === 'undefined' || !document.hidden)
   ) {
@@ -287,14 +305,17 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   seedIndex = 0,
   sizePx = 68
 }: HarmonicProjectBubbleProps) {
+  const [isHovered, setIsHovered] = useState(false);
   const mainPathRef = useRef<SVGPathElement | null>(null);
   const echoPathRef = useRef<SVGPathElement | null>(null);
   const innerPathRef = useRef<SVGPathElement | null>(null);
+  const phaseRef = useRef(seedIndex * 0.95);
 
   const rawScore = Math.max(0, Math.min(6, Number(item?.totalScore) || 0));
   const isZeroFlat = rawScore === 0;
   const itemAccent = getGradeAccent(item?.grade);
   const isHighlighted = isSelected || isPinnedItem;
+  const shouldAnimateWave = isHighlighted || isHovered;
   const effectiveSize = Math.max(60, Math.round(sizePx || 68));
   const svgOutsetPx = (effectiveSize * 10) / 68;
   const haloInsetPx = (effectiveSize * 4) / 68;
@@ -302,7 +323,6 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   useEffect(() => {
     if (isZeroFlat) return undefined;
 
-    let phase = seedIndex * 0.95;
     // +25% harmonic wave amplitude upgrade (1.25x crest multiplier); E=0 remains flatlined (0)
     const amp = 1.25 * (1.6 + Math.pow(rawScore / 6.0, 1.12) * 5.0);
     const speed = (0.018 + (rawScore / 6.0) * 0.028) * 1.15;
@@ -332,15 +352,26 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
       }
     };
 
-    renderMini(phase);
+    renderMini(phaseRef.current);
+    if (!shouldAnimateWave) return undefined;
+
     return subscribeSharedWave((dt) => {
-      phase += speed * Math.min(1.5, dt);
-      renderMini(phase);
-    }, isHighlighted ? 20 : 14);
-  }, [rawScore, isZeroFlat, isHighlighted, seedIndex]);
+      phaseRef.current += speed * Math.min(1.5, dt);
+      renderMini(phaseRef.current);
+    }, 20);
+  }, [rawScore, isZeroFlat, isHighlighted, shouldAnimateWave]);
 
   return (
-    <div className="group relative inline-flex items-center justify-center">
+    <div
+      onMouseEnter={() => {
+        if (!isZeroFlat) setIsHovered(true);
+      }}
+      onMouseLeave={() => {
+        if (!isZeroFlat) setIsHovered(false);
+      }}
+      style={{ contain: 'layout style' }}
+      className="group relative inline-flex items-center justify-center"
+    >
       <span
         className="pointer-events-none absolute rounded-full transition-all duration-300 ease-out"
         style={{
@@ -358,6 +389,12 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
 
       <button
         type="button"
+        onFocus={() => {
+          if (!isZeroFlat) setIsHovered(true);
+        }}
+        onBlur={() => {
+          if (!isZeroFlat) setIsHovered(false);
+        }}
         onClick={() => onSelectTicker(item.ticker)}
         title={`${item.name} ($${item.ticker}) — Grade ${item.grade} (${formatScore(
           item.totalScore

@@ -150,12 +150,28 @@ export function TutorialOverlay({
 
   useEffect(() => {
     if (!isOpen) return undefined;
-    const onResizeOrScroll = () => measureTarget();
-    window.addEventListener('resize', onResizeOrScroll);
-    window.addEventListener('scroll', onResizeOrScroll, true);
-    document.addEventListener('transitionend', onResizeOrScroll, true);
-    document.addEventListener('animationend', onResizeOrScroll, true);
-    const syncInterval = window.setInterval(onResizeOrScroll, 180);
+    let rafPending = 0;
+    const scheduleMeasure = () => {
+      if (rafPending) return;
+      rafPending = window.requestAnimationFrame(() => {
+        rafPending = 0;
+        measureTarget();
+      });
+    };
+    const onTransitionEnd = (e: TransitionEvent) => {
+      if (
+        e.propertyName === 'transform' ||
+        e.propertyName === 'translate' ||
+        e.propertyName === 'width' ||
+        e.propertyName === 'height'
+      ) {
+        scheduleMeasure();
+      }
+    };
+    window.addEventListener('resize', scheduleMeasure, { passive: true });
+    window.addEventListener('scroll', scheduleMeasure, { capture: true, passive: true });
+    document.addEventListener('transitionend', onTransitionEnd, true);
+    const syncInterval = window.setInterval(scheduleMeasure, 450);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && cardRef.current) {
@@ -166,16 +182,16 @@ export function TutorialOverlay({
             setCardHeight((prev) => (Math.abs(prev - h) > 2 ? h : prev));
           }
         }
-        measureTarget();
+        scheduleMeasure();
       });
       ro.observe(cardRef.current);
     }
 
     return () => {
-      window.removeEventListener('resize', onResizeOrScroll);
-      window.removeEventListener('scroll', onResizeOrScroll, true);
-      document.removeEventListener('transitionend', onResizeOrScroll, true);
-      document.removeEventListener('animationend', onResizeOrScroll, true);
+      if (rafPending) window.cancelAnimationFrame(rafPending);
+      window.removeEventListener('resize', scheduleMeasure);
+      window.removeEventListener('scroll', scheduleMeasure, true);
+      document.removeEventListener('transitionend', onTransitionEnd, true);
       window.clearInterval(syncInterval);
       if (ro) ro.disconnect();
     };

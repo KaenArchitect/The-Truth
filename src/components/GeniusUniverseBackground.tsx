@@ -119,43 +119,65 @@ export function GeniusUniverseBackground({
     if (!active) return undefined;
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return undefined;
 
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const motionMql =
+      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    let prefersReducedMotion = Boolean(motionMql?.matches);
+    const onMotionPrefChange = (e: MediaQueryListEvent) => {
+      prefersReducedMotion = e.matches;
+    };
+    if (motionMql) {
+      if (motionMql.addEventListener) motionMql.addEventListener('change', onMotionPrefChange);
+      else if (motionMql.addListener) motionMql.addListener(onMotionPrefChange);
+    }
 
-    const MAX_BACKING_PIXELS = 1_250_000;
+    const MAX_BACKING_PIXELS = 900_000;
     let width = window.innerWidth || 1440;
     let height = window.innerHeight || 900;
     let dpr = 1;
+    let resizeRafId = 0;
 
     const syncSize = () => {
       width = window.innerWidth || 1440;
       height = window.innerHeight || 900;
-      const nativeDpr = Math.min(1.5, window.devicePixelRatio || 1);
+      const nativeDpr = Math.min(1.2, window.devicePixelRatio || 1);
       const maxDprForBudget = Math.sqrt(MAX_BACKING_PIXELS / Math.max(1, width * height));
       dpr = Math.max(0.4, Math.min(nativeDpr, maxDprForBudget));
-      setViewportIsMobile(width < 768);
+      const nextMobile = width < 768;
+      setViewportIsMobile((prev) => (prev === nextMobile ? prev : nextMobile));
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
     };
+    const onWindowResize = () => {
+      if (resizeRafId) return;
+      resizeRafId = window.requestAnimationFrame(() => {
+        resizeRafId = 0;
+        syncSize();
+      });
+    };
     syncSize();
 
-    const drawFrame = (dtSec: number) => {
+    const drawFrame = (
+      dtSec: number,
+      precomputedTelemetry?: ReturnType<typeof computeUniverseTelemetryForGrade>
+    ) => {
       const tgt = targetRef.current;
-      const tgtTelemetry = computeUniverseTelemetryForGrade({
-        hasActiveAudit: tgt.hasActiveAudit,
-        isAuditing: tgt.isAuditing,
-        totalScore: tgt.totalScore,
-        grade: tgt.grade,
-        scanProgressPct: tgt.scanProgressPct,
-        isMobile: width < 768
-      });
+      const tgtTelemetry =
+        precomputedTelemetry ??
+        computeUniverseTelemetryForGrade({
+          hasActiveAudit: tgt.hasActiveAudit,
+          isAuditing: tgt.isAuditing,
+          totalScore: tgt.totalScore,
+          grade: tgt.grade,
+          scanProgressPct: tgt.scanProgressPct,
+          isMobile: width < 768
+        });
 
       const sm = smoothRef.current;
       // Exponential smoothing (~0.7s convergence) prevents abrupt color, speed, or star pops during live audits
@@ -220,13 +242,14 @@ export function GeniusUniverseBackground({
       // Subtle spiral wave rings fade out cleanly when F grade extinguishes motion & stars
       const ringVisibility = Math.min(1, visibleCount / 40);
       if (ringVisibility > 0.02) {
+        const diag = Math.hypot(width, height);
         for (let arm = 0; arm < 3; arm++) {
           ctx.beginPath();
           const armBase = (arm * Math.PI * 2) / 3 + orbitalClockRef.current * 0.045;
-          for (let step = 0; step <= 44; step++) {
-            const frac = step / 44;
+          for (let step = 0; step <= 36; step++) {
+            const frac = step / 36;
             const ang = armBase + frac * 4.8;
-            const rad = (0.04 + frac * 0.48) * Math.hypot(width, height);
+            const rad = (0.04 + frac * 0.48) * diag;
             const lx = Math.cos(ang) * rad;
             const ly = Math.sin(ang) * rad * 0.58;
             const x = cx + lx * 0.97 + ly * 0.24;
@@ -247,7 +270,7 @@ export function GeniusUniverseBackground({
         }
       }
 
-      // Draw smoothed star count with smooth RGB cross-fade & per-star fade visibility
+      // Draw smoothed star count with smooth RGB cross-fade & fast-path rect rendering for sub-2px stars
       if (sm.starCountFloat > 0.2) {
         for (let i = 0; i < visibleCount; i++) {
           const starVisibility = Math.max(0, Math.min(1, sm.starCountFloat - i));
@@ -264,7 +287,7 @@ export function GeniusUniverseBackground({
             cx,
             cy
           );
-          if (proj.x < -20 || proj.x > width + 20 || proj.y < -20 || proj.y > height + 20) {
+          if (proj.x < -16 || proj.x > width + 16 || proj.y < -16 || proj.y > height + 16) {
             continue;
           }
 
@@ -283,22 +306,31 @@ export function GeniusUniverseBackground({
           const b = Math.round(resB + (mgTuple[2] - resB) * mix);
           const rgb = `${r}, ${g}, ${b}`;
 
-          if (proj.tailLength > 2.0) {
-            const x0 = proj.x - Math.cos(proj.angleRad) * proj.tailLength;
-            const y0 = proj.y - Math.sin(proj.angleRad) * proj.tailLength;
-            ctx.lineWidth = Math.max(0.65, proj.size * 0.65);
-            ctx.strokeStyle = `rgba(${rgb}, ${(proj.alpha * 0.34 * starVisibility).toFixed(3)})`;
-            ctx.beginPath();
-            ctx.moveTo(x0, y0);
-            ctx.lineTo(proj.x, proj.y);
-            ctx.stroke();
+          if (proj.tailLength > 2.2) {
+            const tailAlpha = proj.alpha * 0.34 * starVisibility;
+            if (tailAlpha > 0.025) {
+              const x0 = proj.x - Math.cos(proj.angleRad) * proj.tailLength;
+              const y0 = proj.y - Math.sin(proj.angleRad) * proj.tailLength;
+              ctx.lineWidth = Math.max(0.65, proj.size * 0.65);
+              ctx.strokeStyle = `rgba(${rgb}, ${tailAlpha.toFixed(2)})`;
+              ctx.beginPath();
+              ctx.moveTo(x0, y0);
+              ctx.lineTo(proj.x, proj.y);
+              ctx.stroke();
+            }
           }
 
           const starAlpha = Math.min(0.95, proj.alpha * (1 + 0.12 * mix) * starVisibility);
-          ctx.fillStyle = `rgba(${rgb}, ${starAlpha.toFixed(3)})`;
-          ctx.beginPath();
-          ctx.arc(proj.x, proj.y, proj.size, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.fillStyle = `rgba(${rgb}, ${starAlpha.toFixed(2)})`;
+          if (proj.size <= 1.65) {
+            const d = proj.size * 1.85;
+            const half = d * 0.5;
+            ctx.fillRect(proj.x - half, proj.y - half, d, d);
+          } else {
+            ctx.beginPath();
+            ctx.arc(proj.x, proj.y, proj.size, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
 
@@ -307,9 +339,18 @@ export function GeniusUniverseBackground({
 
     drawFrame(0);
 
+    const cleanupListeners = () => {
+      if (resizeRafId) window.cancelAnimationFrame(resizeRafId);
+      window.removeEventListener('resize', onWindowResize);
+      if (motionMql) {
+        if (motionMql.removeEventListener) motionMql.removeEventListener('change', onMotionPrefChange);
+        else if (motionMql.removeListener) motionMql.removeListener(onMotionPrefChange);
+      }
+    };
+
     if (paused || prefersReducedMotion) {
-      window.addEventListener('resize', syncSize);
-      return () => window.removeEventListener('resize', syncSize);
+      window.addEventListener('resize', onWindowResize, { passive: true });
+      return cleanupListeners;
     }
 
     let rafId = 0;
@@ -318,19 +359,13 @@ export function GeniusUniverseBackground({
     lastTimeRef.current = performance.now();
 
     const tick = (nowMs: number) => {
-      if (
-        typeof window !== 'undefined' &&
-        typeof window.matchMedia === 'function' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      ) {
-        return;
-      }
+      if (prefersReducedMotion) return;
       rafId = window.requestAnimationFrame(tick);
       if (document.hidden) {
         lastTimeRef.current = nowMs;
         return;
       }
-      if (nowMs - lastDrawMs < 48) return; // smooth ~20fps backdrop budget
+      if (nowMs - lastDrawMs < 52) return; // smooth ~19fps cosmic backdrop budget
       lastDrawMs = nowMs;
       const prev = lastTimeRef.current ?? nowMs;
       const dt = Math.min(0.08, Math.max(0, (nowMs - prev) / 1000));
@@ -361,14 +396,14 @@ export function GeniusUniverseBackground({
         settledZeroDrawn = false;
       }
 
-      drawFrame(dt);
+      drawFrame(dt, tgtTel);
     };
 
     rafId = window.requestAnimationFrame(tick);
-    window.addEventListener('resize', syncSize);
+    window.addEventListener('resize', onWindowResize, { passive: true });
     return () => {
       window.cancelAnimationFrame(rafId);
-      window.removeEventListener('resize', syncSize);
+      cleanupListeners();
     };
   }, [active, paused, stars]);
 
@@ -387,6 +422,7 @@ export function GeniusUniverseBackground({
       data-grade={grade}
       data-zero-motion={isZeroMotion ? 'true' : 'false'}
       aria-hidden="true"
+      style={{ contain: 'strict' }}
       className={`pointer-events-none fixed inset-0 overflow-hidden z-0 transition-opacity duration-700 ${
         active ? 'opacity-100' : 'opacity-0'
       }`}
@@ -411,7 +447,11 @@ export function GeniusUniverseBackground({
       />
 
       {/* Lightly floating mathematical laws of physics strictly behind objects & buttons */}
-      <div data-testid="genius-physics-equations" className="absolute inset-0 overflow-hidden">
+      <div
+        data-testid="genius-physics-equations"
+        style={{ contain: 'layout style paint' }}
+        className="absolute inset-0 overflow-hidden"
+      >
         {PHYSICS_EQUATION_SPRITES.map((sprite) => {
           const gradeTierColor =
             GRADE_STAR_SPECTRUM[sprite.gradeTierIndex % GRADE_STAR_SPECTRUM.length]?.hex || primaryColor;
@@ -440,7 +480,6 @@ export function GeniusUniverseBackground({
                 opacity: isZeroMotion
                   ? 0.14
                   : Math.max(0.11, Math.min(0.28, sprite.opacity * (0.68 + telemetry.nebulaIntensity * 0.34))),
-                textShadow: `0 0 18px ${color}33`,
                 ['--math-dx' as string]: `${sprite.driftX}px`,
                 ['--math-dy' as string]: `${sprite.driftY}px`,
                 ['--math-rot' as string]: `${sprite.rotDeg}deg`,

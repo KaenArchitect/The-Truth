@@ -5,6 +5,8 @@
 
 import {
   Component,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -120,8 +122,16 @@ import {
   type FourFormationMode,
   type ThreeFormationMode
 } from './components/OrbitalNodes.tsx';
-import { WartimeSpliceSimulator } from './components/WartimeSpliceSimulator.tsx';
-import { ThermodynamicGainsModal } from './components/ThermodynamicGainsModal.tsx';
+const WartimeSpliceSimulator = lazy(() =>
+  import('./components/WartimeSpliceSimulator.tsx').then((m) => ({
+    default: m.WartimeSpliceSimulator
+  }))
+);
+const ThermodynamicGainsModal = lazy(() =>
+  import('./components/ThermodynamicGainsModal.tsx').then((m) => ({
+    default: m.ThermodynamicGainsModal
+  }))
+);
 import {
   buildBasketSyncedCohortRecord,
   computeCohortAggregateSummary,
@@ -149,7 +159,11 @@ import {
   isSandboxUrlEnabled,
   partitionTickersByEcosystem
 } from './data/auditProvenance.ts';
-import { GenesisThesisModal } from './components/GenesisThesisModal.tsx';
+const GenesisThesisModal = lazy(() =>
+  import('./components/GenesisThesisModal.tsx').then((m) => ({
+    default: m.GenesisThesisModal
+  }))
+);
 import { GeniusSearchWaveRings } from './components/GeniusSearchWaveRings.tsx';
 import { AuditChaosWaveRings } from './components/AuditChaosWaveRings.tsx';
 import { GeniusUniverseBackground } from './components/GeniusUniverseBackground.tsx';
@@ -164,6 +178,8 @@ import {
   type ArchivedAuditListFilters
 } from './data/agentArchiveApi.ts';
 import { computeDisplayLayoutMetrics } from './data/displayScale.ts';
+
+const PRELOADED_TICKER_SET = new Set(Object.keys(PRELOADED_AUDITS));
 
 const INVARIANT_ICONS: Record<string, LucideIcon> = {
   '01': ShieldCheck,
@@ -307,7 +323,7 @@ function ProvenanceBadgesStrip({
   compact?: boolean;
 }) {
   const prov = getAuditProvenance(audit, {
-    preloadedTickers: new Set(Object.keys(PRELOADED_AUDITS)),
+    preloadedTickers: PRELOADED_TICKER_SET,
     isSandbox
   });
 
@@ -531,21 +547,31 @@ function ThermodynamicAuditApp() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const updateViewport = () => {
+    let resizeRaf: number | null = null;
+    const commitViewport = () => {
+      resizeRaf = null;
+      const nextWidth = window.innerWidth;
+      const nextHeight = window.innerHeight;
       const isCoarsePointer =
         typeof window.matchMedia === 'function'
           ? window.matchMedia('(pointer: coarse)').matches
           : false;
-      setViewportMetrics({
-        width: window.innerWidth,
-        height: window.innerHeight,
-        isCoarsePointer
-      });
+      setViewportMetrics((prev) =>
+        prev.width === nextWidth &&
+        prev.height === nextHeight &&
+        prev.isCoarsePointer === isCoarsePointer
+          ? prev
+          : { width: nextWidth, height: nextHeight, isCoarsePointer }
+      );
+    };
+    const updateViewport = () => {
+      if (resizeRaf !== null) return;
+      resizeRaf = window.requestAnimationFrame(commitViewport);
     };
 
-    updateViewport();
-    window.addEventListener('resize', updateViewport);
-    window.addEventListener('orientationchange', updateViewport);
+    commitViewport();
+    window.addEventListener('resize', updateViewport, { passive: true });
+    window.addEventListener('orientationchange', updateViewport, { passive: true });
     const orientationMq =
       typeof window.matchMedia === 'function'
         ? window.matchMedia('(orientation: portrait)')
@@ -558,6 +584,7 @@ function ThermodynamicAuditApp() {
       }
     }
     return () => {
+      if (resizeRaf !== null) window.cancelAnimationFrame(resizeRaf);
       window.removeEventListener('resize', updateViewport);
       window.removeEventListener('orientationchange', updateViewport);
       if (orientationMq) {
@@ -568,6 +595,16 @@ function ThermodynamicAuditApp() {
         }
       }
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const warmTimer = window.setTimeout(() => {
+      void import('./components/ThermodynamicGainsModal.tsx');
+      void import('./components/WartimeSpliceSimulator.tsx');
+      void import('./components/GenesisThesisModal.tsx');
+    }, 1500);
+    return () => window.clearTimeout(warmTimer);
   }, []);
 
   useEffect(() => {
@@ -606,15 +643,23 @@ function ThermodynamicAuditApp() {
     }
   }, [isAnyModalOpen, isTutorialOpen]);
 
-  const sortedTickers = sortAuditTickersByGrade(audits);
-  const passedTickers = sortedTickers.filter((tk) => {
-    const a = audits[tk];
-    return a && Number(a.totalScore) > 1.0 && String(a.grade || '').toUpperCase() !== 'F';
-  });
-  const failedTickers = sortedTickers.filter((tk) => {
-    const a = audits[tk];
-    return a && (Number(a.totalScore) <= 1.0 || String(a.grade || '').toUpperCase() === 'F');
-  });
+  const sortedTickers = useMemo(() => sortAuditTickersByGrade(audits), [audits]);
+  const passedTickers = useMemo(
+    () =>
+      sortedTickers.filter((tk) => {
+        const a = audits[tk];
+        return a && Number(a.totalScore) > 1.0 && String(a.grade || '').toUpperCase() !== 'F';
+      }),
+    [sortedTickers, audits]
+  );
+  const failedTickers = useMemo(
+    () =>
+      sortedTickers.filter((tk) => {
+        const a = audits[tk];
+        return a && (Number(a.totalScore) <= 1.0 || String(a.grade || '').toUpperCase() === 'F');
+      }),
+    [sortedTickers, audits]
+  );
   const { coreTickers: corePassedTickers, ecosystemTickers: ecosystemPassedTickers } = useMemo(
     () => partitionTickersByEcosystem(passedTickers, audits),
     [passedTickers, audits]
@@ -660,33 +705,39 @@ function ThermodynamicAuditApp() {
     return () => clearTimeout(t);
   }, [archiveToast]);
 
-  // Persist custom/updated audits & sandbox previews separately so sandbox tests never leak into shared vaults
+  // Persist custom/updated audits & sandbox previews separately (debounced off hot animation frames)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const customOrUpdated: Record<string, AuditData> = {};
-      const sandboxSnapshot: Record<string, AuditData> = {};
-      Object.entries(audits).forEach(([k, val]) => {
-        if (sandboxTickerSet.has(k) && !PRELOADED_AUDITS[k]) {
-          sandboxSnapshot[k] = val;
-        } else if (!PRELOADED_AUDITS[k] || val.lastFreshAuditAt || val.archivedAtLabel) {
-          customOrUpdated[k] = val;
-        }
-      });
-      window.localStorage.setItem(LOCAL_AUDITS_STORAGE_KEY, JSON.stringify(customOrUpdated));
-      window.localStorage.setItem(SANDBOX_AUDITS_STORAGE_KEY, JSON.stringify(sandboxSnapshot));
-    } catch {
-      // Ignore storage quota errors
-    }
+    if (typeof window === 'undefined') return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        const customOrUpdated: Record<string, AuditData> = {};
+        const sandboxSnapshot: Record<string, AuditData> = {};
+        Object.entries(audits).forEach(([k, val]) => {
+          if (sandboxTickerSet.has(k) && !PRELOADED_AUDITS[k]) {
+            sandboxSnapshot[k] = val;
+          } else if (!PRELOADED_AUDITS[k] || val.lastFreshAuditAt || val.archivedAtLabel) {
+            customOrUpdated[k] = val;
+          }
+        });
+        window.localStorage.setItem(LOCAL_AUDITS_STORAGE_KEY, JSON.stringify(customOrUpdated));
+        window.localStorage.setItem(SANDBOX_AUDITS_STORAGE_KEY, JSON.stringify(sandboxSnapshot));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }, 260);
+    return () => window.clearTimeout(timer);
   }, [audits, sandboxTickerSet]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(LOCAL_LOGS_STORAGE_KEY, JSON.stringify(invLogs));
-    } catch {
-      // Ignore storage quota errors
-    }
+    if (typeof window === 'undefined') return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(LOCAL_LOGS_STORAGE_KEY, JSON.stringify(invLogs));
+      } catch {
+        // Ignore storage quota errors
+      }
+    }, 260);
+    return () => window.clearTimeout(timer);
   }, [invLogs]);
 
   const syncServerConfigAndQuota = useCallback(async (userOverride?: User | null) => {
@@ -1152,24 +1203,32 @@ function ThermodynamicAuditApp() {
     }
   };
 
-  const validPinnedKeys = pinnedKeys.filter((k) => Boolean(audits[k]));
+  const validPinnedKeys = useMemo(
+    () => pinnedKeys.filter((k) => Boolean(audits[k])),
+    [pinnedKeys, audits]
+  );
   const hasActiveAudit = Boolean(activeKey && audits[activeKey]);
   const isPinned = Boolean(hasActiveAudit && activeKey && validPinnedKeys.includes(activeKey));
-  const stageTickers: string[] = isAuditing
-    ? hasActiveAudit && activeKey
-      ? [activeKey]
-      : []
-    : validPinnedKeys.length > 0
-    ? hasActiveAudit && activeKey && !validPinnedKeys.includes(activeKey)
-      ? validPinnedKeys.length < 4
-        ? [...validPinnedKeys, activeKey]
-        : [...validPinnedKeys.slice(0, 3), activeKey]
-      : validPinnedKeys.slice(0, 4)
-    : hasActiveAudit && activeKey
-    ? [activeKey]
-    : [];
+  const stageTickers: string[] = useMemo(() => {
+    if (isAuditing) {
+      return hasActiveAudit && activeKey ? [activeKey] : [];
+    }
+    if (validPinnedKeys.length > 0) {
+      if (hasActiveAudit && activeKey && !validPinnedKeys.includes(activeKey)) {
+        return validPinnedKeys.length < 4
+          ? [...validPinnedKeys, activeKey]
+          : [...validPinnedKeys.slice(0, 3), activeKey];
+      }
+      return validPinnedKeys.slice(0, 4);
+    }
+    return hasActiveAudit && activeKey ? [activeKey] : [];
+  }, [isAuditing, hasActiveAudit, activeKey, validPinnedKeys]);
   const isMultiStage = !isAuditing && stageTickers.length > 1;
   const isLandingIdle = !isAuditing && !hasActiveAudit && validPinnedKeys.length === 0;
+  const pinnedStageSet = useMemo(
+    () => new Set(isMultiStage ? stageTickers : validPinnedKeys),
+    [isMultiStage, stageTickers, validPinnedKeys]
+  );
 
   useEffect(() => {
     if (!isMultiStage && expandedSyncInvId) {
@@ -1182,23 +1241,49 @@ function ThermodynamicAuditApp() {
     const el = constellationMeasureRef.current;
     if (!el) return undefined;
 
-    const updateWidth = () => {
+    let measureRaf: number | null = null;
+    const commitWidth = () => {
+      measureRaf = null;
       const w = el.getBoundingClientRect().width;
-      if (w > 180) setConstellationWrapWidth(Math.floor(w));
+      if (w > 180) {
+        const nextW = Math.floor(w);
+        setConstellationWrapWidth((prev) => (prev === nextW ? prev : nextW));
+      }
+    };
+    const updateWidth = () => {
+      if (measureRaf !== null) return;
+      measureRaf = window.requestAnimationFrame(commitWidth);
     };
 
-    updateWidth();
+    commitWidth();
     if (typeof ResizeObserver !== 'undefined') {
       const ro = new ResizeObserver(updateWidth);
       ro.observe(el);
-      return () => ro.disconnect();
+      return () => {
+        if (measureRaf !== null) window.cancelAnimationFrame(measureRaf);
+        ro.disconnect();
+      };
     }
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
+    window.addEventListener('resize', updateWidth, { passive: true });
+    return () => {
+      if (measureRaf !== null) window.cancelAnimationFrame(measureRaf);
+      window.removeEventListener('resize', updateWidth);
+    };
   }, [isMultiStage, stageTickers.length]);
 
+  const lastLayoutSyncRef = useRef<{ heroY: number; wrapPt: number; wrapMt: number }>({
+    heroY: -1,
+    wrapPt: -1,
+    wrapMt: 9999
+  });
+
   useLayoutEffect(() => {
+    let queuedSyncRaf: number | null = null;
+
     const syncForegroundCenterToBackdrop = () => {
+      queuedSyncRaf = null;
+
+      // Phase 1: Batch all DOM geometry & computed-style READS before touching .style
       const root = backdropRootRef.current;
       const rootRect = root ? root.getBoundingClientRect() : null;
       const backdropCenterY =
@@ -1206,23 +1291,25 @@ function ThermodynamicAuditApp() {
 
       const heroEl = heroDockRef.current;
       const searchEl = searchDockRef.current;
+      let nextHeroY: number | null = null;
       if (isLandingIdle && heroEl && searchEl) {
         const m = new DOMMatrixReadOnly(window.getComputedStyle(heroEl).transform);
         const currentTy = Number.isFinite(m.m42) ? m.m42 : 0;
         const searchRect = searchEl.getBoundingClientRect();
         if (searchRect.height > 0) {
           const searchCenterAtTy0 = searchRect.top + searchRect.height / 2 - currentTy;
-          const targetTy = Math.max(0, backdropCenterY - searchCenterAtTy0);
-          heroEl.style.setProperty('--hero-landing-y', `${targetTy.toFixed(2)}px`);
+          nextHeroY = Math.max(0, backdropCenterY - searchCenterAtTy0);
         }
       }
 
       const wrapEl = singleStageWrapRef.current;
       const arenaEl = arenaRef.current;
+      let nextWrapPt: number | null = null;
+      let nextWrapMt: number | null = null;
       if (wrapEl && arenaEl && !isLandingIdle && !isMultiStage) {
         if (isMobileViewport) {
-          wrapEl.style.paddingTop = '0px';
-          wrapEl.style.marginTop = '0px';
+          nextWrapPt = 0;
+          nextWrapMt = 0;
         } else {
           const wrapStyle = window.getComputedStyle(wrapEl);
           const currentPt = Number.parseFloat(wrapStyle.paddingTop) || 0;
@@ -1238,42 +1325,66 @@ function ThermodynamicAuditApp() {
               arenaRect.top + arenaRect.height / 2 - currentPt - currentMt - currentWrapTy;
             const deltaY = backdropCenterY - arenaCenterBase;
             if (deltaY >= 0) {
-              wrapEl.style.paddingTop = `${deltaY.toFixed(2)}px`;
-              wrapEl.style.marginTop = '0px';
+              nextWrapPt = deltaY;
+              nextWrapMt = 0;
             } else {
-              wrapEl.style.paddingTop = '0px';
-              wrapEl.style.marginTop = `${Math.max(-28, deltaY).toFixed(2)}px`;
+              nextWrapPt = 0;
+              nextWrapMt = Math.max(-28, deltaY);
             }
           }
         }
       }
+
+      // Phase 2: Commit DOM style WRITES only when values meaningfully change
+      const prev = lastLayoutSyncRef.current;
+      if (heroEl && nextHeroY !== null && Math.abs(nextHeroY - prev.heroY) >= 0.25) {
+        prev.heroY = nextHeroY;
+        heroEl.style.setProperty('--hero-landing-y', `${nextHeroY.toFixed(2)}px`);
+      }
+      if (
+        wrapEl &&
+        nextWrapPt !== null &&
+        nextWrapMt !== null &&
+        (Math.abs(nextWrapPt - prev.wrapPt) >= 0.25 || Math.abs(nextWrapMt - prev.wrapMt) >= 0.25)
+      ) {
+        prev.wrapPt = nextWrapPt;
+        prev.wrapMt = nextWrapMt;
+        wrapEl.style.paddingTop = `${nextWrapPt.toFixed(2)}px`;
+        wrapEl.style.marginTop = `${nextWrapMt.toFixed(2)}px`;
+      }
+    };
+
+    const scheduleSync = () => {
+      if (queuedSyncRaf !== null) return;
+      queuedSyncRaf = window.requestAnimationFrame(syncForegroundCenterToBackdrop);
     };
 
     syncForegroundCenterToBackdrop();
     const rafId = window.requestAnimationFrame(syncForegroundCenterToBackdrop);
-    const settleTimer = window.setTimeout(syncForegroundCenterToBackdrop, 420);
-    const postEnterTimer = window.setTimeout(syncForegroundCenterToBackdrop, 520);
-    const postTransitionTimer = window.setTimeout(syncForegroundCenterToBackdrop, 780);
+    const settleTimer = window.setTimeout(scheduleSync, 420);
+    const postEnterTimer = window.setTimeout(scheduleSync, 540);
+    const postTransitionTimer = window.setTimeout(scheduleSync, 780);
     const heroElForTransition = heroDockRef.current;
     const onHeroTransitionEnd = (e: TransitionEvent) => {
-      if (e.propertyName === 'transform') syncForegroundCenterToBackdrop();
+      if (e.propertyName === 'transform') scheduleSync();
     };
     heroElForTransition?.addEventListener('transitionend', onHeroTransitionEnd);
-    window.addEventListener('resize', syncForegroundCenterToBackdrop, { passive: true });
+    window.addEventListener('resize', scheduleSync, { passive: true });
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(syncForegroundCenterToBackdrop);
+      ro = new ResizeObserver(scheduleSync);
       if (document.body) ro.observe(document.body);
     }
 
     return () => {
       window.cancelAnimationFrame(rafId);
+      if (queuedSyncRaf !== null) window.cancelAnimationFrame(queuedSyncRaf);
       window.clearTimeout(settleTimer);
       window.clearTimeout(postEnterTimer);
       window.clearTimeout(postTransitionTimer);
       heroElForTransition?.removeEventListener('transitionend', onHeroTransitionEnd);
-      window.removeEventListener('resize', syncForegroundCenterToBackdrop);
+      window.removeEventListener('resize', scheduleSync);
       if (ro) ro.disconnect();
     };
   }, [
@@ -1285,9 +1396,7 @@ function ThermodynamicAuditApp() {
     viewportMetrics.width,
     viewportMetrics.height,
     displayMetrics.stageSizePx,
-    activeKey,
-    auditError,
-    archiveToast
+    activeKey
   ]);
 
   const currentAudit = hasActiveAudit && activeKey ? audits[activeKey] : audits.KAS;
@@ -1450,7 +1559,7 @@ function ThermodynamicAuditApp() {
         unsub();
         unsub = null;
       }
-    }, 30);
+    }, 24);
 
     return () => {
       if (unsub) unsub();
@@ -1793,7 +1902,7 @@ function ThermodynamicAuditApp() {
       rawQuery,
       typeof window !== 'undefined' ? window.location.search : '',
       isSandboxMode,
-      new Set(Object.keys(PRELOADED_AUDITS))
+      PRELOADED_TICKER_SET
     );
     const effectiveSandbox = existingBaseline
       ? isSandboxMode || sandboxTickerSet.has(existingBaseline.ticker)
@@ -2853,13 +2962,17 @@ function ThermodynamicAuditApp() {
     truthDotTriggeredRef.current = false;
     const HOLD_DURATION_MS = 5000;
     const startTs = performance.now();
+    let lastProgressCommit = 0;
     truthDotStartRef.current = startTs;
 
     const tick = (now: number) => {
       if (truthDotStartRef.current === null) return;
       const elapsed = now - truthDotStartRef.current;
       const ratio = Math.min(1, Math.max(0, elapsed / HOLD_DURATION_MS));
-      setTruthDotHoldProgress(ratio);
+      if (now - lastProgressCommit >= 48 || ratio >= 1) {
+        lastProgressCommit = now;
+        setTruthDotHoldProgress(ratio);
+      }
       if (ratio >= 1) {
         triggerTruthSupernova();
         return;
@@ -2956,7 +3069,7 @@ function ThermodynamicAuditApp() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-    const preloadedSet = new Set(Object.keys(PRELOADED_AUDITS));
+    const preloadedSet = PRELOADED_TICKER_SET;
 
     const openAgentModal = (
       kind: 'RUBRIC' | 'ARCHIVE' | 'GAINS' | 'GENESIS_EASTER_EGG' | 'WARTIME_LAB' | null
@@ -3259,6 +3372,316 @@ function ThermodynamicAuditApp() {
     };
   }, []);
 
+  const desktopSidebarsNode = useMemo(
+    () => (
+      <>
+        <aside
+          data-tutorial-id="passed-sidebar"
+          style={{
+            ...(displayMetrics.sidebarWidthPx ? { width: `${displayMetrics.sidebarWidthPx}px` } : {}),
+            contain: 'layout style'
+          }}
+          className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+        >
+          <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
+              <span>Passed // E &gt; 0</span>
+            </span>
+            <span className="text-neutral-500 hidden xl:inline">{passedTickers.length} Harmonic</span>
+            <span className="text-neutral-500 xl:hidden">{passedTickers.length}</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsGainsModalOpen(true)}
+            title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
+            className="w-full shrink-0 py-1.5 mb-1 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[9.5px] text-[#49EACB]/85 hover:text-[#49EACB] transition-colors text-left cursor-pointer group"
+          >
+            <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
+              {formatPctSigned(basketGainsSummary.passCycleAvg)}
+            </span>
+            <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
+              →
+            </span>
+          </button>
+
+          <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
+              {corePassedTickers.map((tk, idx) => (
+                <HarmonicProjectBubble
+                  key={tk}
+                  item={audits[tk]}
+                  isSelected={activeKey === tk}
+                  isPinnedItem={pinnedStageSet.has(tk)}
+                  onSelectTicker={stableSelectTicker}
+                  onTogglePin={stableTogglePin}
+                  seedIndex={idx}
+                  sizePx={displayMetrics.sidebarBubbleSizePx}
+                />
+              ))}
+            </div>
+            {ecosystemPassedTickers.length > 0 && (
+              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
+                  Ecosystem / Overlays ({ecosystemPassedTickers.length})
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
+                  {ecosystemPassedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={pinnedStageSet.has(tk)}
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx + 30}
+                      sizePx={displayMetrics.sidebarBubbleSizePx}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <aside
+          data-tutorial-id="failed-sidebar"
+          style={{
+            ...(displayMetrics.sidebarWidthPx ? { width: `${displayMetrics.sidebarWidthPx}px` } : {}),
+            contain: 'layout style'
+          }}
+          className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+        >
+          <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+              <span>Failed // E = 0</span>
+            </span>
+            <span className="text-neutral-500 hidden xl:inline">{failedTickers.length} Flatlined</span>
+            <span className="text-neutral-500 xl:hidden">{failedTickers.length}</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsGainsModalOpen(true)}
+            title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
+            className="w-full shrink-0 py-1.5 mb-1 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[9.5px] text-[#EF4444]/85 hover:text-[#EF4444] transition-colors text-left cursor-pointer group"
+          >
+            <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
+              {formatPctSigned(basketGainsSummary.failCycleAvg)}
+            </span>
+            <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
+              →
+            </span>
+          </button>
+
+          <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
+              {coreFailedTickers.map((tk, idx) => (
+                <HarmonicProjectBubble
+                  key={tk}
+                  item={audits[tk]}
+                  isSelected={activeKey === tk}
+                  isPinnedItem={pinnedStageSet.has(tk)}
+                  onSelectTicker={stableSelectTicker}
+                  onTogglePin={stableTogglePin}
+                  seedIndex={idx + 50}
+                  sizePx={displayMetrics.sidebarBubbleSizePx}
+                />
+              ))}
+            </div>
+            {ecosystemFailedTickers.length > 0 && (
+              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
+                  Ecosystem / Overlays ({ecosystemFailedTickers.length})
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
+                  {ecosystemFailedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={pinnedStageSet.has(tk)}
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx + 80}
+                      sizePx={displayMetrics.sidebarBubbleSizePx}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
+      </>
+    ),
+    [
+      displayMetrics.sidebarWidthPx,
+      displayMetrics.sidebarBubbleSizePx,
+      passedTickers.length,
+      failedTickers.length,
+      basketGainsSummary.passCycleAvg,
+      basketGainsSummary.failCycleAvg,
+      corePassedTickers,
+      ecosystemPassedTickers,
+      coreFailedTickers,
+      ecosystemFailedTickers,
+      audits,
+      activeKey,
+      pinnedStageSet,
+      stableSelectTicker,
+      stableTogglePin
+    ]
+  );
+
+  const mobileSidebarsNode = useMemo(
+    () => (
+      <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 md:hidden">
+        <aside
+          data-tutorial-id="passed-sidebar"
+          className="w-full rounded-3xl bg-[#121418]/90 border border-white/[0.06] p-4 flex flex-col items-center"
+        >
+          <div className="w-full flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
+              <span>Passed // E &gt; 0</span>
+            </span>
+            <span className="text-neutral-500">{passedTickers.length} Harmonic</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsGainsModalOpen(true)}
+            title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
+            className="w-full py-1.5 mb-2.5 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[10px] text-[#49EACB]/85 hover:text-[#49EACB] transition-colors text-left cursor-pointer group"
+          >
+            <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
+              {formatPctSigned(basketGainsSummary.passCycleAvg)}
+            </span>
+            <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
+              →
+            </span>
+          </button>
+
+          <div className="w-full space-y-2.5 py-1">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {corePassedTickers.map((tk, idx) => (
+                <HarmonicProjectBubble
+                  key={tk}
+                  item={audits[tk]}
+                  isSelected={activeKey === tk}
+                  isPinnedItem={pinnedStageSet.has(tk)}
+                  onSelectTicker={stableSelectTicker}
+                  onTogglePin={stableTogglePin}
+                  seedIndex={idx}
+                />
+              ))}
+            </div>
+            {ecosystemPassedTickers.length > 0 && (
+              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
+                  Ecosystem / Overlays ({ecosystemPassedTickers.length})
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {ecosystemPassedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={pinnedStageSet.has(tk)}
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx + 30}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <aside
+          data-tutorial-id="failed-sidebar"
+          className="w-full rounded-3xl bg-[#121418]/90 border border-white/[0.06] p-4 flex flex-col items-center"
+        >
+          <div className="w-full flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
+            <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+              <span>Failed // E = 0</span>
+            </span>
+            <span className="text-neutral-500">{failedTickers.length} Flatlined</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setIsGainsModalOpen(true)}
+            title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
+            className="w-full py-1.5 mb-2.5 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[10px] text-[#EF4444]/85 hover:text-[#EF4444] transition-colors text-left cursor-pointer group"
+          >
+            <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
+              {formatPctSigned(basketGainsSummary.failCycleAvg)}
+            </span>
+            <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
+              →
+            </span>
+          </button>
+
+          <div className="w-full space-y-2.5 py-1">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {coreFailedTickers.map((tk, idx) => (
+                <HarmonicProjectBubble
+                  key={tk}
+                  item={audits[tk]}
+                  isSelected={activeKey === tk}
+                  isPinnedItem={pinnedStageSet.has(tk)}
+                  onSelectTicker={stableSelectTicker}
+                  onTogglePin={stableTogglePin}
+                  seedIndex={idx + 50}
+                />
+              ))}
+            </div>
+            {ecosystemFailedTickers.length > 0 && (
+              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
+                  Ecosystem / Overlays ({ecosystemFailedTickers.length})
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {ecosystemFailedTickers.map((tk, idx) => (
+                    <HarmonicProjectBubble
+                      key={tk}
+                      item={audits[tk]}
+                      isSelected={activeKey === tk}
+                      isPinnedItem={pinnedStageSet.has(tk)}
+                      onSelectTicker={stableSelectTicker}
+                      onTogglePin={stableTogglePin}
+                      seedIndex={idx + 80}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+    ),
+    [
+      passedTickers.length,
+      failedTickers.length,
+      basketGainsSummary.passCycleAvg,
+      basketGainsSummary.failCycleAvg,
+      corePassedTickers,
+      ecosystemPassedTickers,
+      coreFailedTickers,
+      ecosystemFailedTickers,
+      audits,
+      activeKey,
+      pinnedStageSet,
+      stableSelectTicker,
+      stableTogglePin
+    ]
+  );
+
   const stageSize = 440;
   const centerCoord = stageSize / 2;
   const orbitRadius = 152;
@@ -3454,9 +3877,8 @@ function ThermodynamicAuditApp() {
           }
         }
         .bg-field-pulse {
-          animation: bgFieldPulse var(--bg-pulse-dur, 4.4s) ease-in-out infinite;
+          opacity: 0.72;
           backface-visibility: hidden;
-          will-change: transform, opacity;
         }
         .bg-core-breath {
           transform: translate3d(-50%, -50%, 0);
@@ -3468,7 +3890,6 @@ function ThermodynamicAuditApp() {
           transform: translate3d(-50%, -50%, 0);
           animation: bgHaloWave var(--bg-pulse-dur, 4.4s) cubic-bezier(0.22, 1, 0.36, 1) infinite;
           backface-visibility: hidden;
-          will-change: transform, opacity;
         }
         @keyframes geniusVortexSpin {
           0% {
@@ -3520,6 +3941,7 @@ function ThermodynamicAuditApp() {
         .bg-anim-paused .bg-field-pulse,
         .bg-anim-paused .bg-core-breath,
         .bg-anim-paused .bg-halo-wave,
+        .bg-halo-wave.bg-anim-paused,
         .bg-anim-paused .genius-vortex-spin,
         .bg-anim-paused .genius-math-float,
         .genius-vortex-spin.bg-anim-paused,
@@ -3615,7 +4037,9 @@ function ThermodynamicAuditApp() {
                   }}
                 />
                 <div
-                  className="bg-halo-wave absolute left-1/2 top-1/2 w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full"
+                  className={`bg-halo-wave absolute left-1/2 top-1/2 w-[620px] h-[620px] sm:w-[900px] sm:h-[900px] rounded-full ${
+                    !isAuditing ? 'bg-anim-paused opacity-0' : ''
+                  }`}
                   style={{
                     background: `radial-gradient(circle, rgba(11, 12, 14, 0) 16%, ${accent.secondary}3B 42%, ${accent.primary}14 58%, rgba(11, 12, 14, 0) 72%)`
                   }}
@@ -4121,159 +4545,7 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           2. STATIC LEFT (PASSED // E > 0) & STATIC RIGHT (FAILED // E = 0) COLUMNS
          ===================================================================== */}
-      {!isMobileViewport && (
-        <>
-          <aside
-            data-tutorial-id="passed-sidebar"
-            style={
-              displayMetrics.sidebarWidthPx
-                ? { width: `${displayMetrics.sidebarWidthPx}px` }
-                : undefined
-            }
-            className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
-          >
-            <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
-              <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
-                <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
-                <span>Passed // E &gt; 0</span>
-              </span>
-              <span className="text-neutral-500 hidden xl:inline">{passedTickers.length} Harmonic</span>
-              <span className="text-neutral-500 xl:hidden">{passedTickers.length}</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsGainsModalOpen(true)}
-              title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
-              className="w-full shrink-0 py-1.5 mb-1 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[9.5px] text-[#49EACB]/85 hover:text-[#49EACB] transition-colors text-left cursor-pointer group"
-            >
-              <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
-                {formatPctSigned(basketGainsSummary.passCycleAvg)}
-              </span>
-              <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
-                →
-              </span>
-            </button>
-
-            <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
-                {corePassedTickers.map((tk, idx) => (
-                  <HarmonicProjectBubble
-                    key={tk}
-                    item={audits[tk]}
-                    isSelected={activeKey === tk}
-                    isPinnedItem={
-                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                    }
-                    onSelectTicker={stableSelectTicker}
-                    onTogglePin={stableTogglePin}
-                    seedIndex={idx}
-                    sizePx={displayMetrics.sidebarBubbleSizePx}
-                  />
-                ))}
-              </div>
-              {ecosystemPassedTickers.length > 0 && (
-                <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
-                    Ecosystem / Overlays ({ecosystemPassedTickers.length})
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
-                    {ecosystemPassedTickers.map((tk, idx) => (
-                      <HarmonicProjectBubble
-                        key={tk}
-                        item={audits[tk]}
-                        isSelected={activeKey === tk}
-                        isPinnedItem={
-                          isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                        }
-                        onSelectTicker={stableSelectTicker}
-                        onTogglePin={stableTogglePin}
-                        seedIndex={idx + 30}
-                        sizePx={displayMetrics.sidebarBubbleSizePx}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
-
-          <aside
-            data-tutorial-id="failed-sidebar"
-            style={
-              displayMetrics.sidebarWidthPx
-                ? { width: `${displayMetrics.sidebarWidthPx}px` }
-                : undefined
-            }
-            className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
-          >
-            <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
-              <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
-                <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
-                <span>Failed // E = 0</span>
-              </span>
-              <span className="text-neutral-500 hidden xl:inline">{failedTickers.length} Flatlined</span>
-              <span className="text-neutral-500 xl:hidden">{failedTickers.length}</span>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsGainsModalOpen(true)}
-              title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
-              className="w-full shrink-0 py-1.5 mb-1 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[9.5px] text-[#EF4444]/85 hover:text-[#EF4444] transition-colors text-left cursor-pointer group"
-            >
-              <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
-                {formatPctSigned(basketGainsSummary.failCycleAvg)}
-              </span>
-              <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
-                →
-              </span>
-            </button>
-
-            <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
-                {coreFailedTickers.map((tk, idx) => (
-                  <HarmonicProjectBubble
-                    key={tk}
-                    item={audits[tk]}
-                    isSelected={activeKey === tk}
-                    isPinnedItem={
-                      isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                    }
-                    onSelectTicker={stableSelectTicker}
-                    onTogglePin={stableTogglePin}
-                    seedIndex={idx + 50}
-                    sizePx={displayMetrics.sidebarBubbleSizePx}
-                  />
-                ))}
-              </div>
-              {ecosystemFailedTickers.length > 0 && (
-                <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                  <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
-                    Ecosystem / Overlays ({ecosystemFailedTickers.length})
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3">
-                    {ecosystemFailedTickers.map((tk, idx) => (
-                      <HarmonicProjectBubble
-                        key={tk}
-                        item={audits[tk]}
-                        isSelected={activeKey === tk}
-                        isPinnedItem={
-                          isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                        }
-                        onSelectTicker={stableSelectTicker}
-                        onTogglePin={stableTogglePin}
-                        seedIndex={idx + 80}
-                        sizePx={displayMetrics.sidebarBubbleSizePx}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
-        </>
-      )}
+      {!isMobileViewport && desktopSidebarsNode}
 
       {/* =====================================================================
           2B. CENTER ARENA (BLANK GOOGLE-STYLE LANDING, SINGLE SPHERE, OR 2–4 CONSTELLATIONS)
@@ -5095,7 +5367,7 @@ function ThermodynamicAuditApp() {
                       setIsArenaHovered(false);
                       setHoveredInvId(null);
                     }}
-                    className="relative flex items-center justify-center select-none"
+                    className="relative shrink-0 flex items-center justify-center select-none"
                     style={{
                       width: `${stageSize}px`,
                       height: `${stageSize}px`,
@@ -5272,7 +5544,7 @@ function ThermodynamicAuditApp() {
 
               {isScanningPulse && (
                 <div
-                  className="animate-scan-pulse absolute w-48 h-48 rounded-full pointer-events-none"
+                  className="animate-scan-pulse absolute inset-0 m-auto w-48 h-48 rounded-full pointer-events-none"
                   style={{
                     border: `2px solid ${accent.primary}`
                   }}
@@ -5370,7 +5642,7 @@ function ThermodynamicAuditApp() {
                   if (!isAuditing && hasActiveAudit && activeKey) togglePinTicker(activeKey);
                 }}
                 aria-label="Toggle Pin 6-Invariant Orbital Breakdown"
-                className={`spring-orbit relative z-[25] rounded-full flex flex-col items-center justify-center text-center cursor-pointer focus:outline-none ${
+                className={`spring-orbit absolute inset-0 m-auto z-[25] rounded-full flex flex-col items-center justify-center text-center cursor-pointer focus:outline-none ${
                   isAuditing ? 'bg-[#121418] overflow-hidden' : 'bg-transparent overflow-visible'
                 }`}
                 style={{
@@ -5862,143 +6134,7 @@ function ThermodynamicAuditApp() {
         )}
 
         {/* Mobile-Only (< 768px) Pass / Fail Lists */}
-        {isMobileViewport && (
-          <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 md:hidden">
-            <aside
-              data-tutorial-id="passed-sidebar"
-              className="w-full rounded-3xl bg-[#121418]/90 border border-white/[0.06] p-4 flex flex-col items-center"
-            >
-              <div className="w-full flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
-                <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
-                  <span>Passed // E &gt; 0</span>
-                </span>
-                <span className="text-neutral-500">{passedTickers.length} Harmonic</span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsGainsModalOpen(true)}
-                title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
-                className="w-full py-1.5 mb-2.5 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[10px] text-[#49EACB]/85 hover:text-[#49EACB] transition-colors text-left cursor-pointer group"
-              >
-                <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
-                  {formatPctSigned(basketGainsSummary.passCycleAvg)}
-                </span>
-                <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
-                  →
-                </span>
-              </button>
-
-              <div className="w-full space-y-2.5 py-1">
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  {corePassedTickers.map((tk, idx) => (
-                    <HarmonicProjectBubble
-                      key={tk}
-                      item={audits[tk]}
-                      isSelected={activeKey === tk}
-                      isPinnedItem={
-                        isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                      }
-                      onSelectTicker={stableSelectTicker}
-                      onTogglePin={stableTogglePin}
-                      seedIndex={idx}
-                    />
-                  ))}
-                </div>
-                {ecosystemPassedTickers.length > 0 && (
-                  <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                    <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
-                      Ecosystem / Overlays ({ecosystemPassedTickers.length})
-                    </div>
-                    <div className="flex flex-wrap items-center justify-center gap-3">
-                      {ecosystemPassedTickers.map((tk, idx) => (
-                        <HarmonicProjectBubble
-                          key={tk}
-                          item={audits[tk]}
-                          isSelected={activeKey === tk}
-                          isPinnedItem={
-                            isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                          }
-                          onSelectTicker={stableSelectTicker}
-                          onTogglePin={stableTogglePin}
-                          seedIndex={idx + 30}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
-
-            <aside
-              data-tutorial-id="failed-sidebar"
-              className="w-full rounded-3xl bg-[#121418]/90 border border-white/[0.06] p-4 flex flex-col items-center"
-            >
-              <div className="w-full flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
-                <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
-                  <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
-                  <span>Failed // E = 0</span>
-                </span>
-                <span className="text-neutral-500">{failedTickers.length} Flatlined</span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setIsGainsModalOpen(true)}
-                title="Open Live Thermodynamic Gains & Cohort Divergence Chart"
-                className="w-full py-1.5 mb-2.5 border-b border-white/[0.05] flex items-center justify-between gap-1 font-mono text-[10px] text-[#EF4444]/85 hover:text-[#EF4444] transition-colors text-left cursor-pointer group"
-              >
-                <span className="truncate group-hover:underline underline-offset-2 font-semibold tabular-nums">
-                  {formatPctSigned(basketGainsSummary.failCycleAvg)}
-                </span>
-                <span className="shrink-0 opacity-75 group-hover:translate-x-0.5 transition-transform">
-                  →
-                </span>
-              </button>
-
-              <div className="w-full space-y-2.5 py-1">
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  {coreFailedTickers.map((tk, idx) => (
-                    <HarmonicProjectBubble
-                      key={tk}
-                      item={audits[tk]}
-                      isSelected={activeKey === tk}
-                      isPinnedItem={
-                        isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                      }
-                      onSelectTicker={stableSelectTicker}
-                      onTogglePin={stableTogglePin}
-                      seedIndex={idx + 50}
-                    />
-                  ))}
-                </div>
-                {ecosystemFailedTickers.length > 0 && (
-                  <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                    <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
-                      Ecosystem / Overlays ({ecosystemFailedTickers.length})
-                    </div>
-                    <div className="flex flex-wrap items-center justify-center gap-3">
-                      {ecosystemFailedTickers.map((tk, idx) => (
-                        <HarmonicProjectBubble
-                          key={tk}
-                          item={audits[tk]}
-                          isSelected={activeKey === tk}
-                          isPinnedItem={
-                            isMultiStage ? stageTickers.includes(tk) : validPinnedKeys.includes(tk)
-                          }
-                          onSelectTicker={stableSelectTicker}
-                          onTogglePin={stableTogglePin}
-                          seedIndex={idx + 80}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </aside>
-          </div>
-        )}
+        {isMobileViewport && mobileSidebarsNode}
       </main>
 
       {/* =====================================================================
@@ -6666,7 +6802,7 @@ function ThermodynamicAuditApp() {
 
               {(() => {
                 const prov = getAuditProvenance(currentAudit, {
-                  preloadedTickers: new Set(Object.keys(PRELOADED_AUDITS)),
+                  preloadedTickers: PRELOADED_TICKER_SET,
                   isSandbox: sandboxTickerSet.has(currentAudit.ticker)
                 });
                 const revision = getAuditRevisionAnalysis(currentAudit, prov.isDeterministicReference);
@@ -6823,11 +6959,13 @@ function ThermodynamicAuditApp() {
               )}
 
               <div ref={simAnchorRef}>
-                <WartimeSpliceSimulator
-                  activeAudit={currentAudit}
-                  kasAudit={PRELOADED_AUDITS.KAS}
-                  accent={accent}
-                />
+                <Suspense fallback={null}>
+                  <WartimeSpliceSimulator
+                    activeAudit={currentAudit}
+                    kasAudit={PRELOADED_AUDITS.KAS}
+                    accent={accent}
+                  />
+                </Suspense>
               </div>
             </div>
 
@@ -7463,22 +7601,24 @@ function ThermodynamicAuditApp() {
           7. LIVE THERMODYNAMIC GAINS & COHORT DIVERGENCE MODAL
          ===================================================================== */}
       {isGainsModalOpen && (
-        <ThermodynamicGainsModal
-          onClose={() => setIsGainsModalOpen(false)}
-          auditsMap={audits}
-          onSelectOrAuditTicker={(tk) => {
-            setIsGainsModalOpen(false);
-            if (audits[tk]) {
-              selectCachedAudit(tk);
-            } else if (!strictCreditLock && !isAuditing) {
-              performLiveGroundedAudit(tk, null);
-            } else {
-              setSearchInput(tk);
-            }
-          }}
-          onCopyReport={copyTextToClipboard}
-          copiedTarget={copiedTarget}
-        />
+        <Suspense fallback={null}>
+          <ThermodynamicGainsModal
+            onClose={() => setIsGainsModalOpen(false)}
+            auditsMap={audits}
+            onSelectOrAuditTicker={(tk) => {
+              setIsGainsModalOpen(false);
+              if (audits[tk]) {
+                selectCachedAudit(tk);
+              } else if (!strictCreditLock && !isAuditing) {
+                performLiveGroundedAudit(tk, null);
+              } else {
+                setSearchInput(tk);
+              }
+            }}
+            onCopyReport={copyTextToClipboard}
+            copiedTarget={copiedTarget}
+          />
+        </Suspense>
       )}
 
       {/* =====================================================================
@@ -7697,15 +7837,19 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           9. GENESIS THESIS EASTER EGG MODAL (5-SECOND TRUTH DOT HOLD)
          ===================================================================== */}
-      <GenesisThesisModal
-        isOpen={isGenesisModalOpen}
-        onClose={() => setIsGenesisModalOpen(false)}
-        accent={accent}
-        isGeniusMode={isGeniusMode}
-        onSetGeniusMode={setIsGeniusMode}
-        onCopyFullThesis={(fullText) => copyTextToClipboard(fullText, 'genesis-thesis')}
-        copiedTarget={copiedTarget}
-      />
+      {isGenesisModalOpen && (
+        <Suspense fallback={null}>
+          <GenesisThesisModal
+            isOpen={isGenesisModalOpen}
+            onClose={() => setIsGenesisModalOpen(false)}
+            accent={accent}
+            isGeniusMode={isGeniusMode}
+            onSetGeniusMode={setIsGeniusMode}
+            onCopyFullThesis={(fullText) => copyTextToClipboard(fullText, 'genesis-thesis')}
+            copiedTarget={copiedTarget}
+          />
+        </Suspense>
+      )}
 
       {/* =====================================================================
           10. INTERACTIVE INTRODUCTORY TUTORIAL OVERLAY
