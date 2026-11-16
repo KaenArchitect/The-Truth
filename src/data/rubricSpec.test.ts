@@ -595,5 +595,46 @@ test('buildCanonicalGeniusParagraphs and normalizeAuditPayload deduplicate Secre
     (normalized.geniusParagraphs![1].match(/At the second physical invariant/gi) || []).length,
     1
   );
+
+  // When pulled using the user's Secret_Genius_paragr* template, prose is preserved verbatim without injecting fallback prefixes/tails
+  const secretStyledRaw = {
+    ticker: 'KAS',
+    name: 'Kaspa',
+    consensusFamily: 'BLOCKDAG_POW',
+    architecture: 'GHOSTDAG BlockDAG',
+    conclusion:
+      'CUSTOM SECRET CONCLUSION STRUCTURE FOR $KAS: Empirical verification across all six physical invariants yields 6.00 / 6.00 (Grade A+).',
+    invariants: canonicalInvs.map((inv, idx) => ({
+      ...inv,
+      geniusParagraph: `CUSTOM SECRET TEMPLATE SECTION 0${idx + 1}: Verbatim lexicon wording preserved cleanly.`
+    }))
+  };
+  const secretNormalized = normalizeAuditPayload(
+    secretStyledRaw,
+    'KAS',
+    'KAS',
+    null,
+    [],
+    null,
+    false,
+    { preserveSecretGeniusProse: true }
+  );
+  assert.equal(secretNormalized.usesSecretTemplate, true);
+  assert.equal(
+    secretNormalized.geniusParagraphs?.[0],
+    'CUSTOM SECRET TEMPLATE SECTION 01: Verbatim lexicon wording preserved cleanly.'
+  );
+  assert.equal(
+    secretNormalized.geniusParagraphs?.[1],
+    'CUSTOM SECRET TEMPLATE SECTION 02: Verbatim lexicon wording preserved cleanly.'
+  );
+  assert.equal(
+    secretNormalized.geniusParagraphs?.[4],
+    'CUSTOM SECRET TEMPLATE SECTION 05: Verbatim lexicon wording preserved cleanly. CUSTOM SECRET TEMPLATE SECTION 06: Verbatim lexicon wording preserved cleanly.'
+  );
+  assert.equal(
+    secretNormalized.geniusParagraphs?.[5],
+    'CUSTOM SECRET CONCLUSION STRUCTURE FOR $KAS: Empirical verification across all six physical invariants yields 6.00 / 6.00 (Grade A+).'
+  );
 });
 

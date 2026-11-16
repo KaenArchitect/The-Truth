@@ -54,6 +54,7 @@ export interface AuditData {
   originalAuthorUid?: string;
   archivedByUid?: string;
   isUpperLayerOverlayOrChannel?: boolean;
+  usesSecretTemplate?: boolean;
 }
 
 export interface InvariantLogEntry {
@@ -1081,7 +1082,8 @@ export function sanitizeAuditData(auditObj: AuditData): AuditData {
     archivedAtLabel: cleanArchivedLabel || undefined,
     scoreDelta: cleanDelta,
     ...(cleanFreshSources ? { freshSources: cleanFreshSources } : {}),
-    ...(cleanSources ? { sources: cleanSources } : {})
+    ...(cleanSources ? { sources: cleanSources } : {}),
+    ...(auditObj.usesSecretTemplate === true ? { usesSecretTemplate: true } : {})
   };
 }
 
@@ -1732,7 +1734,8 @@ export function normalizeAuditPayload(
   existingBaseline: AuditData | null,
   sources: GroundingSource[] = [],
   previousScore: number | null = null,
-  hasPreloadedBase = false
+  hasPreloadedBase = false,
+  options: { preserveSecretGeniusProse?: boolean } = {}
 ): AuditData {
   const invariantsInput = Array.isArray(parsed.invariants) ? parsed.invariants : [];
   const rawCostFloor = Math.max(0, Math.min(1, Number(invariantsInput[1]?.score) || 0));
@@ -1945,16 +1948,19 @@ export function normalizeAuditPayload(
       ? Number((exactSum - previousScore).toFixed(2))
       : null;
 
-  const refreshedGeniusParagraphs = buildCanonicalGeniusParagraphs({
-    ticker: cleanTicker,
-    name: resolvedName,
-    architecture: resolvedArchitecture,
-    certainty: resolvedCertainty,
-    totalScore: exactSum,
-    grade: derivedGrade,
-    conclusion: resolvedConclusion,
-    invariants: cleanInvariants
-  });
+  const refreshedGeniusParagraphs = buildCanonicalGeniusParagraphs(
+    {
+      ticker: cleanTicker,
+      name: resolvedName,
+      architecture: resolvedArchitecture,
+      certainty: resolvedCertainty,
+      totalScore: exactSum,
+      grade: derivedGrade,
+      conclusion: resolvedConclusion,
+      invariants: cleanInvariants
+    },
+    options
+  );
 
   return {
     ticker: cleanTicker,
@@ -1977,7 +1983,8 @@ export function normalizeAuditPayload(
     queryAliases: Array.from(
       new Set([cleanTicker, normalizedQuery, resolvedName.toUpperCase().replace(/[^A-Z0-9]/g, '')])
     ).filter(Boolean),
-    ...(isOverlay ? { isUpperLayerOverlayOrChannel: true } : {})
+    ...(isOverlay ? { isUpperLayerOverlayOrChannel: true } : {}),
+    ...(options.preserveSecretGeniusProse ? { usesSecretTemplate: true } : {})
   };
 }
 
@@ -2000,13 +2007,27 @@ export function buildCanonicalSingleInvariantEssayParagraph(
     name: string;
     architecture: string;
     invariants: InvariantData[];
+    usesSecretTemplate?: boolean;
   },
-  invIdx: number
+  invIdx: number,
+  options: { preserveSecretGeniusProse?: boolean } = {}
 ): string {
   const invs = auditObj.invariants || [];
   const name = auditObj.name || auditObj.ticker || 'Asset';
   const ticker = String(auditObj.ticker || '').toUpperCase();
   const arch = auditObj.architecture || 'Audited Consensus Architecture';
+  const preserveSecret = Boolean(
+    options.preserveSecretGeniusProse || auditObj.usesSecretTemplate
+  );
+
+  if (preserveSecret) {
+    if (invIdx >= 0 && invIdx <= 3) {
+      return stripTrailingDash(invs[invIdx]?.geniusParagraph || invs[invIdx]?.paragraph || '');
+    }
+    const p5 = stripTrailingDash(invs[4]?.geniusParagraph || invs[4]?.paragraph || '');
+    const p6 = stripTrailingDash(invs[5]?.geniusParagraph || invs[5]?.paragraph || '');
+    return [p5, p6].filter(Boolean).join(' ').trim();
+  }
 
   if (invIdx === 0) {
     const inv = invs[0];
@@ -2086,16 +2107,20 @@ export function buildCanonicalSingleInvariantEssayParagraph(
   return `${p5Formatted} ${p6}${contrastTail}`.trim();
 }
 
-export function buildCanonicalGeniusParagraphs(auditObj: {
-  ticker: string;
-  name: string;
-  architecture: string;
-  certainty?: string;
-  totalScore?: number;
-  grade?: string;
-  conclusion?: string;
-  invariants: InvariantData[];
-}): string[] {
+export function buildCanonicalGeniusParagraphs(
+  auditObj: {
+    ticker: string;
+    name: string;
+    architecture: string;
+    certainty?: string;
+    totalScore?: number;
+    grade?: string;
+    conclusion?: string;
+    invariants: InvariantData[];
+    usesSecretTemplate?: boolean;
+  },
+  options: { preserveSecretGeniusProse?: boolean } = {}
+): string[] {
   const invs = auditObj.invariants || [];
   const allReceipts = invs
     .flatMap((i) => i.receipts || [])
@@ -2103,22 +2128,28 @@ export function buildCanonicalGeniusParagraphs(auditObj: {
     .join(', ');
   const conclusionText = stripTrailingDash(auditObj.conclusion || '');
   const certainty = String(auditObj.certainty || 'HIGH CERTAINTY').toUpperCase();
+  const preserveSecret = Boolean(
+    options.preserveSecretGeniusProse || auditObj.usesSecretTemplate
+  );
   const hasGradeIntro = /^Evaluating these findings through the GRADE evidence certainty framework/i.test(
     conclusionText
   );
 
-  const paragraph6 = hasGradeIntro
-    ? conclusionText
-    : `Evaluating these findings through the GRADE evidence certainty framework yields a ${certainty} rating, as every architectural metric—including ${
-        allReceipts || 'verified consensus constants'
-      }—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${conclusionText}`.trim();
+  const paragraph6 =
+    preserveSecret && conclusionText.length > 0
+      ? conclusionText
+      : hasGradeIntro
+      ? conclusionText
+      : `Evaluating these findings through the GRADE evidence certainty framework yields a ${certainty} rating, as every architectural metric—including ${
+          allReceipts || 'verified consensus constants'
+        }—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${conclusionText}`.trim();
 
   return [
-    buildCanonicalSingleInvariantEssayParagraph(auditObj, 0),
-    buildCanonicalSingleInvariantEssayParagraph(auditObj, 1),
-    buildCanonicalSingleInvariantEssayParagraph(auditObj, 2),
-    buildCanonicalSingleInvariantEssayParagraph(auditObj, 3),
-    buildCanonicalSingleInvariantEssayParagraph(auditObj, 4),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 0, options),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 1, options),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 2, options),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 3, options),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 4, options),
     paragraph6
   ];
 }

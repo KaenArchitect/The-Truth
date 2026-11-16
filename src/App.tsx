@@ -2336,19 +2336,23 @@ function ThermodynamicAuditApp() {
             ticker: targetAudit.ticker,
             name: targetAudit.name,
             architecture: targetAudit.architecture,
-            invariants: nextInvariants
+            invariants: nextInvariants,
+            usesSecretTemplate: targetAudit.usesSecretTemplate
           },
-          invIdx
+          invIdx,
+          { preserveSecretGeniusProse: Boolean(targetAudit.usesSecretTemplate) }
         );
       }
       if (Math.abs(nextTotal - prevTotal) > 0.001) {
-        baseParas[5] = `Evaluating these findings through the GRADE evidence certainty framework yields a ${
-          targetAudit.certainty || 'HIGH CERTAINTY'
-        } rating across all six physical invariants (${nextInvariants
-          .map((i) => `${i.id}: ${formatScore(i.score)}`)
-          .join(', ')}), resulting in a recalibrated score of ${formatScore(
-          nextTotal
-        )} out of 6.00 and a compliance grade of ${nextGrade}.`;
+        baseParas[5] = targetAudit.usesSecretTemplate
+          ? `${baseParas[5]} (Recalibrated total: ${formatScore(nextTotal)} / 6.00 — Grade ${nextGrade}.)`
+          : `Evaluating these findings through the GRADE evidence certainty framework yields a ${
+              targetAudit.certainty || 'HIGH CERTAINTY'
+            } rating across all six physical invariants (${nextInvariants
+              .map((i) => `${i.id}: ${formatScore(i.score)}`)
+              .join(', ')}), resulting in a recalibrated score of ${formatScore(
+              nextTotal
+            )} out of 6.00 and a compliance grade of ${nextGrade}.`;
       }
     }
 

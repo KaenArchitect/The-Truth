@@ -4,13 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { GoogleGenAI, ThinkingLevel, type GenerateContentResponse } from '@google/genai';
 import {
-  GEMINI_SYSTEM_PROMPT,
+  buildGeminiSystemPrompt,
   GEMINI_SCHEMA,
   SINGLE_INVARIANT_SCHEMA,
   CHALLENGE_INVARIANT_SCHEMA
 } from './src/server/geminiSchemas.ts';
 import { PRELOADED_AUDITS } from './src/data/preloadedAudits.ts';
-import { buildSecretGeniusInvariantPromptHint } from './src/data/genesisThesisData.ts';
+import {
+  buildSingleInvariantSecretGeniusDirective,
+  resolveSecretGeniusTemplateFromEnv
+} from './src/server/secretGeniusTemplate.ts';
 import {
   ALIAS_MAP,
   GRADING_RUBRIC_SPEC,
@@ -580,8 +583,16 @@ ${fiatGuidance}- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic T
 - Strictly obey the project-agnostic quantitative rubric brackets in your system instructions!
 - MANDATORY LENGTH & FORENSIC RIGOR FOR ALL 6 INVARIANTS ("01" through "06"):
   * "paragraph": Concise, clear 55–75 word Normie Mode explanation.
-  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph strictly following the Secret Origin Thesis Paragraph Template in your system instructions (exact canonical opening cadence, physics laws/equations, and vocabulary for each invariant 01–06; never add generic AI intros; for non-KAS assets, conclude Invariant 06 with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0, and NEVER self-contrast $KAS), citing exact primary institutional/codebase receipts, statutory/config constants, supply/tax/expansion numbers, mathematical consensus/retarget/quorum/clearing formulas, partition + freeze/resplice behavior, and dated historical incidents/postmortems (ending with a simple dash "-").
-  * "conclusion": Comprehensive 130–180 word GRADE Evidence Certainty synthesis opening with the canonical CONCLUSION cadence ("Evaluating these findings through the GRADE evidence certainty framework yields a <CERTAINTY> rating..."), enumerating key codebase/institutional receipts, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
+  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph strictly following the ${
+    resolveSecretGeniusTemplateFromEnv(process.env)
+      ? 'AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON in your system instructions word-for-word in structure, opening cadence, sentence sequence, and vocabulary—do NOT drift from that Secret template or lexicon'
+      : 'Secret Origin Thesis Paragraph Template in your system instructions (exact canonical opening cadence, physics laws/equations, and vocabulary for each invariant 01–06; never add generic AI intros; for non-KAS assets, conclude Invariant 06 with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0, and NEVER self-contrast $KAS)'
+  }, citing exact primary institutional/codebase receipts, statutory/config constants, supply/tax/expansion numbers, mathematical consensus/retarget/quorum/clearing formulas, partition + freeze/resplice behavior, and dated historical incidents/postmortems (ending with a simple dash "-").
+  * "conclusion": Comprehensive 130–180 word GRADE Evidence Certainty synthesis following the ${
+    resolveSecretGeniusTemplateFromEnv(process.env)
+      ? 'AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON in your system instructions'
+      : 'canonical CONCLUSION cadence ("Evaluating these findings through the GRADE evidence certainty framework yields a <CERTAINTY> rating...")'
+  }, enumerating key codebase/institutional receipts, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
 Examine in exact order (01 through 06) and put a simple dash "-" at the end of each invariant's paragraph/geniusParagraph and as the last element of each invariant's receipts array ("-") to separate the invariants:
 1. Existential Sovereignty & Entity Decoupling -
 2. Thermodynamic Cost Floor E > 0 -
@@ -986,6 +997,9 @@ async function createApp(): Promise<express.Express> {
         isFiatQuery
       );
 
+      const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env);
+      const hasSecretTemplate = Boolean(resolveSecretGeniusTemplateFromEnv(process.env));
+
       let parsed: RawGeminiAuditPayload | null = null;
       let accumulatedJson = '';
 
@@ -995,7 +1009,7 @@ async function createApp(): Promise<express.Express> {
             model: 'gemini-4-hydrogen',
             contents: userPrompt,
             config: {
-              systemInstruction: GEMINI_SYSTEM_PROMPT,
+              systemInstruction: runtimeSystemInstruction,
               responseMimeType: 'application/json',
               responseSchema: GEMINI_SCHEMA,
               thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
@@ -1028,7 +1042,7 @@ async function createApp(): Promise<express.Express> {
             model: 'gemini-4-hydrogen',
             contents: userPrompt,
             config: {
-              systemInstruction: GEMINI_SYSTEM_PROMPT,
+              systemInstruction: runtimeSystemInstruction,
               responseMimeType: 'application/json',
               responseSchema: GEMINI_SCHEMA,
               thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
@@ -1057,7 +1071,8 @@ async function createApp(): Promise<express.Express> {
         existingBaseline,
         freshBundle.sources,
         previousScore,
-        Boolean(PRELOADED_AUDITS[cleanTickerGuess])
+        Boolean(PRELOADED_AUDITS[cleanTickerGuess]),
+        { preserveSecretGeniusProse: hasSecretTemplate }
       );
 
       if (!isSandboxRequest) {
@@ -1166,6 +1181,12 @@ async function createApp(): Promise<express.Express> {
 
     const targetInv = targetAudit.invariants[invIdx];
     const rubricSpec = GRADING_RUBRIC_SPEC[invIdx];
+    const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env);
+    const singleInvTemplateDirective = buildSingleInvariantSecretGeniusDirective(
+      targetInv.id,
+      targetAudit.ticker,
+      process.env
+    );
 
     try {
       if (mode === 'REAUDIT') {
@@ -1183,7 +1204,7 @@ Existing Verified Evidence for Invariant ${targetInv.id}:
 CANONICAL PROJECT-AGNOSTIC RUBRIC BRACKETS FOR INVARIANT ${rubricSpec.id} (${rubricSpec.name}):
 ${rubricSpec.brackets.map((b) => `- [${b.range}]: ${b.rule}`).join('\n')}
 
-${buildSecretGeniusInvariantPromptHint(targetInv.id, targetAudit.ticker)}
+${singleInvTemplateDirective}
 
 ${
   freshBundle.intelText
@@ -1192,7 +1213,7 @@ ${
 }
 INSTRUCTIONS:
 1. Grade ONLY Invariant ${targetInv.id} strictly against the rubric brackets above and live active mainnet reality (never credit unactivated proposals as live, and obey M_overlay < M_L1 < 1.0 on overlays and E = 0 => 0.00 on zero-joule networks).
-2. Keep internal reasoning concise so output is never cut off. Return a complete 55–75 word "paragraph" (Normie Mode), a complete 180–230 word "geniusParagraph" opening with the Canonical Opening Cadence and preserving exact Secret Origin Thesis terminology and structure (citing exact repos/constants/dates), up to 4 "receipts", and a complete 2–3 sentence "verdictNote" explaining what fresh intel confirmed or changed.`;
+2. Keep internal reasoning concise so output is never cut off. Return a complete 55–75 word "paragraph" (Normie Mode), a complete 180–230 word "geniusParagraph" matching the Secret template & lexicon above word-for-word in cadence and structure (citing exact repos/constants/dates), up to 4 "receipts", and a complete 2–3 sentence "verdictNote" explaining what fresh intel confirmed or changed.`;
 
         let parsed: Record<string, unknown> | null = null;
         for (let pass = 0; pass < 2; pass++) {
@@ -1206,7 +1227,7 @@ INSTRUCTIONS:
               model: 'gemini-4-hydrogen',
               contents: promptForPass,
               config: {
-                systemInstruction: GEMINI_SYSTEM_PROMPT,
+                systemInstruction: runtimeSystemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: SINGLE_INVARIANT_SCHEMA,
                 thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
@@ -1261,7 +1282,7 @@ CURRENT VERIFIED AUDIT BASELINE FOR INVARIANT ${targetInv.id}:
 CANONICAL PROJECT-AGNOSTIC RUBRIC BRACKETS FOR INVARIANT ${rubricSpec.id} (${rubricSpec.name}):
 ${rubricSpec.brackets.map((b) => `- [${b.range}]: ${b.rule}`).join('\n')}
 
-${buildSecretGeniusInvariantPromptHint(targetInv.id, targetAudit.ticker)}
+${singleInvTemplateDirective}
 
 ${
   freshBundle.intelText
@@ -1271,12 +1292,12 @@ ${
 ADJUDICATION RULES (ZERO SYCOPHANCY — PURE PHYSICS & CODEBASE LAW):
 1. Fact-check the user's claim rigorously. Do NOT cave to marketing hype, unactivated roadmap promises, or category errors (e.g., off-chain 0-Joule signatures do NOT produce M = 1.0; if Invariant 02 Cost Floor E = 0, all non-Cost-Floor invariants MUST stay 0.00; any genesis premine/ICO/VC/dev-tax forces 01 Sovereignty = 0.00; overlays obey M_overlay < M_L1 < 1.0).
 2. ENERGY-ARBITRAGE COUPLING LAW: NEVER claim that genesis distribution (Invariant 01) is decoupled from Thermodynamic Cost Floor (Invariant 02)! Any genesis premine, token pre-allocation, VC/ICO mint, or mandatory protocol developer tax (Invariant 01 = 0.00) injects 0-Joule units into the fungible supply, creating a parasitic energy arbitrage within the Cost Floor where people who put in zero work benefit from and dilute the physical electricity burned by miners—capping Invariant 02 at <= 0.30 (premine/pre-allocation) or <= 0.35 (dev tax) and capping Terminal Grade at <= D+. If a user challenges an inflated Cost Floor (>0.35) on a premined, pre-allocated, or dev-taxed network, ACCEPT the challenge and recalibrate Invariant 02 into 0.15–0.35!
-3. If the user provides genuinely verifiable live mainnet evidence or exposes a real factual/calibration error under the canonical rubric brackets above, set verdict = "ACCEPTED" or "PARTIAL", set scoreChanged = true (or false if only telemetry/text updates), provide the calibrated updatedScore, and update the invariant's paragraph, updatedGeniusParagraph (180–230 words strictly opening with the Canonical Opening Cadence and preserving exact Secret Origin Thesis laws, equations, and vocabulary above), telemetry, quickSummary, and receipts.
+3. If the user provides genuinely verifiable live mainnet evidence or exposes a real factual/calibration error under the canonical rubric brackets above, set verdict = "ACCEPTED" or "PARTIAL", set scoreChanged = true (or false if only telemetry/text updates), provide the calibrated updatedScore, and update the invariant's paragraph, updatedGeniusParagraph (180–230 words strictly preserving the Secret template cadence, structure, and lexicon above), telemetry, quickSummary, and receipts.
 4. If the user's claim fails physics or rubric rules, set verdict = "REJECTED", scoreChanged = false, updatedScore = ${
           targetInv.score
         }, and deliver an uncompromising forensic rebuttal in "rebuttalOrAnalysis" (${
           isGeniusMode
-            ? '140–220 words using the exact Secret Origin Thesis lexicon, physics laws, codebase constants, math, and rubric brackets'
+            ? '140–220 words using the exact Secret template lexicon, physics laws, codebase constants, math, and rubric brackets'
             : '75–120 words in clear, direct Normie-friendly plain English backed by hard facts'
         }).
 5. COMPLETENESS & EFFICIENCY RULE: Keep internal thinking concise so your JSON output NEVER hits the token ceiling or cuts off mid-sentence. Every sentence in "rebuttalOrAnalysis" MUST finish cleanly with terminal punctuation. When verdict = "REJECTED" and scoreChanged = false, pass "" for updatedTelemetry, updatedQuickSummary, updatedParagraph, and updatedGeniusParagraph, and [] for updatedReceipts.`;
@@ -1293,7 +1314,7 @@ ADJUDICATION RULES (ZERO SYCOPHANCY — PURE PHYSICS & CODEBASE LAW):
               model: 'gemini-4-carbon',
               contents: promptForPass,
               config: {
-                systemInstruction: GEMINI_SYSTEM_PROMPT,
+                systemInstruction: runtimeSystemInstruction,
                 responseMimeType: 'application/json',
                 responseSchema: CHALLENGE_INVARIANT_SCHEMA,
                 thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
@@ -1333,7 +1354,7 @@ EXISTING AUDIT CONTEXT:
 - Verified Receipts: ${(targetInv.receipts || []).join(' • ')}
 - Rubric Brackets: ${rubricSpec.brackets.map((b) => `[${b.range}] ${b.rule}`).join(' | ')}
 
-${isGeniusMode ? `${buildSecretGeniusInvariantPromptHint(targetInv.id, targetAudit.ticker)}\n\n` : ''}SPECIFIC USER BREAKDOWN REQUEST:
+${isGeniusMode ? `${singleInvTemplateDirective}\n\n` : ''}SPECIFIC USER BREAKDOWN REQUEST:
 ${
   userInput
     ? `"${userInput}"`
@@ -1345,7 +1366,7 @@ ${
 OUTPUT STYLE (${isGeniusMode ? 'GENIUS FORENSIC MODE' : 'NORMIE PLAIN-ENGLISH MODE'}):
 ${
   isGeniusMode
-    ? 'Write 2–3 dense, uncompromising forensic paragraphs (180–280 words total) anchored directly in the Secret Origin Thesis Paragraph Template laws, equations, canonical voice, and exact lexicon above—citing exact repository files, config parameters, equations, attack vectors, and physical trade-offs without fluff or markdown headers. Keep internal thinking concise so every paragraph finishes cleanly.'
+    ? 'Write 2–3 dense, uncompromising forensic paragraphs (180–280 words total) anchored directly in the Secret template, structure, canonical voice, and exact lexicon above—citing exact repository files, config parameters, equations, attack vectors, and physical trade-offs without fluff or markdown headers. Keep internal thinking concise so every paragraph finishes cleanly.'
     : 'Write 2 clear, vivid, plain-English paragraphs (110–170 words total) using intuitive real-world analogies and concrete facts so anyone can immediately grasp the exact engineering reality without jargon. Keep internal thinking concise so every paragraph finishes cleanly.'
 }`;
 
@@ -1362,7 +1383,7 @@ ${
             contents: promptForPass,
             config: {
               systemInstruction: isGeniusMode
-                ? 'You are "The Truth — thermodynamic audit". Deliver crystal-clear, technically unimpeachable Genius Mode single-invariant breakdowns anchored verbatim in the Secret Origin Thesis laws, equations, and lexicon, Nakamoto Proof-of-Work, Landauer’s Principle, and verified codebase mechanics. Output clean plain-text paragraphs only, ensuring every sentence finishes completely.'
+                ? 'You are "The Truth — thermodynamic audit". Deliver crystal-clear, technically unimpeachable Genius Mode single-invariant breakdowns anchored verbatim in the provided Secret paragraph template and lexicon, Nakamoto Proof-of-Work, Landauer’s Principle, and verified codebase mechanics. Output clean plain-text paragraphs only, ensuring every sentence finishes completely.'
                 : 'You are "The Truth — thermodynamic audit". Deliver crystal-clear, technically unimpeachable single-invariant breakdowns anchored in Nakamoto Proof-of-Work, Landauer’s Principle, and verified codebase mechanics. Output clean plain-text paragraphs only, ensuring every sentence finishes completely.',
               thinkingConfig: { thinkingLevel: ThinkingLevel.MEDIUM },
               maxOutputTokens: pass === 0 ? 24576 : 32768

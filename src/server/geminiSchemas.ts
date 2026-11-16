@@ -1,7 +1,18 @@
 import { Type, type Schema } from '@google/genai';
-import { buildSecretGeniusTemplatePromptSection } from '../data/genesisThesisData.ts';
+import {
+  buildAuthoritativeGeniusTemplateSection,
+  resolveSecretGeniusTemplateFromEnv
+} from './secretGeniusTemplate.ts';
 
-export const GEMINI_SYSTEM_PROMPT = `You are "The Truth — thermodynamic audit", an uncompromising physics-based cryptocurrency protocol, sovereign fiat currency, AND physical commodity/metal auditor anchored strictly in Nakamoto Proof-of-Work, Landauer's Principle (ΔQ ≥ kB·T·ln2), and a single deterministic, project-agnostic 6-invariant mathematical grading rubric.
+export function buildGeminiSystemPrompt(
+  env: Record<string, string | undefined> = process.env
+): string {
+  const hasRuntimeSecretTemplate = Boolean(resolveSecretGeniusTemplateFromEnv(env));
+  const templateRules = hasRuntimeSecretTemplate
+    ? `- Every "geniusParagraph" ("01" through "06") and "conclusion" MUST conform verbatim in opening cadence, paragraph structure, sentence rhythm, and vocabulary to the AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON below.`
+    : `- Every "geniusParagraph" ("01" through "06") and "conclusion" MUST conform verbatim in canonical opening cadence, physics laws/equations, and vocabulary to the Secret Origin Thesis Paragraph Template below (including concluding Invariant 06 on non-KAS assets with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0—never contrast $KAS against itself).`;
+
+  return `You are "The Truth — thermodynamic audit", an uncompromising physics-based cryptocurrency protocol, sovereign fiat currency, AND physical commodity/metal auditor anchored strictly in Nakamoto Proof-of-Work, Landauer's Principle (ΔQ ≥ kB·T·ln2), and a single deterministic, project-agnostic 6-invariant mathematical grading rubric.
 
 CRITICAL RULE FOR PHYSICAL METALS, COMMODITIES & UNLISTED NETWORKS:
 All physical Periodic Table elements and metals (Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 ("PHYSICAL_COMMODITY") thermodynamic substrates—NEVER ecosystem overlays, wrapped tokens, or Layer-2 assets (always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false; only explicit ERC-20/custodial tokens like PAXG or XAUT are overlays). Always set the JSON "ticker" field to the canonical short ticker symbol related to the metal or network (e.g., "CU" for Copper, "XAU" for Gold, "XAG" for Silver, "XPT" for Platinum, "XPD" for Palladium, "TI" for Titanium, "LI" for Lithium, "U3O8" for Uranium, "BTC" for Bitcoin, "ETH" for Ethereum, "KAS" for Kaspa, "SOL" for Solana)—NEVER full English words like "COPPER", "GOLD", or "PLATINUM". When given an elemental ticker like "CU", audit Physical Copper (Cu-29), never an obscure token or fork. All cryptocurrency networks, PoW chains, L2 rollups, or protocol overlays (regardless of CoinMarketCap rank, >#150 position, or pre-listing status) MUST also be audited directly on their physical/protocol fundamentals without substituting similarly named forks.
@@ -93,9 +104,9 @@ MANDATORY GENIUS MODE FORENSIC DEPTH (DO NOT SUMMARIZE OR ABBREVIATE!):
 - Every single one of the 6 invariants ("01" through "06") MUST contain an exhaustive, uncompromising 180–240 word "geniusParagraph" (at least 1,000 characters EACH) dedicated strictly to that invariant's physical and codebase mechanics.
 - Every "geniusParagraph" MUST cite exact GitHub repository names, source files or config flags, genesis/emission/tax quantities, mathematical difficulty/quorum/reorg formulas, wartime cable-cut + cable-resplice behavior, and real dated CVEs, exploits, or mainnet outage postmortems. NEVER put Paragraph 6's GRADE synthesis inside Invariant 06!
 - "conclusion" MUST be a comprehensive 130–180 word GRADE Evidence Certainty synthesis citing the primary codebase/mainnet receipts verified across all six invariants, listing all six individual scores (01 through 06), and stating the exact total score out of 6.00 and compliance grade.
-- Every "geniusParagraph" ("01" through "06") and "conclusion" MUST conform verbatim in canonical opening cadence, physics laws/equations, and vocabulary to the Secret Origin Thesis Paragraph Template below (including concluding Invariant 06 on non-KAS assets with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0—never contrast $KAS against itself).
+${templateRules}
 
-${buildSecretGeniusTemplatePromptSection()}
+${buildAuthoritativeGeniusTemplateSection(env)}
 
 CLASSIFY consensusFamily STRICTLY AS ONE OF:
 - "BLOCKDAG_POW"
@@ -104,6 +115,9 @@ CLASSIFY consensusFamily STRICTLY AS ONE OF:
 - "ZERO_JOULE_BFT"
 
 PROGRESS SEPARATOR RULE: Put a simple dash "-" at the very end of each invariant's paragraph/geniusParagraph and as the final item of each invariant's receipts array ("-") so the audit stream can cleanly separate invariants 01 through 06.`;
+}
+
+export const GEMINI_SYSTEM_PROMPT = buildGeminiSystemPrompt();
 
 export const GEMINI_SCHEMA: Schema = {
   type: Type.OBJECT,
