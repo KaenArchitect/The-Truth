@@ -73,7 +73,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     instructions: [
       'Each satellite displays its individual score (0.0 to 1.0) and oscillates at its own thermodynamic amplitude.',
       'Click any satellite bubble to open its codebase receipts, forensic narrative, and 1-invariant Challenge Console.',
-      'Submit counter-evidence or click Fresh 1-Inv Pull inside any modal to challenge or re-verify a single score.'
+      'Submit counter-evidence or click the invariant symbol next to the title inside any modal to challenge or re-verify a single score.'
     ],
     actionLabel: 'Open $KAS Fission',
     actionId: 'load-kas-fission',

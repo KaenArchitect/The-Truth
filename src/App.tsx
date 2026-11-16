@@ -2459,7 +2459,7 @@ function ThermodynamicAuditApp() {
     if (!rawClaim) {
       setSingleInvNotice({
         type: 'warn',
-        text: `Type your counter-evidence, GitHub commit/PR, or technical challenge into the box first — or click "Fresh 1-Inv Pull (#${invId})" for an automatic fresh pull.`
+        text: `Type your counter-evidence, GitHub commit/PR, or technical challenge into the box first — or click the #${invId} symbol next to the title for an automatic fresh pull.`
       });
       return;
     }
@@ -6332,69 +6332,77 @@ function ThermodynamicAuditApp() {
                   const nextInv =
                     currentAudit.invariants[(currentIdx + 1) % currentAudit.invariants.length];
 
+                  const isThisInvPulling =
+                    singleInvBusy?.key === `${currentAudit.ticker}:${activeModalInvariant.id}` &&
+                    singleInvBusy?.mode === 'REAUDIT';
+                  const isPullDisabled = isAuditing || Boolean(singleInvBusy);
+
                   return (
                     <div
                       key={`modal-inv-${currentAudit.ticker}-${activeModalInvariant.id}-${isGeniusMode}`}
                       className="animate-card-fade space-y-4"
                     >
-                      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.07] pb-3.5">
+                      <div className="border-b border-white/[0.07] pb-3.5">
                         <div className="flex items-start gap-2.5 min-w-0">
-                          <div
-                            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
+                          <button
+                            type="button"
+                            data-testid="invariant-symbol-refresh-btn"
+                            disabled={isPullDisabled}
+                            onClick={() => handleSingleInvariantReaudit(activeModalInvariant.id)}
+                            aria-label={`Fresh 1-Inv Pull (#${activeModalInvariant.id})`}
+                            title={
+                              isThisInvPulling
+                                ? `Pulling fresh 1-Inv intel for #${activeModalInvariant.id}...`
+                                : `Fresh 1-Inv Pull (#${activeModalInvariant.id}) — pull fresh Google Search & GitHub intel ONLY for Invariant ${activeModalInvariant.id} (~85% fewer tokens)`
+                            }
+                            className="group relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 cursor-pointer transition-all hover:brightness-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-55 disabled:cursor-not-allowed"
                             style={{
                               backgroundColor: sStyle.bg,
                               border: `1px solid ${sStyle.border}`
                             }}
                           >
-                            <InvIcon className="w-4 h-4" style={{ color: sStyle.color }} />
-                          </div>
-                          <div className="min-w-0">
-                            <h2 className="font-display text-lg sm:text-xl font-bold text-white leading-snug">
-                              {activeModalInvariant.id} // {activeModalInvariant.title}
-                            </h2>
+                            <InvIcon
+                              className={`w-4 h-4 transition-all duration-150 ${
+                                isThisInvPulling
+                                  ? 'opacity-0 scale-75'
+                                  : isPullDisabled
+                                  ? 'opacity-100 scale-100'
+                                  : 'opacity-100 scale-100 group-hover:opacity-0 group-hover:scale-75 group-focus-visible:opacity-0 group-focus-visible:scale-75'
+                              }`}
+                              style={{ color: sStyle.color }}
+                            />
+                            <RefreshCw
+                              className={`w-4 h-4 absolute transition-all duration-150 ${
+                                isThisInvPulling
+                                  ? 'opacity-100 scale-100 animate-spin'
+                                  : isPullDisabled
+                                  ? 'opacity-0 scale-75'
+                                  : 'opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100'
+                              }`}
+                              style={{ color: sStyle.color }}
+                            />
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2.5 sm:gap-3">
+                              <h2 className="font-display text-lg sm:text-xl font-bold text-white leading-snug min-w-0">
+                                {activeModalInvariant.id} // {activeModalInvariant.title}
+                              </h2>
+                              <span
+                                data-testid="invariant-modal-score-badge"
+                                className="px-2 sm:px-3 py-1 rounded-full font-mono text-[10.5px] sm:text-xs font-bold leading-none inline-flex items-center justify-center whitespace-nowrap shrink-0 mt-0.5"
+                                style={{
+                                  backgroundColor: sStyle.bg,
+                                  color: sStyle.color,
+                                  border: `1px solid ${sStyle.border}`
+                                }}
+                              >
+                                {formatScore(activeModalInvariant.score)} / 1.0 {sStyle.status}
+                              </span>
+                            </div>
                             <div className="font-mono text-xs text-neutral-400 mt-0.5">
                               {activeModalInvariant.telemetry}
                             </div>
                           </div>
-                        </div>
-
-                        <div className="w-full sm:w-auto flex flex-nowrap sm:flex-wrap items-center justify-between sm:justify-start gap-1.5 sm:gap-2">
-                          <button
-                            type="button"
-                            disabled={isAuditing || Boolean(singleInvBusy)}
-                            onClick={() => handleSingleInvariantReaudit(activeModalInvariant.id)}
-                            title={`Pull fresh Google Search & GitHub intel ONLY for Invariant ${activeModalInvariant.id} (~85% fewer tokens than full 6-invariant re-audit)`}
-                            className="px-2 sm:px-3 py-1 rounded-full bg-[#0B0C0E] hover:bg-[#171B22] border border-white/10 font-mono text-[10.5px] sm:text-xs font-bold leading-none text-neutral-200 hover:text-white transition inline-flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap disabled:opacity-50"
-                          >
-                            <RefreshCw
-                              className={`w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0 ${
-                                singleInvBusy?.key ===
-                                  `${currentAudit.ticker}:${activeModalInvariant.id}` &&
-                                singleInvBusy?.mode === 'REAUDIT'
-                                  ? 'animate-spin'
-                                  : ''
-                              }`}
-                              style={{ color: accent.primary }}
-                            />
-                            <span>
-                              {singleInvBusy?.key ===
-                                `${currentAudit.ticker}:${activeModalInvariant.id}` &&
-                              singleInvBusy?.mode === 'REAUDIT'
-                                ? 'Pulling 1-Inv Intel...'
-                                : `Fresh 1-Inv Pull (#${activeModalInvariant.id})`}
-                            </span>
-                          </button>
-
-                          <span
-                            className="px-2 sm:px-3 py-1 rounded-full font-mono text-[10.5px] sm:text-xs font-bold leading-none inline-flex items-center justify-center whitespace-nowrap"
-                            style={{
-                              backgroundColor: sStyle.bg,
-                              color: sStyle.color,
-                              border: `1px solid ${sStyle.border}`
-                            }}
-                          >
-                            {formatScore(activeModalInvariant.score)} / 1.0 {sStyle.status}
-                          </span>
                         </div>
                       </div>
 
