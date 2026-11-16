@@ -95,16 +95,13 @@ export function computeDisplayLayoutMetrics({
   const arenaScale = Math.round(rawArenaScale * 100) / 100;
   const stageSizePx = Math.round(BASE_STAGE_SIZE_PX * arenaScale);
 
+  const smoothWidthPinScale = Math.round(((availableCenterWidth - 8) / 770) * 100) / 100;
   const pinMaxScale =
     tier === '2160'
-      ? Math.max(1.68, Math.min(2.05, Math.round(maxWidthScale * 0.9 * 100) / 100))
+      ? Math.max(1.9, Math.min(2.85, smoothWidthPinScale))
       : tier === '1440'
-      ? Math.max(1.32, Math.min(1.62, Math.round(arenaScale * 1.18 * 100) / 100))
-      : w >= 1680
-      ? 1.48
-      : w >= 1480
-      ? 1.18
-      : 1;
+      ? Math.max(1.5, Math.min(2.35, smoothWidthPinScale))
+      : Math.max(1, Math.min(1.82, smoothWidthPinScale));
 
   // Center arena is anchored around 50vh. Position bottom controls cleanly toward the lower band above footer.
   const arenaBottomY = h * 0.5 + stageSizePx / 2;
@@ -135,6 +132,7 @@ export function computeDisplayLayoutMetrics({
 export interface ConstellationScaleInput {
   layoutWidth: number;
   layoutHeight: number;
+  layoutNodeScale?: number;
   wrapWidth: number;
   viewportHeight: number;
   pinMaxScale: number;
@@ -149,6 +147,7 @@ export interface ConstellationScaleInput {
 export function computeConstellationScale({
   layoutWidth,
   layoutHeight,
+  layoutNodeScale = 1,
   wrapWidth,
   viewportHeight,
   pinMaxScale,
@@ -156,19 +155,21 @@ export function computeConstellationScale({
 }: ConstellationScaleInput): number {
   const safeW = Math.max(1, Number(layoutWidth) || 1);
   const safeH = Math.max(1, Number(layoutHeight) || 1);
+  const safeNodeScale = Math.max(0.25, Number(layoutNodeScale) || 1);
   const safeWrap = Math.max(240, Number(wrapWidth) || 240);
   const safeHView = Math.max(480, Number(viewportHeight) || 900);
 
   const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
-  const desktopAvailableHeight = Math.max(380, safeHView - 316);
-  const verticalTwoAvailableHeight = Math.max(480, safeHView - 184);
+  const desktopAvailableHeight = Math.max(380, safeHView - 284);
+  const verticalTwoAvailableHeight = Math.max(460, safeHView - 184);
+  const maxContainerScale = pinMaxScale / safeNodeScale;
   const heightFitScale =
     orientationMode === 'desktop'
       ? Math.max(0.76, desktopAvailableHeight / safeH)
       : orientationMode === 'vertical' && safeH <= 900
       ? Math.max(0.6, verticalTwoAvailableHeight / safeH)
-      : pinMaxScale;
+      : maxContainerScale;
 
-  const rawScale = Math.min(pinMaxScale, widthFitScale, heightFitScale);
+  const rawScale = Math.min(maxContainerScale, widthFitScale, heightFitScale);
   return Math.round(rawScale * 1000) / 1000;
 }

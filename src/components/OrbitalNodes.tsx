@@ -7,7 +7,14 @@ import {
   getHarmonizedScoreStyle,
   type AuditData
 } from '../data/rubricSpec.ts';
-import type { PinOrientationMode } from '../data/constellationOrientation.ts';
+import {
+  getConstellationLayout,
+  type ConstellationClearanceMetrics,
+  type ConstellationFitOptions,
+  type ConstellationLayout,
+  type FourFormationMode,
+  type ThreeFormationMode
+} from '../data/constellationLayout.ts';
 
 export interface WaveLut {
   steps: number;
@@ -580,219 +587,14 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
   );
 });
 
-export type ThreeFormationMode = 'TRIANGLE' | 'SIDE_BY_SIDE';
-export type FourFormationMode = 'RHOMBUS' | 'SQUARE' | 'SIDE_BY_SIDE';
-
-export interface ConstellationLayout {
-  width: number;
-  height: number;
-  nodeScale: number;
-  positions: Array<{ x: number; y: number }>;
-  edges: Array<[number, number]>;
-  diagonals: Array<[number, number]>;
-}
-
-export function getConstellationLayout(
-  count: number,
-  threeMode: ThreeFormationMode = 'TRIANGLE',
-  fourMode: FourFormationMode = 'RHOMBUS',
-  orientationMode: PinOrientationMode | boolean = 'desktop'
-): ConstellationLayout {
-  const mode: PinOrientationMode =
-    typeof orientationMode === 'boolean'
-      ? orientationMode
-        ? 'vertical'
-        : 'desktop'
-      : orientationMode;
-
-  if (mode === 'vertical' && count >= 2) {
-    const width = 440;
-    const topPad = 200;
-    const stepY = 416;
-    const positions = Array.from({ length: count }, (_, idx) => ({
-      x: 220,
-      y: topPad + idx * stepY
-    }));
-    const edges: Array<[number, number]> = Array.from(
-      { length: Math.max(0, count - 1) },
-      (_, idx) => [idx, idx + 1]
-    );
-    return {
-      width,
-      height: topPad * 2 + Math.max(0, count - 1) * stepY,
-      nodeScale: 0.96,
-      positions,
-      edges,
-      diagonals: []
-    };
-  }
-
-  if (mode === 'horizontal' && count >= 2) {
-    if (count === 2) {
-      return {
-        width: 780,
-        height: 385,
-        nodeScale: 0.84,
-        positions: [
-          { x: 195, y: 192 },
-          { x: 585, y: 192 }
-        ],
-        edges: [[0, 1]],
-        diagonals: []
-      };
-    }
-    if (count === 3) {
-      return {
-        width: 1040,
-        height: 350,
-        nodeScale: 0.72,
-        positions: [
-          { x: 175, y: 175 },
-          { x: 520, y: 175 },
-          { x: 865, y: 175 }
-        ],
-        edges: [
-          [0, 1],
-          [1, 2]
-        ],
-        diagonals: []
-      };
-    }
-    return {
-      width: 1140,
-      height: 320,
-      nodeScale: 0.58,
-      positions: [
-        { x: 150, y: 160 },
-        { x: 430, y: 160 },
-        { x: 710, y: 160 },
-        { x: 990, y: 160 }
-      ],
-      edges: [
-        [0, 1],
-        [1, 2],
-        [2, 3]
-      ],
-      diagonals: []
-    };
-  }
-
-  if (count === 2) {
-    return {
-      width: 880,
-      height: 430,
-      nodeScale: 1,
-      positions: [
-        { x: 200, y: 215 },
-        { x: 680, y: 215 }
-      ],
-      edges: [[0, 1]],
-      diagonals: []
-    };
-  }
-
-  if (count === 3) {
-    if (threeMode === 'SIDE_BY_SIDE') {
-      return {
-        width: 1100,
-        height: 372,
-        nodeScale: 0.84,
-        positions: [
-          { x: 170, y: 186 },
-          { x: 550, y: 186 },
-          { x: 930, y: 186 }
-        ],
-        edges: [
-          [0, 1],
-          [1, 2]
-        ],
-        diagonals: []
-      };
-    }
-    return {
-      width: 960,
-      height: 680,
-      nodeScale: 0.75,
-      positions: [
-        { x: 480, y: 175 },
-        { x: 245, y: 505 },
-        { x: 715, y: 505 }
-      ],
-      edges: [
-        [0, 1],
-        [1, 2],
-        [2, 0]
-      ],
-      diagonals: []
-    };
-  }
-
-  if (fourMode === 'SQUARE') {
-    return {
-      width: 960,
-      height: 720,
-      nodeScale: 0.74,
-      positions: [
-        { x: 285, y: 185 },
-        { x: 675, y: 185 },
-        { x: 285, y: 535 },
-        { x: 675, y: 535 }
-      ],
-      edges: [
-        [0, 1],
-        [1, 3],
-        [3, 2],
-        [2, 0]
-      ],
-      diagonals: [
-        [0, 3],
-        [1, 2]
-      ]
-    };
-  }
-
-  if (fourMode === 'SIDE_BY_SIDE') {
-    return {
-      width: 1180,
-      height: 320,
-      nodeScale: 0.65,
-      positions: [
-        { x: 138, y: 160 },
-        { x: 439, y: 160 },
-        { x: 740, y: 160 },
-        { x: 1041, y: 160 }
-      ],
-      edges: [
-        [0, 1],
-        [1, 2],
-        [2, 3]
-      ],
-      diagonals: []
-    };
-  }
-
-  return {
-    width: 1040,
-    height: 770,
-    nodeScale: 0.7,
-    positions: [
-      { x: 520, y: 162 },
-      { x: 210, y: 385 },
-      { x: 830, y: 385 },
-      { x: 520, y: 608 }
-    ],
-    edges: [
-      [0, 1],
-      [1, 3],
-      [3, 2],
-      [2, 0]
-    ],
-    diagonals: [
-      [0, 3],
-      [1, 2]
-    ]
-  };
-}
+export {
+  getConstellationLayout,
+  type ConstellationClearanceMetrics,
+  type ConstellationFitOptions,
+  type ConstellationLayout,
+  type FourFormationMode,
+  type ThreeFormationMode
+};
 
 export interface PinnedOrbitalNodeProps {
   auditObj: AuditData;

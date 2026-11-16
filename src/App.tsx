@@ -1638,7 +1638,12 @@ function ThermodynamicAuditApp() {
             stageTickers.length,
             threeFormation,
             fourFormation,
-            pinOrientationMode
+            pinOrientationMode,
+            {
+              wrapWidth: constellationWrapWidth,
+              viewportHeight: viewportMetrics.height,
+              pinMaxScale: displayMetrics.pinMaxScale
+            }
           );
           const idx = stageTickers.indexOf(key);
           if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
@@ -1697,7 +1702,12 @@ function ThermodynamicAuditApp() {
           stageTickers.length,
           threeFormation,
           fourFormation,
-          pinOrientationMode
+          pinOrientationMode,
+          {
+            wrapWidth: constellationWrapWidth,
+            viewportHeight: viewportMetrics.height,
+            pinMaxScale: displayMetrics.pinMaxScale
+          }
         );
         const idx = stageTickers.indexOf(key);
         if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
@@ -1758,7 +1768,12 @@ function ThermodynamicAuditApp() {
         stageTickers.length,
         threeFormation,
         fourFormation,
-        pinOrientationMode
+        pinOrientationMode,
+        {
+          wrapWidth: constellationWrapWidth,
+          viewportHeight: viewportMetrics.height,
+          pinMaxScale: displayMetrics.pinMaxScale
+        }
       );
       const idx = stageTickers.indexOf(key);
       if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
@@ -4629,17 +4644,24 @@ function ThermodynamicAuditApp() {
               count,
               threeFormation,
               fourFormation,
-              pinOrientationMode
+              pinOrientationMode,
+              {
+                wrapWidth: constellationWrapWidth,
+                viewportHeight: viewportMetrics.height,
+                pinMaxScale: displayMetrics.pinMaxScale
+              }
             );
             const responsiveScale = computeConstellationScale({
               layoutWidth: layout.width,
               layoutHeight: layout.height,
+              layoutNodeScale: layout.nodeScale,
               wrapWidth: constellationWrapWidth,
               viewportHeight: viewportMetrics.height,
               pinMaxScale: displayMetrics.pinMaxScale,
               orientationMode: pinOrientationMode
             });
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
+            const deltaBadgeScale = Math.max(0.88, Math.min(1.42, layout.nodeScale));
 
             return (
               <div className="animate-stage-enter w-full flex flex-col items-center gap-2.5 md:gap-5">
@@ -4881,27 +4903,29 @@ function ThermodynamicAuditApp() {
                               strokeDasharray="6 6"
                               className="sim-flow-line"
                             />
-                            <rect
-                              x={midX - 26}
-                              y={midY - 9}
-                              width="52"
-                              height="18"
-                              rx="9"
-                              fill="#0B0C0E"
-                              stroke="rgba(255,255,255,0.14)"
-                              strokeWidth="1"
-                            />
-                            <text
-                              x={midX}
-                              y={midY + 3.2}
-                              textAnchor="middle"
-                              fill="#D1D5DB"
-                              fontSize="8.5"
-                              fontFamily="JetBrains Mono, monospace"
-                              fontWeight="600"
-                            >
-                              Δ {formatScore(delta)}
-                            </text>
+                            <g transform={`translate(${midX}, ${midY}) scale(${deltaBadgeScale})`}>
+                              <rect
+                                x="-26"
+                                y="-9"
+                                width="52"
+                                height="18"
+                                rx="9"
+                                fill="#0B0C0E"
+                                stroke="rgba(255,255,255,0.14)"
+                                strokeWidth="1"
+                              />
+                              <text
+                                x="0"
+                                y="3.2"
+                                textAnchor="middle"
+                                fill="#D1D5DB"
+                                fontSize="8.5"
+                                fontFamily="JetBrains Mono, monospace"
+                                fontWeight="600"
+                              >
+                                Δ {formatScore(delta)}
+                              </text>
+                            </g>
                           </g>
                         );
                       })}
