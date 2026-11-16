@@ -1,9 +1,20 @@
 // ============================================================================
-// DAILY FULL-PULL QUOTA (2 / USER / DAY) & UNRESTRICTED ASSET / METAL SCOPE
+// DAILY FULL-PULL QUOTA (2 ANONYMOUS / 5 SIGNED IN / DAY) & UNRESTRICTED SCOPE
 // ============================================================================
 
 export const DAILY_NEW_FULL_PULL_LIMIT = 2;
+export const SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT = 5;
 export const MAX_CMC_RANK_SCOPE = 150;
+
+export function resolveDailyPullLimit(input: {
+  isAuthenticated?: boolean;
+  isAdmin?: boolean;
+}): number {
+  if (input.isAdmin || input.isAuthenticated) {
+    return SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT;
+  }
+  return DAILY_NEW_FULL_PULL_LIMIT;
+}
 
 export interface MarketCapEntry {
   rank: number;

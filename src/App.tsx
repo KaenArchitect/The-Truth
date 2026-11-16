@@ -149,8 +149,23 @@ import {
 import { resolvePinOrientationMode } from './data/constellationOrientation.ts';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
+  SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
   type QuotaStatus
 } from './data/auditQuotaAndScope.ts';
+import {
+  DOT_DISCOVERY_TARGET_COUNT,
+  formatMysteryCounterValue,
+  getDotDiscoveryCount,
+  isDotPulseActive,
+  isDotPulseUnlocked,
+  isMysteryCounterFlashing,
+  loadDotDiscoveryState,
+  markDotGenesisDiscovered,
+  recordDotDiscoveryInteraction,
+  saveDotDiscoveryState,
+  type DotDiscoveryGameState,
+  type DotDiscoveryInteraction
+} from './data/dotDiscoveryGame.ts';
 import {
   CORE_REFERENCE_TICKERS,
   ECOSYSTEM_OVERLAY_TICKERS,
@@ -431,6 +446,14 @@ function ThermodynamicAuditApp() {
   const [isGainsModalOpen, setIsGainsModalOpen] = useState(false);
   const [isDonateModalOpen, setIsDonateModalOpen] = useState(false);
   const [isGenesisModalOpen, setIsGenesisModalOpen] = useState(false);
+  const [dotDiscoveryState, setDotDiscoveryState] = useState<DotDiscoveryGameState>(() =>
+    loadDotDiscoveryState()
+  );
+  const isDotBeaconPulsing = isDotPulseActive(dotDiscoveryState);
+  const isDotUnlocked = isDotPulseUnlocked(dotDiscoveryState);
+  const dotDiscoveryCount = getDotDiscoveryCount(dotDiscoveryState);
+  const mysteryCounterText = formatMysteryCounterValue(dotDiscoveryState);
+  const isMysteryCounterActiveFlash = isMysteryCounterFlashing(dotDiscoveryState);
   const [truthDotHoldProgress, setTruthDotHoldProgress] = useState(0);
   const [truthExplosionActive, setTruthExplosionActive] = useState(false);
   const truthDotRafRef = useRef<number | null>(null);
@@ -438,6 +461,16 @@ function ThermodynamicAuditApp() {
   const truthDotTriggeredRef = useRef(false);
   const truthExplosionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPillRef = useRef<HTMLDivElement | null>(null);
+
+  const trackDotDiscovery = useCallback((interaction: DotDiscoveryInteraction) => {
+    setDotDiscoveryState((prev) => {
+      const next = recordDotDiscoveryInteraction(prev, interaction);
+      if (next !== prev) {
+        saveDotDiscoveryState(next);
+      }
+      return next;
+    });
+  }, []);
   const [donateConfig, setDonateConfig] = useState<{
     kasAddress?: string;
     btcAddress?: string;
@@ -749,12 +782,18 @@ function ThermodynamicAuditApp() {
 
   const syncServerConfigAndQuota = useCallback(async (userOverride?: User | null) => {
     const clientId = getOrCreateClientQuotaId();
-    const idToken = userOverride !== null ? await getFirebaseIdToken() : null;
+    const idToken =
+      userOverride === null
+        ? null
+        : userOverride
+        ? await userOverride.getIdToken().catch(() => null)
+        : await getFirebaseIdToken();
+    const activeUserId = userOverride === null ? null : userOverride?.uid || firebaseAuth?.currentUser?.uid || null;
     try {
       const res = await fetch('/api/config', {
         headers: {
           'x-truth-client-id': clientId,
-          ...(userOverride?.uid ? { 'x-truth-user-id': userOverride.uid } : {}),
+          ...(activeUserId ? { 'x-truth-user-id': activeUserId } : {}),
           ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
         }
       });
@@ -996,6 +1035,7 @@ function ThermodynamicAuditApp() {
       if (archiveUser) {
         await signOutArchive();
         setServerIsAdmin(false);
+        await syncServerConfigAndQuota(null);
         flashArchiveToast('Signed out of Cloud Archive Sync (Public Read-Only active)', 'hit');
       } else {
         const signedIn = await signInWithGoogleArchive();
@@ -1009,7 +1049,7 @@ function ThermodynamicAuditApp() {
             );
           } else {
             flashArchiveToast(
-              `Google Cloud Sync Active (${signedIn.email || 'Verified'})`,
+              `Google Sync Active (${signedIn.email || 'Verified'}) • ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} Daily Audits Unlocked`,
               'saved'
             );
           }
@@ -1626,6 +1666,7 @@ function ThermodynamicAuditApp() {
 
   const selectCachedAudit = (key: string) => {
     if (!audits[key] || isAuditing) return;
+    trackDotDiscovery('inspect_asset');
     setAuditError(null);
     setConfirmFullReauditKey(null);
     setHoveredInvId(null);
@@ -1694,6 +1735,7 @@ function ThermodynamicAuditApp() {
 
   const togglePinTicker = (key: string) => {
     if (!audits[key] || isAuditing) return;
+    trackDotDiscovery('pin_constellation');
     setHoveredInvId(null);
 
     if (validPinnedKeys.includes(key)) {
@@ -1799,6 +1841,7 @@ function ThermodynamicAuditApp() {
   };
 
   const copyTextToClipboard = (text: string, label: string) => {
+    trackDotDiscovery('hands_on_tool');
     try {
       const ta = document.createElement('textarea');
       ta.value = text;
@@ -2406,6 +2449,7 @@ function ThermodynamicAuditApp() {
   // ACTION 1: Low-Token Single-Invariant Fresh Re-Audit (POST /api/invariant mode=REAUDIT -> gemini-4-hydrogen)
   const handleSingleInvariantReaudit = async (invId: string) => {
     if (isAuditing || singleInvBusy) return;
+    trackDotDiscovery('hands_on_tool');
     if (strictCreditLock && !isAdminSession) {
       setSingleInvNotice({
         type: 'warn',
@@ -2511,6 +2555,7 @@ function ThermodynamicAuditApp() {
   // ACTION 2: Challenge Invariant Score (POST /api/invariant mode=CHALLENGE -> gemini-4-carbon)
   const handleInvariantChallenge = async (invId: string, overrideClaim: string | null = null) => {
     if (isAuditing || singleInvBusy) return;
+    trackDotDiscovery('hands_on_tool');
     const invIdx = currentAudit.invariants.findIndex((i) => i.id === invId);
     if (invIdx === -1) return;
 
@@ -2720,6 +2765,7 @@ function ThermodynamicAuditApp() {
   // ACTION 3: Single-Invariant Deeper Breakdown (POST /api/invariant mode=BREAKDOWN -> gemini-4-hydrogen)
   const handleInvariantBreakdown = async (invId: string, overrideQuestion: string | null = null) => {
     if (isAuditing || singleInvBusy) return;
+    trackDotDiscovery('hands_on_tool');
     const invIdx = currentAudit.invariants.findIndex((i) => i.id === invId);
     if (invIdx === -1) return;
 
@@ -2843,6 +2889,7 @@ function ThermodynamicAuditApp() {
     if (e) e.preventDefault();
     const rawQuery = searchInput.trim();
     if (!rawQuery || isAuditing) return;
+    trackDotDiscovery('hands_on_tool');
 
     const normalized = rawQuery
       .replace(/^\$/, '')
@@ -2866,6 +2913,7 @@ function ThermodynamicAuditApp() {
         });
 
     if (cachedKey) {
+      trackDotDiscovery('inspect_asset');
       await performArchivePullAudit(cachedKey);
       return;
     }
@@ -2881,6 +2929,7 @@ function ThermodynamicAuditApp() {
   };
 
   const scrollToWartimeSim = () => {
+    trackDotDiscovery('open_vault_or_charts');
     setTimeout(() => {
       if (simAnchorRef.current) {
         simAnchorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3010,6 +3059,13 @@ function ThermodynamicAuditApp() {
   const triggerTruthSupernova = useCallback(() => {
     cancelTruthDotHold();
     truthDotTriggeredRef.current = true;
+    setDotDiscoveryState((prev) => {
+      const next = markDotGenesisDiscovered(prev);
+      if (next !== prev) {
+        saveDotDiscoveryState(next);
+      }
+      return next;
+    });
     setTruthExplosionActive(true);
     if (truthExplosionTimerRef.current) clearTimeout(truthExplosionTimerRef.current);
     setTimeout(() => {
@@ -4140,7 +4196,10 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               data-tutorial-id="rubric-button"
-              onClick={() => setIsRubricOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsRubricOpen(true);
+              }}
               className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
               title="View Deterministic 6-Invariant Grading Rubric"
             >
@@ -4150,7 +4209,10 @@ function ThermodynamicAuditApp() {
 
             <button
               type="button"
-              onClick={() => setIsArchiveModalOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsArchiveModalOpen(true);
+              }}
               className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
               title="Thermodynamic Archive & API Credit Shield — Pulls cached & community-audited tokens at 0 API credits"
             >
@@ -4188,7 +4250,10 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               data-tutorial-id="gains-archive"
-              onClick={() => setIsGainsModalOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsGainsModalOpen(true);
+              }}
               title="Open Live Thermodynamic Gains Chart — Passed (E > 0) vs. Failed (E = 0)"
               className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] font-semibold text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
             >
@@ -4249,10 +4314,51 @@ function ThermodynamicAuditApp() {
             }`}
           >
             <div className="relative inline-flex items-center justify-center">
+              <span
+                data-testid="truth-mystery-counter"
+                data-counter-value={mysteryCounterText}
+                data-counter-flashing={isMysteryCounterActiveFlash ? 'true' : 'false'}
+                aria-label={mysteryCounterText}
+                className={`absolute right-[calc(100%+32px)] top-1/2 -translate-y-1/2 font-mono text-[11px] font-semibold tracking-wider tabular-nums leading-none px-1.5 py-0.5 rounded border pointer-events-none select-none whitespace-nowrap transition-colors duration-300 ${
+                  isMysteryCounterActiveFlash
+                    ? 'truth-mystery-counter-flash'
+                    : dotDiscoveryState.genesisDiscoveredAtMs !== null
+                    ? 'opacity-60'
+                    : 'text-neutral-400/85 bg-white/[0.03] border-white/15'
+                }`}
+                style={
+                  isMysteryCounterActiveFlash
+                    ? {
+                        color: '#ffffff',
+                        backgroundColor: accent.softBg,
+                        borderColor: accent.primary,
+                        boxShadow: `0 0 16px ${accent.primary}, 0 0 28px ${accent.secondary}, inset 0 0 8px ${accent.primary}44`,
+                        textShadow: `0 0 8px ${accent.primary}`
+                      }
+                    : dotDiscoveryState.genesisDiscoveredAtMs !== null
+                    ? {
+                        color: accent.primary,
+                        borderColor: accent.border,
+                        backgroundColor: 'transparent'
+                      }
+                    : undefined
+                }
+              >
+                {mysteryCounterText}
+              </span>
+
               <button
                 type="button"
                 data-testid="truth-dot-trigger"
-                aria-label="Hold The Truth dot for 5 seconds to reveal the origin thesis"
+                data-dot-unlocked={isDotUnlocked ? 'true' : 'false'}
+                data-dot-pulse={isDotBeaconPulsing ? 'active' : 'idle'}
+                data-dot-progress={`${dotDiscoveryCount}/${DOT_DISCOVERY_TARGET_COUNT}`}
+                data-dot-genesis-found={dotDiscoveryState.genesisDiscoveredAtMs !== null ? 'true' : 'false'}
+                aria-label={
+                  isDotBeaconPulsing
+                    ? 'The Truth dot is pulsing — hold for 5 seconds to reveal the origin thesis'
+                    : 'Hold The Truth dot for 5 seconds to reveal the origin thesis'
+                }
                 onPointerDown={(e) => {
                   if (e.button === 0 || e.pointerType !== 'mouse') {
                     try {
@@ -4290,8 +4396,31 @@ function ThermodynamicAuditApp() {
                     if (!truthDotTriggeredRef.current) cancelTruthDotHold();
                   }
                 }}
-                className="absolute -left-[29px] top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center bg-transparent focus:outline-none cursor-pointer touch-none"
+                className="absolute -left-[29px] top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center bg-transparent focus:outline-none cursor-pointer touch-none overflow-visible"
               >
+                {isDotBeaconPulsing && truthDotHoldProgress === 0 && !truthExplosionActive && (
+                  <span
+                    data-testid="truth-dot-pulse-rings"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 overflow-visible"
+                  >
+                    <span
+                      className="truth-dot-sonar-ring absolute left-1/2 top-1/2 w-3.5 h-3.5 rounded-full border-2"
+                      style={{
+                        borderColor: accent.primary,
+                        boxShadow: `0 0 16px ${accent.primary}, 0 0 28px ${accent.primary}99`
+                      }}
+                    />
+                    <span
+                      className="truth-dot-sonar-ring-delayed absolute left-1/2 top-1/2 w-3.5 h-3.5 rounded-full border-[1.5px]"
+                      style={{
+                        borderColor: accent.secondary,
+                        boxShadow: `0 0 14px ${accent.secondary}`
+                      }}
+                    />
+                  </span>
+                )}
+
                 {truthDotHoldProgress > 0 && (
                   <svg
                     data-testid="truth-dot-charge-ring"
@@ -4354,7 +4483,11 @@ function ThermodynamicAuditApp() {
                 )}
 
                 <span
-                  className="color-glide w-2.5 h-2.5 rounded-full block"
+                  className={`color-glide w-2.5 h-2.5 rounded-full block ${
+                    isDotBeaconPulsing && truthDotHoldProgress === 0
+                      ? 'truth-dot-beacon-core'
+                      : ''
+                  }`}
                   style={{
                     backgroundColor: accent.primary,
                     transform:
@@ -4364,6 +4497,8 @@ function ThermodynamicAuditApp() {
                     boxShadow:
                       truthDotHoldProgress > 0
                         ? `0 0 ${Math.round(12 + truthDotHoldProgress * 22)}px ${accent.primary}`
+                        : isDotBeaconPulsing
+                        ? `0 0 22px ${accent.primary}, 0 0 40px ${accent.secondary}`
                         : `0 0 12px ${accent.primary}`
                   }}
                 />
@@ -4426,7 +4561,10 @@ function ThermodynamicAuditApp() {
             >
               <button
                 type="button"
-                onClick={() => setIsGeniusMode(false)}
+                onClick={() => {
+                  trackDotDiscovery('switch_depth');
+                  setIsGeniusMode(false);
+                }}
                 className={`color-glide h-full px-3 rounded-full inline-flex items-center justify-center gap-1.5 border border-transparent leading-none ${
                   !isGeniusMode
                     ? 'bg-[#1D212A] text-white font-semibold shadow-sm'
@@ -4437,7 +4575,10 @@ function ThermodynamicAuditApp() {
               </button>
               <button
                 type="button"
-                onClick={() => setIsGeniusMode(true)}
+                onClick={() => {
+                  trackDotDiscovery('switch_depth');
+                  setIsGeniusMode(true);
+                }}
                 className={`color-glide h-full px-3 rounded-full inline-flex items-center justify-center gap-1.5 leading-none ${
                   isGeniusMode ? 'font-bold shadow-sm' : 'text-neutral-400 hover:text-neutral-200'
                 }`}
@@ -4459,7 +4600,10 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               data-testid="sandbox-toggle-btn"
-              onClick={() => setIsSandboxMode((prev) => !prev)}
+              onClick={() => {
+                trackDotDiscovery('hands_on_tool');
+                setIsSandboxMode((prev) => !prev);
+              }}
               aria-pressed={isSandboxMode}
               title="Sandbox / Local Preview: stores test & unverified lookups strictly in your browser localStorage instead of persisting them to the shared public archive."
               className={`color-glide h-7 px-3 rounded-full border font-mono text-[10.5px] leading-none inline-flex items-center justify-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)] ${
@@ -4586,7 +4730,7 @@ function ThermodynamicAuditApp() {
                             onClick={handleGoogleArchiveAuth}
                             className="px-2.5 py-1 rounded-full bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45 hover:bg-[#49EACB]/25 text-[10.5px] font-bold transition disabled:opacity-50"
                           >
-                            {authBusy ? 'Signing In...' : 'Google Sign-In'}
+                            {authBusy ? 'Signing In...' : `Google Sign-In (${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT}/day)`}
                           </button>
                         )}
                         <button
@@ -4725,7 +4869,10 @@ function ThermodynamicAuditApp() {
                       <div className="p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 flex items-center font-mono text-[10.5px]">
                         <button
                           type="button"
-                          onClick={() => setThreeFormation('TRIANGLE')}
+                          onClick={() => {
+                            trackDotDiscovery('pin_constellation');
+                            setThreeFormation('TRIANGLE');
+                          }}
                           className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
                             threeFormation === 'TRIANGLE'
                               ? 'bg-[#191E27] text-white font-semibold border border-white/15'
@@ -4739,7 +4886,10 @@ function ThermodynamicAuditApp() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setThreeFormation('SIDE_BY_SIDE')}
+                          onClick={() => {
+                            trackDotDiscovery('pin_constellation');
+                            setThreeFormation('SIDE_BY_SIDE');
+                          }}
                           className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
                             threeFormation === 'SIDE_BY_SIDE'
                               ? 'bg-[#191E27] text-white font-semibold border border-white/15'
@@ -4756,7 +4906,10 @@ function ThermodynamicAuditApp() {
                       <div className="p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 flex items-center font-mono text-[10.5px]">
                         <button
                           type="button"
-                          onClick={() => setFourFormation('RHOMBUS')}
+                          onClick={() => {
+                            trackDotDiscovery('pin_constellation');
+                            setFourFormation('RHOMBUS');
+                          }}
                           className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
                             fourFormation === 'RHOMBUS'
                               ? 'bg-[#191E27] text-white font-semibold border border-white/15'
@@ -4770,7 +4923,10 @@ function ThermodynamicAuditApp() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setFourFormation('SQUARE')}
+                          onClick={() => {
+                            trackDotDiscovery('pin_constellation');
+                            setFourFormation('SQUARE');
+                          }}
                           className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
                             fourFormation === 'SQUARE'
                               ? 'bg-[#191E27] text-white font-semibold border border-white/15'
@@ -4784,7 +4940,10 @@ function ThermodynamicAuditApp() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setFourFormation('SIDE_BY_SIDE')}
+                          onClick={() => {
+                            trackDotDiscovery('pin_constellation');
+                            setFourFormation('SIDE_BY_SIDE');
+                          }}
                           className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
                             fourFormation === 'SIDE_BY_SIDE'
                               ? 'bg-[#191E27] text-white font-semibold border border-white/15'
@@ -4799,7 +4958,10 @@ function ThermodynamicAuditApp() {
 
                     <button
                       type="button"
-                      onClick={() => setExpandAllOrbits((p) => !p)}
+                      onClick={() => {
+                        trackDotDiscovery('pin_constellation');
+                        setExpandAllOrbits((p) => !p);
+                      }}
                       className="px-2.5 py-1 rounded-full bg-[#0B0C0E] hover:bg-[#181C24] border border-white/10 font-mono text-[10.5px] text-neutral-300 hover:text-white transition"
                     >
                       {expandAllOrbits ? '6-Inv Orbits: Open' : 'Harmonic Waves'}
@@ -4972,6 +5134,7 @@ function ThermodynamicAuditApp() {
                           onFocusBubble={() => setActiveKey(tk)}
                           onUnpin={() => unpinFromConstellation(tk)}
                           onOpenInvariantModal={(invId) => {
+                            trackDotDiscovery('explore_invariant');
                             setActiveKey(tk);
                             setEssayViewMode(false);
                             setHoveredInvId(invId);
@@ -5013,6 +5176,7 @@ function ThermodynamicAuditApp() {
                             aria-label={`${idStr} ${sName}`}
                             onMouseEnter={() => setHoveredInvId(idStr)}
                             onClick={() => {
+                              trackDotDiscovery('explore_invariant');
                               const nextId = expandedSyncInvId === idStr ? null : idStr;
                               setExpandedSyncInvId(nextId);
                               setHoveredInvId(idStr);
@@ -5097,7 +5261,10 @@ function ThermodynamicAuditApp() {
                               <div className="h-7 p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
                                 <button
                                   type="button"
-                                  onClick={() => setIsGeniusMode(false)}
+                                  onClick={() => {
+                                    trackDotDiscovery('switch_depth');
+                                    setIsGeniusMode(false);
+                                  }}
                                   className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
                                     !isGeniusMode
                                       ? 'bg-[#1D212A] text-white font-semibold'
@@ -5108,7 +5275,10 @@ function ThermodynamicAuditApp() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setIsGeniusMode(true)}
+                                  onClick={() => {
+                                    trackDotDiscovery('switch_depth');
+                                    setIsGeniusMode(true);
+                                  }}
                                   className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center gap-1 border leading-none ${
                                     isGeniusMode
                                       ? 'bg-[#49EACB]/15 text-[#49EACB] border-[#49EACB]/40 font-bold'
@@ -5443,6 +5613,7 @@ function ThermodynamicAuditApp() {
                     onFocus={() => setHoveredInvId(inv.id)}
                     onClick={(e) => {
                       e.stopPropagation();
+                      trackDotDiscovery('explore_invariant');
                       setEssayViewMode(false);
                       setModalInvId(inv.id);
                     }}
@@ -6158,7 +6329,10 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               data-tutorial-id="rubric-button"
-              onClick={() => setIsRubricOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsRubricOpen(true);
+              }}
               className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap"
               title="View Deterministic 6-Invariant Grading Rubric"
             >
@@ -6168,7 +6342,10 @@ function ThermodynamicAuditApp() {
 
             <button
               type="button"
-              onClick={() => setIsArchiveModalOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsArchiveModalOpen(true);
+              }}
               className="color-glide w-full h-9 px-2 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1 shadow-sm whitespace-nowrap"
               title="Thermodynamic Archive & API Credit Shield — Pulls cached & community-audited tokens at 0 API credits"
             >
@@ -6206,7 +6383,10 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               data-tutorial-id="gains-archive"
-              onClick={() => setIsGainsModalOpen(true)}
+              onClick={() => {
+                trackDotDiscovery('open_vault_or_charts');
+                setIsGainsModalOpen(true);
+              }}
               title="Open Live Thermodynamic Gains Chart — Passed (E > 0) vs. Failed (E = 0)"
               className={`color-glide h-9 px-2 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-semibold text-neutral-200 hover:text-white flex items-center justify-center gap-1 shadow-[0_6px_20px_rgba(0,0,0,0.35)] whitespace-nowrap ${
                 hasActiveAudit ? 'w-full' : 'col-span-2 w-[calc(50%-0.25rem)] justify-self-center order-last'
@@ -6384,7 +6564,10 @@ function ThermodynamicAuditApp() {
                 <div className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
                   <button
                     type="button"
-                    onClick={() => setIsGeniusMode(false)}
+                    onClick={() => {
+                      trackDotDiscovery('switch_depth');
+                      setIsGeniusMode(false);
+                    }}
                     className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center border border-transparent leading-none ${
                       !isGeniusMode
                         ? 'bg-[#1D212A] text-white font-semibold'
@@ -6395,7 +6578,10 @@ function ThermodynamicAuditApp() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsGeniusMode(true)}
+                    onClick={() => {
+                      trackDotDiscovery('switch_depth');
+                      setIsGeniusMode(true);
+                    }}
                     className={`h-full px-2.5 sm:px-3 rounded-full transition inline-flex items-center justify-center gap-1 leading-none ${
                       isGeniusMode ? 'font-bold' : 'text-neutral-400 hover:text-neutral-200'
                     }`}
@@ -6416,7 +6602,10 @@ function ThermodynamicAuditApp() {
 
                 <button
                   type="button"
-                  onClick={() => setEssayViewMode((prev) => !prev)}
+                  onClick={() => {
+                    trackDotDiscovery('explore_invariant');
+                    setEssayViewMode((prev) => !prev);
+                  }}
                   className={`h-7 px-2.5 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
                     essayViewMode
                       ? 'font-bold shadow-sm'
@@ -6448,6 +6637,7 @@ function ThermodynamicAuditApp() {
                     type="button"
                     aria-label={`${inv.id} ${inv.shortName} ${formatScore(inv.score)}`}
                     onClick={() => {
+                      trackDotDiscovery('explore_invariant');
                       setEssayViewMode(false);
                       setModalInvId(inv.id);
                     }}
@@ -7432,10 +7622,10 @@ function ThermodynamicAuditApp() {
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
                       {isAdminSession
-                        ? 'Admin session active: daily 2-pull quota, IP rate limits, and server credit locks are bypassed. All new audits auto-publish to Firestore and Vault moderation controls are unlocked below.'
+                        ? `Admin session active: daily ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT}-pull limit, IP rate limits, and server credit locks are bypassed. All new audits auto-publish to Firestore and Vault moderation controls are unlocked below.`
                         : archiveUser
-                        ? 'New custom audits, contest verdicts, and imported snapshots automatically publish to the shared Firestore Archive.'
-                        : 'Sign in with a verified Google account to publish new audits into the shared Firestore Vault (or unlock unlimited admin access for authorized accounts).'}
+                        ? `Signed-in Google session active: ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits unlocked, and new custom audits, contest verdicts, and imported snapshots automatically publish to the shared Firestore Archive.`
+                        : `Sign in with a verified Google account to unlock ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits (up from ${DAILY_NEW_FULL_PULL_LIMIT}) and publish new audits into the shared Firestore Vault.`}
                     </p>
                   </div>
 

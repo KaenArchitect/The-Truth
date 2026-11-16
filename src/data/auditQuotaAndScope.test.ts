@@ -2,11 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
+  SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
   STATIC_TOP_150_FALLBACK_ENTRIES,
   consumeDailyPull,
   evaluateMarketScope,
   getUserDailyQuotaStatus,
   refundDailyPull,
+  resolveDailyPullLimit,
   resolvePhysicalCommodityQuery,
   resolveQuotaPrincipalKeys,
   type MarketCapEntry
@@ -238,5 +240,50 @@ test('Fiat currencies resolve to FIAT_CURRENCY without misclassifying stablecoin
     assert.equal(res.reason, 'PHYSICAL_COMMODITY', `Expected ${metalQuery} to remain PHYSICAL_COMMODITY`);
   }
 });
+
+test('Signed-in non-admin users get 5 daily full-pull audits and signing in after 2 anonymous pulls unlocks 3 more', () => {
+  assert.equal(DAILY_NEW_FULL_PULL_LIMIT, 2);
+  assert.equal(SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT, 5);
+  assert.equal(resolveDailyPullLimit({ isAuthenticated: false, isAdmin: false }), 2);
+  assert.equal(resolveDailyPullLimit({ isAuthenticated: true, isAdmin: false }), 5);
+  assert.equal(resolveDailyPullLimit({ isAuthenticated: true, isAdmin: true }), 5);
+
+  const t0 = Date.UTC(2026, 10, 15, 16, 0, 0);
+  const anonKeys = resolveQuotaPrincipalKeys({ clientId: 'browser-c1', ip: '198.51.100.77' }).allKeys;
+  let ledger = {};
+
+  // Exhaust 2/2 anonymous pulls first
+  ledger = consumeDailyPull(ledger, anonKeys, t0, 2, false).nextLedger;
+  ledger = consumeDailyPull(ledger, anonKeys, t0 + 1000, 2, false).nextLedger;
+  const blockedAnon = consumeDailyPull(ledger, anonKeys, t0 + 2000, 2, false);
+  assert.equal(blockedAnon.allowed, false);
+
+  // User signs in with Google -> verified uid + same clientId now gets 5 daily limit (3 remaining)
+  const signedInKeys = resolveQuotaPrincipalKeys({
+    userId: 'firebase-uid-regular-user',
+    clientId: 'browser-c1',
+    ip: '198.51.100.77'
+  }).allKeys;
+  const signedInStatus = getUserDailyQuotaStatus(ledger, signedInKeys, t0 + 3000, 5, false);
+  assert.equal(signedInStatus.limit, 5);
+  assert.equal(signedInStatus.used, 2);
+  assert.equal(signedInStatus.remaining, 3);
+  assert.equal(signedInStatus.allowed, true);
+
+  // Consumes pulls 3, 4, 5 cleanly, then blocks on #6
+  for (let expectedUsed = 3; expectedUsed <= 5; expectedUsed++) {
+    const attempt = consumeDailyPull(ledger, signedInKeys, t0 + expectedUsed * 1000, 5, false);
+    assert.equal(attempt.allowed, true);
+    assert.equal(attempt.status.used, expectedUsed);
+    assert.equal(attempt.status.remaining, 5 - expectedUsed);
+    ledger = attempt.nextLedger;
+  }
+
+  const sixthAttempt = consumeDailyPull(ledger, signedInKeys, t0 + 9000, 5, false);
+  assert.equal(sixthAttempt.allowed, false);
+  assert.equal(sixthAttempt.status.used, 5);
+  assert.equal(sixthAttempt.status.remaining, 0);
+});
+
 
 

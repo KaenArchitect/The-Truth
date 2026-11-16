@@ -31,12 +31,14 @@ import {
 } from './src/data/rubricSpec.ts';
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
+  SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
   TOKENIZED_COMMODITY_WRAPPER_TICKERS,
   consumeDailyPull,
   evaluateMarketScope,
   getUserDailyQuotaStatus,
   pruneStaleQuotaDays,
   refundDailyPull,
+  resolveDailyPullLimit,
   resolveFiatCurrencyQuery,
   resolvePhysicalCommodityQuery,
   resolveQuotaPrincipalKeys,
@@ -622,18 +624,25 @@ async function createApp(): Promise<express.Express> {
 
   app.get('/api/config', async (req: Request, res: Response) => {
     const principal = await resolveVerifiedRequestPrincipal(req);
+    const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: Boolean(principal.verifiedUser),
+      isAdmin: principal.isAdmin
+    });
     const dailyQuota = getUserDailyQuotaStatus(
       dailyQuotaLedger,
       principal.allKeys,
       Date.now(),
-      DAILY_NEW_FULL_PULL_LIMIT,
+      userPullLimit,
       principal.isAdmin
     );
     res.json({
       strictCreditLock: isStrictCreditLockActive() && !principal.isAdmin,
+      isAuthenticated: Boolean(principal.verifiedUser),
       isAdmin: principal.isAdmin,
       adminEmail: principal.isAdmin ? principal.verifiedEmail : null,
-      dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
+      dailyPullLimit: userPullLimit,
+      anonymousDailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
+      signedInDailyPullLimit: SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
       unrestrictedMetalsAndNetworks: true,
       dailyQuota,
       models: {
@@ -653,17 +662,22 @@ async function createApp(): Promise<express.Express> {
 
   app.get('/api/quota', async (req: Request, res: Response) => {
     const principal = await resolveVerifiedRequestPrincipal(req);
+    const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: Boolean(principal.verifiedUser),
+      isAdmin: principal.isAdmin
+    });
     const dailyQuota = getUserDailyQuotaStatus(
       dailyQuotaLedger,
       principal.allKeys,
       Date.now(),
-      DAILY_NEW_FULL_PULL_LIMIT,
+      userPullLimit,
       principal.isAdmin
     );
     res.json({
+      isAuthenticated: Boolean(principal.verifiedUser),
       isAdmin: principal.isAdmin,
       adminEmail: principal.isAdmin ? principal.verifiedEmail : null,
-      dailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
+      dailyPullLimit: userPullLimit,
       unrestrictedMetalsAndNetworks: true,
       dailyQuota
     });
@@ -676,11 +690,15 @@ async function createApp(): Promise<express.Express> {
     rateBuckets.clear();
     persistDailyQuotaLedger();
     const principal = await resolveVerifiedRequestPrincipal(req);
+    const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: true,
+      isAdmin: true
+    });
     const dailyQuota = getUserDailyQuotaStatus(
       dailyQuotaLedger,
       principal.allKeys,
       Date.now(),
-      DAILY_NEW_FULL_PULL_LIMIT,
+      userPullLimit,
       true
     );
     res.json({
@@ -815,6 +833,10 @@ async function createApp(): Promise<express.Express> {
     }
 
     const principal = await resolveVerifiedRequestPrincipal(req, body);
+    const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: Boolean(principal.verifiedUser),
+      isAdmin: principal.isAdmin
+    });
     const existingBaseline =
       body.existingBaseline && Array.isArray(body.existingBaseline.invariants)
         ? body.existingBaseline
@@ -837,7 +859,7 @@ async function createApp(): Promise<express.Express> {
           dailyQuotaLedger,
           principal.allKeys,
           Date.now(),
-          DAILY_NEW_FULL_PULL_LIMIT,
+          userPullLimit,
           principal.isAdmin
         );
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -880,7 +902,7 @@ async function createApp(): Promise<express.Express> {
         dailyQuotaLedger,
         principal.allKeys,
         Date.now(),
-        DAILY_NEW_FULL_PULL_LIMIT,
+        userPullLimit,
         principal.isAdmin
       );
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -903,17 +925,20 @@ async function createApp(): Promise<express.Express> {
       return;
     }
 
-    // 2) HARD DAILY LIMIT: MAX 2 NEW FULL PULLS PER USER PER UTC DAY (UNLIMITED FOR VERIFIED ADMIN)
+    // 2) HARD DAILY LIMIT: 2 ANONYMOUS / 5 SIGNED-IN FULL PULLS PER UTC DAY (UNLIMITED FOR ADMIN)
     const quotaAttempt = consumeDailyPull(
       dailyQuotaLedger,
       principal.allKeys,
       Date.now(),
-      DAILY_NEW_FULL_PULL_LIMIT,
+      userPullLimit,
       principal.isAdmin
     );
     if (!quotaAttempt.allowed) {
+      const signInHint = !principal.verifiedUser
+        ? ` Sign in with Google to unlock ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily audits.`
+        : '';
       res.status(429).json({
-        error: `Daily limit of ${DAILY_NEW_FULL_PULL_LIMIT} new full pulls reached for today. Cached & archived assets remain unlimited (0 credits). Resets at 00:00 UTC.`,
+        error: `Daily limit of ${userPullLimit} new full pulls reached for today.${signInHint} Cached & archived assets remain unlimited (0 credits). Resets at 00:00 UTC.`,
         dailyLimitReached: true,
         quota: quotaAttempt.status
       });
@@ -1084,7 +1109,7 @@ async function createApp(): Promise<express.Express> {
         dailyQuotaLedger,
         principal.allKeys,
         Date.now(),
-        DAILY_NEW_FULL_PULL_LIMIT,
+        userPullLimit,
         principal.isAdmin
       );
       sendEvent({
@@ -1109,7 +1134,7 @@ async function createApp(): Promise<express.Express> {
           dailyQuotaLedger,
           principal.allKeys,
           Date.now(),
-          DAILY_NEW_FULL_PULL_LIMIT,
+          userPullLimit,
           principal.isAdmin
         )
       });
