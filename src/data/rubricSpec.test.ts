@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   type AuditData,
   type InvariantData,
+  buildCanonicalGeniusParagraphs,
+  buildCanonicalSingleInvariantEssayParagraph,
   canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   coerceDisplayText,
@@ -457,5 +459,141 @@ test('coerceDisplayText, sanitizeAuditData, and sanitizeInvLogsMap convert Fires
   assert.equal(dirtyLogs['KAS:01'][0].headline, 'Preserved');
   assert.equal(dirtyLogs['KAS:01'][0].userPrompt, null);
   assert.equal(dirtyLogs['KAS:01'][0].sources[0].title, 'https://example.com');
+});
+
+test('buildCanonicalGeniusParagraphs and normalizeAuditPayload deduplicate Secret Origin Thesis openings, receipts, and KAS contrast', () => {
+  const canonicalInvs: InvariantData[] = [
+    {
+      id: '01',
+      shortName: 'Sovereignty',
+      title: 'Existential Sovereignty & Entity Decoupling',
+      telemetry: 'Immaculate fair launch',
+      score: 1.0,
+      quickSummary: 'Immaculate fair launch.',
+      paragraph: 'Immaculate empty-ledger Proof-of-Work launch with zero premine.',
+      geniusParagraph:
+        'At the foundational layer of Existential Sovereignty and Entity Decoupling (1.00 / 1.00), Kaspa launched as an immaculate, permissionless genesis with Fair Launch Receipt and zero admin keys.',
+      receipts: ['Fair Launch Receipt', 'Zero Admin Keys']
+    },
+    {
+      id: '02',
+      shortName: 'Cost Floor',
+      title: 'Thermodynamic Cost Floor (E > 0)',
+      telemetry: 'kHeavyHash PoW',
+      score: 1.0,
+      quickSummary: 'kHeavyHash ASIC work.',
+      paragraph: 'Continuous hardware Joules spent per block.',
+      geniusParagraph:
+        'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 1.00 / 1.00)—continuous megawatts of electrical energy anchor issuance under the First Law of Thermodynamics.',
+      receipts: ['kHeavyHash Hardware Receipt']
+    },
+    {
+      id: '03',
+      shortName: 'Immutability',
+      title: 'Historical Immutability & Arrow of Time',
+      telemetry: 'Landauer heat wall',
+      score: 1.0,
+      quickSummary: 'Calcified work wall.',
+      paragraph: 'Landauer heat asymmetry locks history.',
+      geniusParagraph:
+        'On Historical Immutability and the Physical Arrow of Time (1.00 / 1.00), Second Law of Thermodynamics calcifies Blue Work against rollbacks.',
+      receipts: ['Rusty-Kaspa Header Receipt']
+    },
+    {
+      id: '04',
+      shortName: 'Availability',
+      title: 'Dynamic Availability (Wartime Partition)',
+      telemetry: 'Per-block DAA',
+      score: 1.0,
+      quickSummary: 'Continues mining under cut.',
+      paragraph: 'Continues mining autonomously across fiber cuts.',
+      geniusParagraph:
+        'Under the stress of a wartime network partition, Kaspa scores 1.00 / 1.00 on Dynamic Availability and calibrates difficulty per block without staking halts.',
+      receipts: ['KIP-14 Sampled DAA']
+    },
+    {
+      id: '05',
+      shortName: 'State Topology',
+      title: 'State Machine Topology',
+      telemetry: 'Parallel UTXO graph',
+      score: 1.0,
+      quickSummary: 'Stateless parallel UTXO.',
+      paragraph: 'Stateless UTXO graph avoids mutex locks.',
+      geniusParagraph:
+        'Examining Kaspa’s State Machine Topology (1.00 / 1.00) exposes a stateless, contention-free parallel UTXO graph free of MEV and state-rent seizures.',
+      receipts: ['Stateless UTXO Tree']
+    },
+    {
+      id: '06',
+      shortName: 'Velocity',
+      title: 'Thermodynamic Velocity (M = 1.0)',
+      telemetry: '10 BPS GHOSTDAG',
+      score: 1.0,
+      quickSummary: '10 BPS M = 1.0.',
+      paragraph: '10 BPS GHOSTDAG BlockDAG incorporates 100% honest hash work.',
+      geniusParagraph:
+        'On Thermodynamic Velocity (M = 1.0, scored 1.00 / 1.00), optical-fiber GHOSTDAG weaves 10 BPS blocks natively.',
+      receipts: ['Crescendo 10 BPS']
+    }
+  ];
+
+  const kasParas = buildCanonicalGeniusParagraphs({
+    ticker: 'KAS',
+    name: 'Kaspa',
+    architecture: 'GHOSTDAG Parallel Proof-of-Work BlockDAG',
+    certainty: 'HIGH CERTAINTY',
+    totalScore: 6.0,
+    grade: 'A+',
+    conclusion:
+      'Evaluating these findings through the GRADE evidence certainty framework yields a HIGH CERTAINTY rating across all six invariants totaling 6.00 / 6.00 (A+).',
+    invariants: canonicalInvs
+  });
+
+  assert.equal(kasParas.length, 6);
+  // Should not double-prefix canonical openings or receipts already cited in prose
+  assert.equal((kasParas[0].match(/At the foundational layer of Existential Sovereignty/gi) || []).length, 1);
+  assert.equal((kasParas[0].match(/Empirical telemetry confirms:/gi) || []).length, 0);
+  assert.equal((kasParas[1].match(/At the second physical invariant/gi) || []).length, 1);
+  assert.equal((kasParas[2].match(/On Historical Immutability/gi) || []).length, 1);
+  assert.equal((kasParas[3].match(/Under the stress of a wartime/gi) || []).length, 1);
+  assert.equal((kasParas[4].match(/Examining Kaspa’s State Machine Topology/gi) || []).length, 1);
+  assert.equal((kasParas[5].match(/Evaluating these findings through the GRADE/gi) || []).length, 1);
+  // Must NEVER append "In contrast, Kaspa's..." to $KAS itself
+  assert.ok(!kasParas[4].includes('In contrast, Kaspa’s'));
+
+  // Non-KAS asset gets the single Kaspa BlockDAG contrast tail when absent
+  const ltcPara5 = buildCanonicalSingleInvariantEssayParagraph(
+    {
+      ticker: 'LTC',
+      name: 'Litecoin',
+      architecture: 'Sequential Scrypt PoW',
+      invariants: canonicalInvs.map((inv, idx) =>
+        idx === 5 ? { ...inv, geniusParagraph: 'On Thermodynamic Velocity (0.40 / 1.00), 150s sequential blocks suffer orphan collisions.' } : inv
+      )
+    },
+    5
+  );
+  assert.equal((ltcPara5.match(/In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG/g) || []).length, 1);
+
+  // Calling normalizeAuditPayload preserves canonical structure without duplicate prefixes
+  const normalized = normalizeAuditPayload(
+    {
+      ticker: 'KAS',
+      name: 'Kaspa',
+      consensusFamily: 'BLOCKDAG_POW',
+      architecture: 'GHOSTDAG BlockDAG',
+      conclusion:
+        'Evaluating these findings through the GRADE evidence certainty framework yields a HIGH CERTAINTY rating across all six invariants.',
+      invariants: canonicalInvs
+    },
+    'KAS',
+    'KAS',
+    null
+  );
+  assert.equal(normalized.geniusParagraphs?.length, 6);
+  assert.equal(
+    (normalized.geniusParagraphs![1].match(/At the second physical invariant/gi) || []).length,
+    1
+  );
 });
 

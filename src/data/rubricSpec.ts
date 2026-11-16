@@ -1945,41 +1945,16 @@ export function normalizeAuditPayload(
       ? Number((exactSum - previousScore).toFixed(2))
       : null;
 
-  const allReceipts = cleanInvariants
-    .flatMap((i) => i.receipts || [])
-    .filter(Boolean)
-    .join(', ');
-
-  const refreshedGeniusParagraphs = [
-    `Evaluating ${resolvedName} (${cleanTicker}) against the six physical invariants of a sovereign ledger exposes the structural reality of its ${resolvedArchitecture}. At the foundational layer of Existential Sovereignty and Entity Decoupling (${formatScore(
-      cleanInvariants[0].score
-    )}/1.0), ${cleanInvariants[0].geniusParagraph} Empirical telemetry confirms: ${(
-      cleanInvariants[0].receipts || []
-    ).join(' • ')}.`,
-    `At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored ${formatScore(
-      cleanInvariants[1].score
-    )}/1.0)—${cleanInvariants[1].geniusParagraph} Every unit of monetary issuance must be weighed against the First Law of Thermodynamics: ${(
-      cleanInvariants[1].receipts || []
-    ).join(' • ')}.`,
-    `Examining Historical Immutability and the Physical Arrow of Time (${formatScore(
-      cleanInvariants[2].score
-    )}/1.0) against the Second Law of Thermodynamics and Landauer’s Principle (ΔQ ≥ kB·T·ln2): ${cleanInvariants[2].geniusParagraph} Key immutability telemetry: ${(
-      cleanInvariants[2].receipts || []
-    ).join(' • ')}.`,
-    `Under the stress of a wartime network partition and subsequent undersea fiber-optic cable resplice (Dynamic Availability, scored ${formatScore(
-      cleanInvariants[3].score
-    )}/1.0): ${cleanInvariants[3].geniusParagraph} Partition and resplice records confirm: ${(
-      cleanInvariants[3].receipts || []
-    ).join(' • ')}.`,
-    `Examining ${resolvedName}’s State Machine Topology (${formatScore(
-      cleanInvariants[4].score
-    )}/1.0) and Thermodynamic Velocity (${formatScore(
-      cleanInvariants[5].score
-    )}/1.0, M = 1.0 benchmark): ${cleanInvariants[4].geniusParagraph} ${
-      cleanInvariants[5].geniusParagraph
-    } In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settles parallel UTXO state transitions natively on Layer 1 at 10+ blocks per second without validator blacklists, partition halts, or orphan work destruction (M = 1.0).`,
-    `Evaluating these findings through the GRADE evidence certainty framework yields a ${resolvedCertainty} rating, as every architectural metric—including ${allReceipts}—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${resolvedConclusion}`
-  ];
+  const refreshedGeniusParagraphs = buildCanonicalGeniusParagraphs({
+    ticker: cleanTicker,
+    name: resolvedName,
+    architecture: resolvedArchitecture,
+    certainty: resolvedCertainty,
+    totalScore: exactSum,
+    grade: derivedGrade,
+    conclusion: resolvedConclusion,
+    invariants: cleanInvariants
+  });
 
   return {
     ticker: cleanTicker,
@@ -2005,3 +1980,146 @@ export function normalizeAuditPayload(
     ...(isOverlay ? { isUpperLayerOverlayOrChannel: true } : {})
   };
 }
+
+function appendReceiptsIfAbsent(body: string, label: string, receipts: string[] | undefined): string {
+  const cleanBody = String(body || '').trim();
+  const list = Array.isArray(receipts) ? receipts.map((r) => String(r || '').trim()).filter(Boolean) : [];
+  if (list.length === 0) return cleanBody;
+  if (/Empirical telemetry confirms:|First Law of Thermodynamics:|Key immutability telemetry:|Partition and resplice records confirm:/i.test(cleanBody)) {
+    return cleanBody;
+  }
+  const hasAnyReceipt = list.some((r) => r.length >= 6 && cleanBody.toLowerCase().includes(r.toLowerCase()));
+  if (hasAnyReceipt) return cleanBody;
+  const separator = /[.!?]$/.test(cleanBody) ? ' ' : '. ';
+  return `${cleanBody}${separator}${label}: ${list.join(' • ')}.`;
+}
+
+export function buildCanonicalSingleInvariantEssayParagraph(
+  auditObj: {
+    ticker: string;
+    name: string;
+    architecture: string;
+    invariants: InvariantData[];
+  },
+  invIdx: number
+): string {
+  const invs = auditObj.invariants || [];
+  const name = auditObj.name || auditObj.ticker || 'Asset';
+  const ticker = String(auditObj.ticker || '').toUpperCase();
+  const arch = auditObj.architecture || 'Audited Consensus Architecture';
+
+  if (invIdx === 0) {
+    const inv = invs[0];
+    const p1 = stripTrailingDash(inv?.geniusParagraph || inv?.paragraph || '');
+    const withReceipts = appendReceiptsIfAbsent(p1, 'Empirical telemetry confirms', inv?.receipts);
+    if (/^Evaluating\b/i.test(withReceipts)) return withReceipts;
+    if (/^At the foundational layer of Existential Sovereignty/i.test(withReceipts)) {
+      return `Evaluating ${name} (${ticker}) against the six physical invariants of a sovereign ledger exposes the structural reality of its ${arch}. ${withReceipts}`;
+    }
+    return `Evaluating ${name} (${ticker}) against the six physical invariants of a sovereign ledger exposes the structural reality of its ${arch}. At the foundational layer of Existential Sovereignty and Entity Decoupling (${formatScore(inv?.score)}/1.0), ${withReceipts}`;
+  }
+
+  if (invIdx === 1) {
+    const inv = invs[1];
+    const p2 = stripTrailingDash(inv?.geniusParagraph || inv?.paragraph || '');
+    const withReceipts = appendReceiptsIfAbsent(
+      p2,
+      'Every unit of monetary issuance must be weighed against the First Law of Thermodynamics',
+      inv?.receipts
+    );
+    if (
+      /^(At the second physical invariant|This [^.]*Thermodynamic Cost Floor|[^\n.]+?\b(satisfies|violates|enforces) the Thermodynamic Cost Floor)/i.test(
+        withReceipts
+      )
+    ) {
+      return withReceipts;
+    }
+    return `At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored ${formatScore(
+      inv?.score
+    )}/1.0)—${withReceipts}`;
+  }
+
+  if (invIdx === 2) {
+    const inv = invs[2];
+    const p3 = stripTrailingDash(inv?.geniusParagraph || inv?.paragraph || '');
+    const withReceipts = appendReceiptsIfAbsent(p3, 'Key immutability telemetry', inv?.receipts);
+    if (
+      /^(On Historical Immutability|Examining Historical Immutability|Because [^.]*(Historical Immutability|Landauer|irreversible heat))/i.test(
+        withReceipts
+      )
+    ) {
+      return withReceipts;
+    }
+    return `Examining Historical Immutability and the Physical Arrow of Time (${formatScore(
+      inv?.score
+    )}/1.0) against the Second Law of Thermodynamics and Landauer’s Principle (ΔQ ≥ kB·T·ln2): ${withReceipts}`;
+  }
+
+  if (invIdx === 3) {
+    const inv = invs[3];
+    const p4 = stripTrailingDash(inv?.geniusParagraph || inv?.paragraph || '');
+    const withReceipts = appendReceiptsIfAbsent(p4, 'Partition and resplice records confirm', inv?.receipts);
+    if (/^(Under the stress of a wartime|Under a wartime network partition)/i.test(withReceipts)) {
+      return withReceipts;
+    }
+    return `Under the stress of a wartime network partition and subsequent undersea fiber-optic cable resplice (Dynamic Availability, scored ${formatScore(
+      inv?.score
+    )}/1.0): ${withReceipts}`;
+  }
+
+  const inv5 = invs[4];
+  const inv6 = invs[5];
+  const p5 = stripTrailingDash(inv5?.geniusParagraph || inv5?.paragraph || '');
+  const p6 = stripTrailingDash(inv6?.geniusParagraph || inv6?.paragraph || '');
+  const hasTopicIntro5 = /^Examining [^.]*State Machine Topology/i.test(p5);
+  const p5Formatted = hasTopicIntro5
+    ? p5
+    : `Examining ${name}’s State Machine Topology (${formatScore(
+        inv5?.score
+      )}/1.0) and Thermodynamic Velocity (${formatScore(inv6?.score)}/1.0, M = 1.0 benchmark): ${p5}`;
+  const hasKasContrast =
+    ticker === 'KAS' ||
+    /Kaspa[’']s stateless, contention-free|Proof-of-Work BlockDAG[^\n.]*M\s*=\s*1\.0/i.test(p6);
+  const contrastTail = hasKasContrast
+    ? ''
+    : ' In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settles parallel UTXO state transitions natively on Layer 1 at 10+ blocks per second without validator blacklists, partition halts, or orphan work destruction (M = 1.0).';
+  return `${p5Formatted} ${p6}${contrastTail}`.trim();
+}
+
+export function buildCanonicalGeniusParagraphs(auditObj: {
+  ticker: string;
+  name: string;
+  architecture: string;
+  certainty?: string;
+  totalScore?: number;
+  grade?: string;
+  conclusion?: string;
+  invariants: InvariantData[];
+}): string[] {
+  const invs = auditObj.invariants || [];
+  const allReceipts = invs
+    .flatMap((i) => i.receipts || [])
+    .filter(Boolean)
+    .join(', ');
+  const conclusionText = stripTrailingDash(auditObj.conclusion || '');
+  const certainty = String(auditObj.certainty || 'HIGH CERTAINTY').toUpperCase();
+  const hasGradeIntro = /^Evaluating these findings through the GRADE evidence certainty framework/i.test(
+    conclusionText
+  );
+
+  const paragraph6 = hasGradeIntro
+    ? conclusionText
+    : `Evaluating these findings through the GRADE evidence certainty framework yields a ${certainty} rating, as every architectural metric—including ${
+        allReceipts || 'verified consensus constants'
+      }—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${conclusionText}`.trim();
+
+  return [
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 0),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 1),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 2),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 3),
+    buildCanonicalSingleInvariantEssayParagraph(auditObj, 4),
+    paragraph6
+  ];
+}
+

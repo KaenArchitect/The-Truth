@@ -1,4 +1,7 @@
-import { type AuditData, formatScore } from './rubricSpec.ts';
+import {
+  type AuditData,
+  buildCanonicalGeniusParagraphs
+} from './rubricSpec.ts';
 
 export const PRELOADED_AUDITS: Record<string, AuditData> = {
   KAS: {
@@ -2430,25 +2433,5 @@ export function getGeniusForensicParagraphs(auditObj: AuditData): string[] {
   if (GENIUS_FORENSIC_ESSAYS[tk]) {
     return GENIUS_FORENSIC_ESSAYS[tk];
   }
-
-  const invs = auditObj.invariants || [];
-  const p1 = invs[0]?.geniusParagraph || invs[0]?.paragraph || '';
-  const p2 = invs[1]?.geniusParagraph || invs[1]?.paragraph || '';
-  const p3 = invs[2]?.geniusParagraph || invs[2]?.paragraph || '';
-  const p4 = invs[3]?.geniusParagraph || invs[3]?.paragraph || '';
-  const p5 = invs[4]?.geniusParagraph || invs[4]?.paragraph || '';
-  const p6 = invs[5]?.geniusParagraph || invs[5]?.paragraph || '';
-  const allReceipts = invs
-    .flatMap((i) => i.receipts || [])
-    .filter(Boolean)
-    .join(', ');
-
-  return [
-    `Evaluating ${auditObj.name} (${auditObj.ticker}) against the six physical invariants of a sovereign ledger exposes the structural reality of its ${auditObj.architecture}. At the foundational layer of Existential Sovereignty and Entity Decoupling (${formatScore(invs[0]?.score)}/1.0), ${p1} Empirical telemetry confirms: ${(invs[0]?.receipts || []).join(' • ')}.`,
-    `At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored ${formatScore(invs[1]?.score)}/1.0)—${p2} Every unit of monetary issuance must be weighed against the First Law of Thermodynamics: ${(invs[1]?.receipts || []).join(' • ')}.`,
-    `Examining Historical Immutability and the Physical Arrow of Time (${formatScore(invs[2]?.score)}/1.0) against the Second Law of Thermodynamics and Landauer’s Principle (ΔQ ≥ kB·T·ln2): ${p3} Key immutability telemetry: ${(invs[2]?.receipts || []).join(' • ')}.`,
-    `Under the stress of a wartime network partition and subsequent undersea fiber-optic cable resplice (Dynamic Availability, scored ${formatScore(invs[3]?.score)}/1.0): ${p4} Partition and resplice records confirm: ${(invs[3]?.receipts || []).join(' • ')}.`,
-    `Examining ${auditObj.name}’s State Machine Topology (${formatScore(invs[4]?.score)}/1.0) and Thermodynamic Velocity (${formatScore(invs[5]?.score)}/1.0, M = 1.0 benchmark): ${p5} ${p6} In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settles parallel UTXO state transitions natively on Layer 1 at 10+ blocks per second without validator blacklists, partition halts, or orphan work destruction (M = 1.0).`,
-    `Evaluating these findings through the GRADE evidence certainty framework yields a ${auditObj.certainty || 'HIGH CERTAINTY'} rating, as every architectural metric—including ${allReceipts}—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${auditObj.conclusion}`
-  ];
+  return buildCanonicalGeniusParagraphs(auditObj);
 }

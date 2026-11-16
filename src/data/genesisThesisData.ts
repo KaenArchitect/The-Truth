@@ -358,3 +358,157 @@ export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = attachAxiomLa
 export function getGenesisThesisParagraphs(mode: ThesisDepthMode): ThesisParagraph[] {
   return mode === 'GENIUS' ? GENESIS_THESIS_GENIUS_PARAGRAPHS : GENESIS_THESIS_PARAGRAPHS;
 }
+
+export interface SecretGeniusTemplateSpec {
+  id: '01' | '02' | '03' | '04' | '05' | '06' | 'CONCLUSION';
+  axiomId: number;
+  label: string;
+  law: string;
+  equation: string;
+  openingFrame: string;
+  requiredLexicon: readonly string[];
+  thesisAnchor: string;
+}
+
+const INVARIANT_OPENING_FRAMES: Record<SecretGeniusTemplateSpec['id'], string> = {
+  '01': 'At the foundational layer of Existential Sovereignty and Entity Decoupling (<score> / 1.00), <Name> ...',
+  '02': 'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored <score> / 1.00)—...',
+  '03': 'On Historical Immutability and the Physical Arrow of Time (<score> / 1.00), ...',
+  '04': 'Under the stress of a wartime network partition, <Name> scores <score> / 1.00 on Dynamic Availability...',
+  '05': 'Examining <Name>’s State Machine Topology (<score> / 1.00) exposes...',
+  '06': 'On Thermodynamic Velocity (M = 1.0, scored <score> / 1.00), ... (concluding non-KAS assets with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0).',
+  CONCLUSION:
+    'Evaluating these findings through the GRADE evidence certainty framework yields a <Certainty> rating, empirically verified across <Primary Receipts>. <Name> scores <Total> out of 6.00 across the six thermodynamic invariants (01: <s1>, 02: <s2>, 03: <s3>, 04: <s4>, 05: <s5>, 06: <s6>), earning a compliance grade of <Grade>.'
+};
+
+const INVARIANT_LEXICON_BY_ID: Record<SecretGeniusTemplateSpec['id'], readonly string[]> = {
+  '01': [
+    'sovereign monetary ledger',
+    'immaculate, permissionless genesis',
+    'corporate foundations / venture capital syndicates',
+    'configuration file / insider treasuries / multi-sig admin keys',
+    'biological neck (subpoena, OFAC injunction, or DNS seizure)',
+    'leaderless force of nature'
+  ],
+  '02': [
+    'First Law of Thermodynamics (dU = δQ − δW)',
+    'Conservation of Energy',
+    'irreversible expenditure of real-world Joules',
+    'continuous megawatts of electrical energy across silicon furnaces',
+    '0.00 Joules / digital fiat counterfeit machine',
+    'Cantillon Effect / finite metabolic life-force / Energy-Arbitrage Law'
+  ],
+  '03': [
+    'Second Law of Thermodynamics (ΔS_universe ≥ 0)',
+    'Landauer’s Principle (ΔQ ≥ kB·T·ln2)',
+    'irreversible dissipation of heat / asymmetric arrow between past and future',
+    'calcified historical mass',
+    'weightless, reversible signatures',
+    'weak subjectivity trust loop / rolling pruning / S3 state snapshots'
+  ],
+  '04': [
+    'Brewer’s CAP Theorem and FLP impossibility',
+    'synchronous >66.7% (2f+1) supermajority stake halt',
+    'total liveness collapse / inactivity-leak slashing / split-brain ledgers',
+    'autonomous local hash work along surviving electrical gradient',
+    'DAA recalibration window / resplice nChainWork vs merge_depth / dated outages'
+  ],
+  '05': [
+    'stateless, contention-free parallel UTXO graph',
+    'plaintext arithmetic supply auditability',
+    'monolithic shared-account virtual machines / contested mutex write-locks',
+    'Maximum Extractable Value (MEV) / sequential serialization',
+    'coercive state-rent seizures / native freeze, blacklist, upgrade-proxy, or clawback hooks'
+  ],
+  '06': [
+    'relativistic optical-fiber propagation limit (c/n ≈ 2.0 × 10⁸ m/s)',
+    'stale-orphan collisions (M < 1.0)',
+    'Carrier Subordination Law (M_overlay < M_L1 ≤ 1.0)',
+    'non-vote Layer-1 settlement finality',
+    'contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG (10+ BPS, M = 1.0)'
+  ],
+  CONCLUSION: [
+    'GRADE evidence certainty framework',
+    'empirically verifiable in codebase, genesis config, and postmortem records',
+    'explicit six-invariant breakdown (01..06)',
+    'exact score out of 6.00 and compliance grade',
+    'physics never negotiates and always settles the final ledger in Joules'
+  ]
+};
+
+function getAxiomExcerpt(axiomId: number): string {
+  const match = GENESIS_THESIS_GENIUS_PARAGRAPHS.find((p) => p.id === axiomId);
+  return match ? match.text : '';
+}
+
+function getAxiomLaw(axiomId: number): ThesisLawEquation {
+  const list = AXIOM_LAWS_BY_ID[axiomId];
+  return list?.[0] || { law: 'Thermodynamic First Principles', equation: 'E > 0' };
+}
+
+export const SECRET_GENIUS_PARAGRAPH_SPECS: readonly SecretGeniusTemplateSpec[] = (
+  [
+    { id: '01', axiomId: 1, label: 'Existential Sovereignty & Entity Decoupling' },
+    { id: '02', axiomId: 2, label: 'Thermodynamic Cost Floor (E > 0)' },
+    { id: '03', axiomId: 3, label: 'Historical Immutability & Arrow of Time' },
+    { id: '04', axiomId: 4, label: 'Dynamic Availability (Wartime Partition)' },
+    { id: '05', axiomId: 5, label: 'State Machine Topology' },
+    { id: '06', axiomId: 6, label: 'Thermodynamic Velocity (M = 1.0)' },
+    { id: 'CONCLUSION', axiomId: 17, label: 'GRADE Evidence Certainty Synthesis' }
+  ] as const
+).map((entry) => {
+  const lawEq = getAxiomLaw(entry.axiomId);
+  return {
+    id: entry.id,
+    axiomId: entry.axiomId,
+    label: entry.label,
+    law: lawEq.law,
+    equation: lawEq.equation,
+    openingFrame: INVARIANT_OPENING_FRAMES[entry.id],
+    requiredLexicon: INVARIANT_LEXICON_BY_ID[entry.id],
+    thesisAnchor: getAxiomExcerpt(entry.axiomId)
+  };
+});
+
+export function buildSecretGeniusTemplatePromptSection(): string {
+  const blocks = SECRET_GENIUS_PARAGRAPH_SPECS.map((spec) => {
+    const condensedAnchor = spec.thesisAnchor.slice(0, 440).replace(/\s+\S*$/, '…');
+    return `[${spec.id} • ${spec.label}]
+- Law & Equation: ${spec.law} (${spec.equation})
+- Canonical Opening Cadence: "${spec.openingFrame}"
+- Exact Origin-Thesis Lexicon (use verbatim physics terminology where applicable): ${spec.requiredLexicon.join('; ')}
+- Secret Thesis Cadence Reference: "${condensedAnchor}"`;
+  }).join('\n\n');
+
+  return `SECRET ORIGIN THESIS PARAGRAPH TEMPLATE & LEXICON (MANDATORY — PREVENT WORDING & STRUCTURE DRIFT):
+Every Genius Mode audit pull MUST derive its prose cadence, physical laws, and vocabulary directly from the canonical Secret Origin Thesis ("What Led The Truth To... The Truth") so wording and paragraph structure remain uniform across all assets:
+- Never open with generic AI disclaimers or conversational filler. Start EVERY invariant's "geniusParagraph" (and "conclusion") with its exact Canonical Opening Cadence below and preserve the exact 6-invariant + GRADE synthesis cadence.
+- Ground every claim in the exact physics terminology from the Origin Thesis (Cantillon Effect, digital fiat counterfeit machine, First/Second Law of Thermodynamics, Landauer's Principle ΔQ ≥ kB·T·ln2, calcified historical mass vs weightless reversible signatures, weak subjectivity, Brewer's CAP / FLP impossibility, split-brain ledgers, mutex write-locks / MEV / state-rent seizures / native freeze hooks, optical-fiber limit c/n, Carrier Subordination Law M_overlay < M_L1 ≤ 1.0, and closing 06 Velocity for non-KAS assets with a direct contrast to Kaspa's 10-BPS parallel PoW BlockDAG M = 1.0).
+
+${blocks}`;
+}
+
+export function buildSecretGeniusInvariantPromptHint(invId: string, ticker = ''): string {
+  const normalizedId = (['01', '02', '03', '04', '05', '06'].includes(invId) ? invId : '01') as
+    | '01'
+    | '02'
+    | '03'
+    | '04'
+    | '05'
+    | '06';
+  const spec =
+    SECRET_GENIUS_PARAGRAPH_SPECS.find((s) => s.id === normalizedId) ||
+    SECRET_GENIUS_PARAGRAPH_SPECS[0];
+  const isKas = String(ticker || '').toUpperCase() === 'KAS';
+  const kasNote =
+    normalizedId === '06' && isKas
+      ? '\n- Note for $KAS: Do NOT contrast Kaspa against itself; conclude with Kaspa’s own 10-BPS Crescendo GHOSTDAG M = 1.0 native L1 finality.'
+      : '';
+
+  return `SECRET ORIGIN THESIS PARAGRAPH TEMPLATE FOR INVARIANT ${spec.id} (${spec.label}):
+- Governing Law & Equation: ${spec.law} (${spec.equation})
+- Canonical Opening Cadence: "${spec.openingFrame}"
+- Required Origin-Thesis Lexicon (no wording drift): ${spec.requiredLexicon.join('; ')}
+- Full Reference Paragraph from Secret Origin Thesis (match this voice, precision, and thermodynamic rigor):
+"${spec.thesisAnchor}"${kasNote}`;
+}

@@ -65,6 +65,7 @@ import {
   DEFAULT_TITLES,
   GRADING_RUBRIC_SPEC,
   ORBIT_ANGLES_DEG,
+  buildCanonicalSingleInvariantEssayParagraph,
   canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   computeRunningAuditAccent,
@@ -2328,20 +2329,17 @@ function ThermodynamicAuditApp() {
 
     const baseParas = [...getGeniusForensicParagraphs(targetAudit)];
     if (baseParas.length === 6) {
-      if (invIdx >= 0 && invIdx <= 3) {
-        baseParas[invIdx] = `Evaluating ${targetAudit.name} (${targetAudit.ticker}) on Invariant ${
-          updatedSingleInv.id
-        } — ${updatedSingleInv.title} (${formatScore(updatedSingleInv.score)}/1.0): ${
-          updatedSingleInv.geniusParagraph
-        } Verified telemetry: ${(updatedSingleInv.receipts || []).join(' • ')}.`;
-      } else if (invIdx === 4 || invIdx === 5) {
-        baseParas[4] = `Examining ${targetAudit.name}’s State Machine Topology (${formatScore(
-          nextInvariants[4].score
-        )}/1.0) and Thermodynamic Velocity (${formatScore(
-          nextInvariants[5].score
-        )}/1.0, M = 1.0 benchmark): ${nextInvariants[4].geniusParagraph} ${
-          nextInvariants[5].geniusParagraph
-        }`;
+      if (invIdx >= 0 && invIdx <= 5) {
+        const targetParaIdx = invIdx === 5 ? 4 : invIdx;
+        baseParas[targetParaIdx] = buildCanonicalSingleInvariantEssayParagraph(
+          {
+            ticker: targetAudit.ticker,
+            name: targetAudit.name,
+            architecture: targetAudit.architecture,
+            invariants: nextInvariants
+          },
+          invIdx
+        );
       }
       if (Math.abs(nextTotal - prevTotal) > 0.001) {
         baseParas[5] = `Evaluating these findings through the GRADE evidence certainty framework yields a ${

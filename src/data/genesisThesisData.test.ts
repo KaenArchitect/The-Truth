@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {
   GENESIS_THESIS_PARAGRAPHS,
   GENESIS_THESIS_GENIUS_PARAGRAPHS,
+  SECRET_GENIUS_PARAGRAPH_SPECS,
+  buildSecretGeniusInvariantPromptHint,
+  buildSecretGeniusTemplatePromptSection,
   getGenesisThesisParagraphs
 } from './genesisThesisData.ts';
 
@@ -55,4 +58,32 @@ test('GENIUS genesis thesis preserves verbatim manifesto openings and physical t
   ]) {
     assert.ok(fullGenius.includes(term), `Expected GENIUS thesis to contain "${term}"`);
   }
+});
+
+test('SECRET_GENIUS_PARAGRAPH_SPECS exposes all 7 Secret Origin Thesis templates and builds non-drifting prompt hints', () => {
+  assert.deepEqual(
+    SECRET_GENIUS_PARAGRAPH_SPECS.map((s) => s.id),
+    ['01', '02', '03', '04', '05', '06', 'CONCLUSION']
+  );
+
+  for (const spec of SECRET_GENIUS_PARAGRAPH_SPECS) {
+    assert.ok(spec.law.length > 5);
+    assert.ok(spec.equation.length > 2);
+    assert.ok(spec.openingFrame.length > 20);
+    assert.ok(spec.requiredLexicon.length >= 5);
+    assert.ok(spec.thesisAnchor.length > 200);
+  }
+
+  const promptSection = buildSecretGeniusTemplatePromptSection();
+  assert.ok(promptSection.includes('SECRET ORIGIN THESIS PARAGRAPH TEMPLATE & LEXICON'));
+  assert.ok(promptSection.includes('[01 • Existential Sovereignty & Entity Decoupling]'));
+  assert.ok(promptSection.includes('[06 • Thermodynamic Velocity (M = 1.0)]'));
+  assert.ok(promptSection.includes('[CONCLUSION • GRADE Evidence Certainty Synthesis]'));
+
+  const btcVelHint = buildSecretGeniusInvariantPromptHint('06', 'BTC');
+  assert.ok(btcVelHint.includes('INVARIANT 06 (Thermodynamic Velocity (M = 1.0))'));
+  assert.ok(!btcVelHint.includes('Do NOT contrast Kaspa against itself'));
+
+  const kasVelHint = buildSecretGeniusInvariantPromptHint('06', 'KAS');
+  assert.ok(kasVelHint.includes('Do NOT contrast Kaspa against itself'));
 });
