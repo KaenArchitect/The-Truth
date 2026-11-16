@@ -679,12 +679,12 @@ export function getConstellationLayout(
 
   if (count === 2) {
     return {
-      width: 940,
-      height: 420,
-      nodeScale: 0.86,
+      width: 880,
+      height: 430,
+      nodeScale: 1,
       positions: [
-        { x: 250, y: 210 },
-        { x: 690, y: 210 }
+        { x: 200, y: 215 },
+        { x: 680, y: 215 }
       ],
       edges: [[0, 1]],
       diagonals: []
@@ -694,13 +694,13 @@ export function getConstellationLayout(
   if (count === 3) {
     if (threeMode === 'SIDE_BY_SIDE') {
       return {
-        width: 1120,
-        height: 380,
-        nodeScale: 0.73,
+        width: 1100,
+        height: 372,
+        nodeScale: 0.84,
         positions: [
-          { x: 195, y: 190 },
-          { x: 560, y: 190 },
-          { x: 925, y: 190 }
+          { x: 170, y: 186 },
+          { x: 550, y: 186 },
+          { x: 930, y: 186 }
         ],
         edges: [
           [0, 1],
@@ -754,13 +754,13 @@ export function getConstellationLayout(
   if (fourMode === 'SIDE_BY_SIDE') {
     return {
       width: 1180,
-      height: 336,
-      nodeScale: 0.59,
+      height: 320,
+      nodeScale: 0.65,
       positions: [
-        { x: 155, y: 168 },
-        { x: 445, y: 168 },
-        { x: 735, y: 168 },
-        { x: 1025, y: 168 }
+        { x: 138, y: 160 },
+        { x: 439, y: 160 },
+        { x: 740, y: 160 },
+        { x: 1041, y: 160 }
       ],
       edges: [
         [0, 1],

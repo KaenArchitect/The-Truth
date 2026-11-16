@@ -177,7 +177,10 @@ import {
   summarizeArchivedAudit,
   type ArchivedAuditListFilters
 } from './data/agentArchiveApi.ts';
-import { computeDisplayLayoutMetrics } from './data/displayScale.ts';
+import {
+  computeConstellationScale,
+  computeDisplayLayoutMetrics
+} from './data/displayScale.ts';
 
 const PRELOADED_TICKER_SET = new Set(Object.keys(PRELOADED_AUDITS));
 
@@ -464,11 +467,14 @@ function ThermodynamicAuditApp() {
   const searchDockRef = useRef<HTMLFormElement | null>(null);
   const backdropRootRef = useRef<HTMLDivElement | null>(null);
   const constellationMeasureRef = useRef<HTMLDivElement | null>(null);
-  const [constellationWrapWidth, setConstellationWrapWidth] = useState(() =>
-    typeof window !== 'undefined' && window.innerWidth < 768
-      ? Math.max(280, window.innerWidth - 24)
-      : 1120
-  );
+  const [constellationWrapWidth, setConstellationWrapWidth] = useState(() => {
+    if (typeof window === 'undefined') return 1120;
+    const iw = window.innerWidth;
+    if (iw < 768) return Math.max(280, iw - 24);
+    const dm = computeDisplayLayoutMetrics({ width: iw, height: window.innerHeight });
+    const reserve = dm.mainHorizontalPadPx ?? (iw >= 1280 ? 290 : iw >= 1024 ? 244 : 196);
+    return Math.max(320, iw - reserve * 2);
+  });
   const [hoveredInvId, setHoveredInvId] = useState<string | null>(null);
   const [expandedSyncInvId, setExpandedSyncInvId] = useState<string | null>(null);
   const [isScanningPulse, setIsScanningPulse] = useState(false);
@@ -4560,7 +4566,11 @@ function ThermodynamicAuditApp() {
             : undefined
         }
         className={`relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-3 sm:pb-4 flex flex-col items-center justify-start ${
-          !isLandingIdle && !isMultiStage ? 'pt-0.5 sm:pt-2' : 'pt-7 sm:pt-8'
+          !isLandingIdle && !isMultiStage
+            ? 'pt-0.5 sm:pt-2'
+            : isMultiStage
+            ? 'pt-3 sm:pt-4'
+            : 'pt-7 sm:pt-8'
         }`}
       >
         {isLandingIdle ? (
@@ -4577,20 +4587,18 @@ function ThermodynamicAuditApp() {
               fourFormation,
               pinOrientationMode
             );
-            const widthFitScale = Math.max(0.32, (constellationWrapWidth - 8) / layout.width);
-            const heightFitScale =
-              pinOrientationMode === 'desktop'
-                ? Math.max(0.76, (viewportMetrics.height - 645) / Math.max(1, layout.height))
-                : displayMetrics.pinMaxScale;
-            const responsiveScale = Math.min(
-              displayMetrics.pinMaxScale,
-              widthFitScale,
-              heightFitScale
-            );
+            const responsiveScale = computeConstellationScale({
+              layoutWidth: layout.width,
+              layoutHeight: layout.height,
+              wrapWidth: constellationWrapWidth,
+              viewportHeight: viewportMetrics.height,
+              pinMaxScale: displayMetrics.pinMaxScale,
+              orientationMode: pinOrientationMode
+            });
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
 
             return (
-              <div className="animate-stage-enter w-full flex flex-col items-center gap-6">
+              <div className="animate-stage-enter w-full flex flex-col items-center gap-5">
                 <div
                   data-tutorial-id="pin-compare"
                   className="w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 py-2.5 flex flex-wrap items-center justify-center md:justify-between gap-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
@@ -4910,7 +4918,7 @@ function ThermodynamicAuditApp() {
                 </div>
 
                 {/* Synchronized Cross-Bubble Invariant Matrix Bar */}
-                <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-3 scroll-mt-4">
+                <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-3 scroll-mt-4 pt-2">
                   <div
                     onMouseLeave={() => {
                       if (expandedSyncInvId) {

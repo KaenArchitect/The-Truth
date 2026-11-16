@@ -97,9 +97,13 @@ export function computeDisplayLayoutMetrics({
 
   const pinMaxScale =
     tier === '2160'
-      ? Math.min(1.68, Math.round(arenaScale * 100) / 100)
+      ? Math.max(1.68, Math.min(2.05, Math.round(maxWidthScale * 0.9 * 100) / 100))
       : tier === '1440'
-      ? Math.min(1.32, Math.round(arenaScale * 100) / 100)
+      ? Math.max(1.32, Math.min(1.62, Math.round(arenaScale * 1.18 * 100) / 100))
+      : w >= 1680
+      ? 1.48
+      : w >= 1480
+      ? 1.18
       : 1;
 
   // Center arena is anchored around 50vh. Position bottom controls cleanly toward the lower band above footer.
@@ -126,4 +130,42 @@ export function computeDisplayLayoutMetrics({
     bottomControlsOffsetPx,
     buttonRowGapPx
   };
+}
+
+export interface ConstellationScaleInput {
+  layoutWidth: number;
+  layoutHeight: number;
+  wrapWidth: number;
+  viewportHeight: number;
+  pinMaxScale: number;
+  orientationMode: 'vertical' | 'horizontal' | 'desktop';
+}
+
+/**
+ * Computes responsive scale for pinned 2–4 bubble constellations.
+ * On desktop, lets harmonic bubbles fill the arena between the pinned bar and footer,
+ * allowing the Sync Invariant comparison bar/cards to populate offscreen below.
+ */
+export function computeConstellationScale({
+  layoutWidth,
+  layoutHeight,
+  wrapWidth,
+  viewportHeight,
+  pinMaxScale,
+  orientationMode
+}: ConstellationScaleInput): number {
+  const safeW = Math.max(1, Number(layoutWidth) || 1);
+  const safeH = Math.max(1, Number(layoutHeight) || 1);
+  const safeWrap = Math.max(240, Number(wrapWidth) || 240);
+  const safeHView = Math.max(480, Number(viewportHeight) || 900);
+
+  const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
+  const desktopAvailableHeight = Math.max(380, safeHView - 316);
+  const heightFitScale =
+    orientationMode === 'desktop'
+      ? Math.max(0.76, desktopAvailableHeight / safeH)
+      : pinMaxScale;
+
+  const rawScale = Math.min(pinMaxScale, widthFitScale, heightFitScale);
+  return Math.round(rawScale * 1000) / 1000;
 }
