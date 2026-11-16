@@ -1236,10 +1236,22 @@ function ThermodynamicAuditApp() {
     [isMultiStage, stageTickers, validPinnedKeys]
   );
 
+  const prevIsLandingIdleRef = useRef(isLandingIdle);
   useEffect(() => {
-    if (!isMultiStage && expandedSyncInvId) {
+    if (prevIsLandingIdleRef.current && !isLandingIdle && window.scrollY > 24) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    prevIsLandingIdleRef.current = isLandingIdle;
+  }, [isLandingIdle]);
+
+  const prevIsMultiStageRef = useRef(false);
+  useEffect(() => {
+    if (isMultiStage && !prevIsMultiStageRef.current) {
+      setExpandedSyncInvId((prev) => prev || '01');
+    } else if (!isMultiStage && expandedSyncInvId) {
       setExpandedSyncInvId(null);
     }
+    prevIsMultiStageRef.current = isMultiStage;
   }, [isMultiStage, expandedSyncInvId]);
 
   useEffect(() => {
@@ -1277,8 +1289,14 @@ function ThermodynamicAuditApp() {
     };
   }, [isMultiStage, stageTickers.length]);
 
-  const lastLayoutSyncRef = useRef<{ heroY: number; wrapPt: number; wrapMt: number }>({
+  const lastLayoutSyncRef = useRef<{
+    heroY: number;
+    heroWidth: number;
+    wrapPt: number;
+    wrapMt: number;
+  }>({
     heroY: -1,
+    heroWidth: -1,
     wrapPt: -1,
     wrapMt: 9999
   });
@@ -1290,6 +1308,9 @@ function ThermodynamicAuditApp() {
       queuedSyncRaf = null;
 
       // Phase 1: Batch all DOM geometry & computed-style READS before touching .style
+      const prev = lastLayoutSyncRef.current;
+      const currentWinW = window.innerWidth;
+      const isTouchOrMobile = viewportMetrics.isCoarsePointer || currentWinW < 768;
       const root = backdropRootRef.current;
       const rootRect = root ? root.getBoundingClientRect() : null;
       const backdropCenterY =
@@ -1298,13 +1319,26 @@ function ThermodynamicAuditApp() {
       const heroEl = heroDockRef.current;
       const searchEl = searchDockRef.current;
       let nextHeroY: number | null = null;
-      if (isLandingIdle && heroEl && searchEl) {
-        const m = new DOMMatrixReadOnly(window.getComputedStyle(heroEl).transform);
-        const currentTy = Number.isFinite(m.m42) ? m.m42 : 0;
-        const searchRect = searchEl.getBoundingClientRect();
-        if (searchRect.height > 0) {
-          const searchCenterAtTy0 = searchRect.top + searchRect.height / 2 - currentTy;
-          nextHeroY = Math.max(0, backdropCenterY - searchCenterAtTy0);
+      let nextHeroWidth = prev.heroWidth;
+
+      if (!isLandingIdle) {
+        prev.heroY = -1;
+        prev.heroWidth = -1;
+      } else if (heroEl && searchEl) {
+        const shouldKeepStaticOnTouch =
+          isTouchOrMobile && prev.heroY >= 0 && Math.abs(prev.heroWidth - currentWinW) <= 2;
+
+        if (!shouldKeepStaticOnTouch) {
+          const m = new DOMMatrixReadOnly(window.getComputedStyle(heroEl).transform);
+          const currentTy = Number.isFinite(m.m42) ? m.m42 : 0;
+          const searchRect = searchEl.getBoundingClientRect();
+          const docScrollY = window.scrollY || window.pageYOffset || 0;
+          if (searchRect.height > 0) {
+            const searchCenterAtTy0 =
+              searchRect.top + docScrollY + searchRect.height / 2 - currentTy;
+            nextHeroY = Math.max(0, backdropCenterY - searchCenterAtTy0);
+            nextHeroWidth = currentWinW;
+          }
         }
       }
 
@@ -1313,7 +1347,7 @@ function ThermodynamicAuditApp() {
       let nextWrapPt: number | null = null;
       let nextWrapMt: number | null = null;
       if (wrapEl && arenaEl && !isLandingIdle && !isMultiStage) {
-        if (isMobileViewport) {
+        if (currentWinW < 768) {
           nextWrapPt = 0;
           nextWrapMt = 0;
         } else {
@@ -1342,10 +1376,12 @@ function ThermodynamicAuditApp() {
       }
 
       // Phase 2: Commit DOM style WRITES only when values meaningfully change
-      const prev = lastLayoutSyncRef.current;
-      if (heroEl && nextHeroY !== null && Math.abs(nextHeroY - prev.heroY) >= 0.25) {
-        prev.heroY = nextHeroY;
-        heroEl.style.setProperty('--hero-landing-y', `${nextHeroY.toFixed(2)}px`);
+      if (heroEl && nextHeroY !== null) {
+        prev.heroWidth = nextHeroWidth;
+        if (Math.abs(nextHeroY - prev.heroY) >= 0.25) {
+          prev.heroY = nextHeroY;
+          heroEl.style.setProperty('--hero-landing-y', `${nextHeroY.toFixed(2)}px`);
+        }
       }
       if (
         wrapEl &&
@@ -1636,11 +1672,17 @@ function ThermodynamicAuditApp() {
           : [...validPinnedKeys.slice(0, 3), key];
       setPinnedKeys(nextPinned);
       setActiveKey(key);
+      if (window.innerWidth < 1024 && window.scrollY > 24) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
       triggerScanPulse();
       return;
     }
 
     setActiveKey(key);
+    if (window.innerWidth < 1024 && window.scrollY > 24) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
     triggerScanPulse();
   };
 
@@ -4072,17 +4114,17 @@ function ThermodynamicAuditApp() {
           1. EDITORIAL HEADER: Centered Google-Style on Open -> Slides Up on Audit
          ===================================================================== */}
       <header
-        className={`relative z-30 w-full pt-5 px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
+        className={`relative z-30 w-full pt-3.5 md:pt-5 px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
           !isLandingIdle && !isMultiStage ? 'pb-1' : 'pb-2'
         }`}
       >
-        <div className="relative z-30 w-full flex flex-wrap items-center justify-between gap-3 pointer-events-none">
-          <div className="pointer-events-auto flex flex-wrap items-center justify-center md:justify-start gap-2 w-full md:w-auto">
+        <div className="hidden md:flex relative z-30 w-full flex-wrap items-center justify-between gap-3 pointer-events-none">
+          <div className="pointer-events-auto flex flex-wrap items-center justify-start gap-2 w-auto">
             <button
               type="button"
               data-tutorial-id="rubric-button"
               onClick={() => setIsRubricOpen(true)}
-              className="color-glide px-3 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
+              className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
               title="View Deterministic 6-Invariant Grading Rubric"
             >
               <BookOpen className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
@@ -4092,7 +4134,7 @@ function ThermodynamicAuditApp() {
             <button
               type="button"
               onClick={() => setIsArchiveModalOpen(true)}
-              className="color-glide px-3 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
+              className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm"
               title="Thermodynamic Archive & API Credit Shield — Pulls cached & community-audited tokens at 0 API credits"
             >
               {strictCreditLock && !isAdminSession ? (
@@ -4125,13 +4167,13 @@ function ThermodynamicAuditApp() {
             </button>
           </div>
 
-          <div className="pointer-events-auto flex flex-wrap items-center justify-center md:justify-end gap-2 w-full md:w-auto">
+          <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2 w-auto">
             <button
               type="button"
               data-tutorial-id="gains-archive"
               onClick={() => setIsGainsModalOpen(true)}
               title="Open Live Thermodynamic Gains Chart — Passed (E > 0) vs. Failed (E = 0)"
-              className="color-glide px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 text-xs font-mono font-semibold text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
+              className="color-glide h-8 px-3 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] font-semibold text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.35)]"
             >
               <TrendingUp className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
               <span>Live Gains</span>
@@ -4151,7 +4193,7 @@ function ThermodynamicAuditApp() {
               <button
                 type="button"
                 onClick={() => copyTextToClipboard(formatXLongPost(currentAudit), 'header-x')}
-                className="animate-card-fade color-glide px-3.5 py-1.5 rounded-full text-xs font-mono font-semibold flex items-center gap-1.5 shadow-sm hover:brightness-110"
+                className="animate-card-fade color-glide h-8 px-3 rounded-full font-mono text-[11px] font-semibold flex items-center gap-1.5 shadow-sm hover:brightness-110"
                 style={{
                   backgroundColor: accent.softBg,
                   color: accent.primary,
@@ -4177,7 +4219,7 @@ function ThermodynamicAuditApp() {
         {/* HERO LOCKUP + SEARCH BAR */}
         <div
           ref={heroDockRef}
-          className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-3 lg:-mt-9 pointer-events-none"
+          className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-1 md:mt-3 lg:-mt-9 pointer-events-none"
           style={{
             transform: isLandingIdle
               ? 'translate3d(0, var(--hero-landing-y, 26vh), 0)'
@@ -4598,7 +4640,7 @@ function ThermodynamicAuditApp() {
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
 
             return (
-              <div className="animate-stage-enter w-full flex flex-col items-center gap-5">
+              <div className="animate-stage-enter w-full flex flex-col items-center gap-2.5 md:gap-5">
                 <div
                   data-tutorial-id="pin-compare"
                   className="w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 py-2.5 flex flex-wrap items-center justify-center md:justify-between gap-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
@@ -4918,77 +4960,82 @@ function ThermodynamicAuditApp() {
                 </div>
 
                 {/* Synchronized Cross-Bubble Invariant Matrix Bar */}
-                <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-3 scroll-mt-4 pt-2">
+                <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-2.5 md:space-y-3 scroll-mt-4 pt-0 md:pt-2">
                   <div
                     onMouseLeave={() => {
                       if (expandedSyncInvId) {
                         setHoveredInvId(expandedSyncInvId);
                       }
                     }}
-                    className="flex flex-wrap items-center justify-center gap-1.5 text-center"
+                    className="flex flex-col items-center gap-1.5 text-center"
                   >
                     <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 w-full text-center">
                       Sync Invariant:
                     </span>
-                    {DEFAULT_SHORT_NAMES.map((sName, idx) => {
-                      const idStr = `0${idx + 1}`;
-                      const isExpanded = expandedSyncInvId === idStr;
-                      const isHov = hoveredInvId === idStr;
-                      return (
-                        <button
-                          key={idStr}
-                          type="button"
-                          aria-label={`${idStr} ${sName}`}
-                          onMouseEnter={() => setHoveredInvId(idStr)}
-                          onClick={() => {
-                            const nextId = expandedSyncInvId === idStr ? null : idStr;
-                            setExpandedSyncInvId(nextId);
-                            setHoveredInvId(idStr);
-                            if (nextId) {
-                              scrollToSyncComparison();
-                            }
-                          }}
-                          title={
-                            isExpanded
-                              ? `Click to collapse full ${sName} breakdown`
-                              : `Hover to preview • Click to expand full ${sName} breakdown downward`
-                          }
-                          className={`color-glide px-2.5 py-1 rounded-full font-mono text-[10.5px] inline-flex items-center gap-1 ${
-                            isExpanded || isHov
-                              ? 'font-bold'
-                              : 'bg-[#121418] text-neutral-400 hover:text-white border border-white/[0.08]'
-                          }`}
-                          style={
-                            isExpanded
-                              ? {
-                                  backgroundColor: accent.softBg,
-                                  color: accent.primary,
-                                  border: `1px solid ${accent.border}`,
-                                  boxShadow: `0 0 16px ${accent.glow}`
-                                }
-                              : isHov
-                              ? {
-                                  backgroundColor: accent.secondarySoftBg,
-                                  color: accent.secondary,
-                                  border: `1px solid ${accent.secondaryBorder}`
-                                }
-                              : undefined
-                          }
-                        >
-                          <span>{idStr}</span>
-                          <span className="hidden md:inline">{sName}</span>
-                          <ChevronDown
-                            className={`w-3 h-3 transition-transform duration-300 ${
+                    <div
+                      data-testid="sync-invariant-row"
+                      className="w-full flex flex-nowrap md:flex-wrap items-center justify-center gap-1 md:gap-1.5"
+                    >
+                      {DEFAULT_SHORT_NAMES.map((sName, idx) => {
+                        const idStr = `0${idx + 1}`;
+                        const isExpanded = expandedSyncInvId === idStr;
+                        const isHov = hoveredInvId === idStr;
+                        return (
+                          <button
+                            key={idStr}
+                            type="button"
+                            aria-label={`${idStr} ${sName}`}
+                            onMouseEnter={() => setHoveredInvId(idStr)}
+                            onClick={() => {
+                              const nextId = expandedSyncInvId === idStr ? null : idStr;
+                              setExpandedSyncInvId(nextId);
+                              setHoveredInvId(idStr);
+                              if (nextId) {
+                                scrollToSyncComparison();
+                              }
+                            }}
+                            title={
                               isExpanded
-                                ? 'rotate-180 opacity-100'
-                                : isHov
-                                ? 'opacity-80'
-                                : 'opacity-40'
+                                ? `Click to collapse ${sName} pinned comparison`
+                                : `Click to pin ${sName} comparison below`
+                            }
+                            className={`color-glide flex-1 basis-0 min-w-0 max-w-[54px] md:flex-none md:basis-auto md:max-w-none px-1 sm:px-2 md:px-2.5 py-1 rounded-full font-mono text-[10px] md:text-[10.5px] inline-flex items-center justify-center gap-0.5 md:gap-1 whitespace-nowrap ${
+                              isExpanded || isHov
+                                ? 'font-bold'
+                                : 'bg-[#121418] text-neutral-400 hover:text-white border border-white/[0.08]'
                             }`}
-                          />
-                        </button>
-                      );
-                    })}
+                            style={
+                              isExpanded
+                                ? {
+                                    backgroundColor: accent.softBg,
+                                    color: accent.primary,
+                                    border: `1px solid ${accent.border}`,
+                                    boxShadow: `0 0 16px ${accent.glow}`
+                                  }
+                                : isHov
+                                ? {
+                                    backgroundColor: accent.secondarySoftBg,
+                                    color: accent.secondary,
+                                    border: `1px solid ${accent.secondaryBorder}`
+                                  }
+                                : undefined
+                            }
+                          >
+                            <span>{idStr}</span>
+                            <span className="hidden md:inline">{sName}</span>
+                            <ChevronDown
+                              className={`w-2.5 h-2.5 md:w-3 md:h-3 shrink-0 transition-transform duration-300 ${
+                                isExpanded
+                                  ? 'rotate-180 opacity-100'
+                                  : isHov
+                                  ? 'opacity-80'
+                                  : 'opacity-40'
+                              }`}
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {expandedSyncInvId ? (
@@ -5264,80 +5311,7 @@ function ThermodynamicAuditApp() {
                         </div>
                       );
                     })()
-                  ) : (
-                    <div
-                      style={{ overflowAnchor: 'none' }}
-                      className={`w-full ${
-                        pinOrientationMode === 'vertical'
-                          ? 'min-h-[300px]'
-                          : count === 4
-                          ? 'min-h-[344px] xl:min-h-[172px]'
-                          : 'min-h-[172px]'
-                      } flex flex-col justify-start`}
-                    >
-                      {hoveredInvId ? (
-                        <div
-                          className={`grid grid-cols-1 ${
-                            pinOrientationMode === 'vertical'
-                              ? ''
-                              : count === 2
-                              ? 'sm:grid-cols-2'
-                              : count === 3
-                              ? 'sm:grid-cols-3'
-                              : 'sm:grid-cols-2 xl:grid-cols-4'
-                          } gap-2.5`}
-                        >
-                          {stageTickers.map((tk) => {
-                            const item = audits[tk];
-                            const inv = item?.invariants?.find((i) => i.id === hoveredInvId);
-                            if (!item || !inv) return null;
-                            const sStyle = getScoreStyle(inv.score);
-                            return (
-                              <button
-                                key={tk}
-                                type="button"
-                                onClick={() => {
-                                  setActiveKey(tk);
-                                  setEssayViewMode(false);
-                                  setModalInvId(inv.id);
-                                }}
-                                className="color-glide text-left rounded-2xl bg-[#121418]/95 p-3.5 cursor-pointer hover:brightness-110 space-y-1.5"
-                                style={{ border: `1px solid ${sStyle.border}` }}
-                              >
-                                <div className="flex items-center justify-between gap-2 font-mono text-xs">
-                                  <span className="font-bold text-white">
-                                    ${item.ticker} // {inv.shortName}
-                                  </span>
-                                  <span
-                                    className="color-glide px-2 py-0.5 rounded-full text-[10.5px] font-bold"
-                                    style={{
-                                      color: sStyle.color,
-                                      backgroundColor: sStyle.bg,
-                                      border: `1px solid ${sStyle.border}`
-                                    }}
-                                  >
-                                    {formatScore(inv.score)}/1.0
-                                  </span>
-                                </div>
-                                <p className="text-xs text-neutral-300 leading-relaxed line-clamp-3">
-                                  {inv.quickSummary}
-                                </p>
-                                <div className="font-mono text-[10px] text-neutral-500 truncate">
-                                  {inv.telemetry}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="w-full py-5 px-4 rounded-2xl border border-dashed border-white/[0.06] bg-[#121418]/35 flex items-center justify-center text-center">
-                          <span className="font-mono text-[11px] text-neutral-500">
-                            Hover any invariant bubble or pill above to compare summaries • Click to expand full breakdown
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -6146,44 +6120,183 @@ function ThermodynamicAuditApp() {
       </main>
 
       {/* =====================================================================
-          3. MINIMAL THERMODYNAMIC FOOTER (TUTORIAL LEFT • LAWS CENTER • DONATE RIGHT)
+          3. MINIMAL THERMODYNAMIC FOOTER (BALANCED MOBILE DOCK + DESKTOP FOOTER)
          ===================================================================== */}
-      <footer className="relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 py-3.5 border-t border-white/[0.05] grid grid-cols-2 md:grid-cols-[150px_1fr_150px] items-center gap-x-3 gap-y-2.5 text-[11px] font-mono text-neutral-500">
-        <div className="order-2 md:order-1 flex items-center justify-start">
-          <button
-            type="button"
-            onClick={startTutorial}
-            className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-            title="Launch Interactive Step-by-Step Tutorial"
-          >
-            <Compass className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
-            <span>Tutorial</span>
-          </button>
+      <footer className="relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 py-3.5 border-t border-white/[0.05] text-[11px] font-mono text-neutral-500">
+        {/* Mobile balanced matched-size bottom button dock */}
+        <div
+          data-testid="mobile-footer-actions"
+          className="md:hidden w-full max-w-md mx-auto flex flex-col items-center gap-3 pb-1"
+        >
+          <div className="w-full grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-tutorial-id="rubric-button"
+              onClick={() => setIsRubricOpen(true)}
+              className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap"
+              title="View Deterministic 6-Invariant Grading Rubric"
+            >
+              <BookOpen className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+              <span>Rubric</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsArchiveModalOpen(true)}
+              className="color-glide w-full h-9 px-2 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1 shadow-sm whitespace-nowrap"
+              title="Thermodynamic Archive & API Credit Shield — Pulls cached & community-audited tokens at 0 API credits"
+            >
+              {strictCreditLock && !isAdminSession ? (
+                <Lock className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.secondary }} />
+              ) : (
+                <Database className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.secondary }} />
+              )}
+              <span className="truncate">Archive ({sortedTickers.length})</span>
+              {isAdminSession && (
+                <span
+                  data-testid="header-admin-badge"
+                  className="animate-card-fade px-1 py-0.2 rounded-full text-[9px] font-bold bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45 shrink-0"
+                  title={`Admin Access Active (${archiveUser?.email || PRIMARY_ADMIN_EMAIL}) — Unlimited Audit Pulls`}
+                >
+                  <span className="sm:hidden">∞</span>
+                  <span className="hidden sm:inline">ADMIN ∞</span>
+                </span>
+              )}
+              {zeroTokenHits > 0 && (
+                <span
+                  className="animate-card-fade color-glide px-1 py-0.2 rounded-full text-[9px] font-bold shrink-0"
+                  style={{
+                    backgroundColor: accent.secondarySoftBg,
+                    color: accent.secondary,
+                    border: `1px solid ${accent.secondaryBorder}`
+                  }}
+                >
+                  <span className="sm:hidden">{zeroTokenHits}F</span>
+                  <span className="hidden sm:inline">{zeroTokenHits} Free</span>
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              data-tutorial-id="gains-archive"
+              onClick={() => setIsGainsModalOpen(true)}
+              title="Open Live Thermodynamic Gains Chart — Passed (E > 0) vs. Failed (E = 0)"
+              className={`color-glide h-9 px-2 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-semibold text-neutral-200 hover:text-white flex items-center justify-center gap-1 shadow-[0_6px_20px_rgba(0,0,0,0.35)] whitespace-nowrap ${
+                hasActiveAudit ? 'w-full' : 'col-span-2 w-[calc(50%-0.25rem)] justify-self-center order-last'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+              <span>Live Gains</span>
+              <span
+                className="color-glide px-1 py-0.2 rounded-full text-[9px] font-bold shrink-0"
+                style={{
+                  backgroundColor: accent.softBg,
+                  color: accent.primary,
+                  border: `1px solid ${accent.border}`
+                }}
+              >
+                12x E&gt;0
+              </span>
+            </button>
+
+            {hasActiveAudit && (
+              <button
+                type="button"
+                onClick={() => copyTextToClipboard(formatXLongPost(currentAudit), 'header-x')}
+                className="animate-card-fade color-glide w-full h-9 px-2 rounded-full font-mono text-[10.5px] font-semibold flex items-center justify-center gap-1 shadow-sm hover:brightness-110 whitespace-nowrap"
+                style={{
+                  backgroundColor: accent.softBg,
+                  color: accent.primary,
+                  border: `1px solid ${accent.border}`
+                }}
+              >
+                {copiedTarget === 'header-x' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 shrink-0" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">
+                      {isGeniusMode ? 'Copy Genius Audit' : 'Copy Normie Audit'}
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={startTutorial}
+              className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+              title="Launch Interactive Step-by-Step Tutorial"
+            >
+              <Compass className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+              <span>Tutorial</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsDonateModalOpen(true)}
+              className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+              style={{
+                borderColor: accent.border
+              }}
+              title="Support Open-Access Thermodynamic Audits"
+            >
+              <Heart className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+              <span>Donate</span>
+            </button>
+          </div>
+
+          <div className="flex flex-col items-center gap-1 text-center text-[10px] leading-relaxed text-neutral-500 px-1 pt-0.5">
+            <span>Landauer’s Principle: ΔQ ≥ kB·T·ln2 • E = 0 Forces Terminal Grade F</span>
+            <span>
+              Carrier Subordination Law: M_overlay &lt; M_L1 ≤ 1.0 • {sortedTickers.length} Assets Audited
+            </span>
+          </div>
         </div>
 
-        <div className="col-span-2 md:col-span-1 order-1 md:order-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center px-2">
-          <span>Landauer’s Principle: ΔQ ≥ kB·T·ln2 • E = 0 Forces Terminal Grade F</span>
-          <span className="hidden lg:inline text-white/15" aria-hidden="true">
-            •
-          </span>
-          <span>
-            Carrier Subordination Law: M_overlay &lt; M_L1 ≤ 1.0 • {sortedTickers.length} Assets Audited
-          </span>
-        </div>
+        {/* Desktop 3-column footer */}
+        <div className="hidden md:grid grid-cols-[150px_1fr_150px] items-center gap-x-3">
+          <div className="flex items-center justify-start">
+            <button
+              type="button"
+              onClick={startTutorial}
+              className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+              title="Launch Interactive Step-by-Step Tutorial"
+            >
+              <Compass className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
+              <span>Tutorial</span>
+            </button>
+          </div>
 
-        <div className="order-3 flex items-center justify-end">
-          <button
-            type="button"
-            onClick={() => setIsDonateModalOpen(true)}
-            className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-            style={{
-              borderColor: accent.border
-            }}
-            title="Support Open-Access Thermodynamic Audits"
-          >
-            <Heart className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
-            <span>Donate</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center px-2">
+            <span>Landauer’s Principle: ΔQ ≥ kB·T·ln2 • E = 0 Forces Terminal Grade F</span>
+            <span className="hidden lg:inline text-white/15" aria-hidden="true">
+              •
+            </span>
+            <span>
+              Carrier Subordination Law: M_overlay &lt; M_L1 ≤ 1.0 • {sortedTickers.length} Assets Audited
+            </span>
+          </div>
+
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setIsDonateModalOpen(true)}
+              className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+              style={{
+                borderColor: accent.border
+              }}
+              title="Support Open-Access Thermodynamic Audits"
+            >
+              <Heart className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
+              <span>Donate</span>
+            </button>
+          </div>
         </div>
       </footer>
 

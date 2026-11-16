@@ -161,9 +161,12 @@ export function computeConstellationScale({
 
   const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
   const desktopAvailableHeight = Math.max(380, safeHView - 316);
+  const verticalTwoAvailableHeight = Math.max(480, safeHView - 184);
   const heightFitScale =
     orientationMode === 'desktop'
       ? Math.max(0.76, desktopAvailableHeight / safeH)
+      : orientationMode === 'vertical' && safeH <= 900
+      ? Math.max(0.6, verticalTwoAvailableHeight / safeH)
       : pinMaxScale;
 
   const rawScale = Math.min(pinMaxScale, widthFitScale, heightFitScale);

@@ -176,3 +176,23 @@ test('Side-by-Side 2-pin effective scale preserves hierarchy across 1440x900 < 1
   assert.ok(r900.eff < r1080.eff && r1080.eff < r1440.eff && r1440.eff < r2160.eff);
 });
 
+test('mobile vertical 2-pin constellation maximizes bubble size while fitting Pinned bar and Sync Invariant bar inside one mobile viewport', () => {
+  const layout2Mobile = getConstellationLayout(2, 'TRIANGLE', 'RHOMBUS', 'vertical');
+  for (const vh of [740, 844]) {
+    const scale = computeConstellationScale({
+      layoutWidth: layout2Mobile.width,
+      layoutHeight: layout2Mobile.height,
+      wrapWidth: 366,
+      viewportHeight: vh,
+      pinMaxScale: 1,
+      orientationMode: 'vertical'
+    });
+    const constellationHeight = Math.round(layout2Mobile.height * scale);
+    // Pinned bar + gaps (~102px) + constellation + Sync Invariant label/row (~58px) must fit in one screen
+    assert.ok(
+      102 + constellationHeight + 58 <= vh,
+      `Expected Pinned bar + 2-pin constellation (${constellationHeight}px) + Sync Invariant to fit within ${vh}px viewport`
+    );
+  }
+});
+

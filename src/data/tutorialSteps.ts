@@ -239,7 +239,7 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     instructions: [],
     actionLabel: 'Open Gains',
     actionId: 'open-gains-modal',
-    preferredPlacement: 'bottom'
+    preferredPlacement: 'top'
   }
 ];
 
@@ -249,9 +249,7 @@ export function getTutorialStepsForViewport(viewportWidth: number): TutorialStep
 
 const HEADER_TUTORIAL_TARGETS = new Set<TutorialTargetId>([
   'search-dock',
-  'mode-controls',
-  'rubric-button',
-  'gains-archive'
+  'mode-controls'
 ]);
 
 export function computeMobileScrollTargetY(

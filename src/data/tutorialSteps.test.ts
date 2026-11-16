@@ -112,11 +112,15 @@ test('computeSpotlightCardPosition returns non-overlapping desktop placement and
 });
 
 test('computeMobileScrollTargetY keeps header, center-arena, and sidebars clear of the mobile coach card', () => {
-  // Header controls always return to scrollY = 0
+  // Top header controls always return to scrollY = 0
   assert.equal(computeMobileScrollTargetY('search-dock', 320, 48, 844, 198, 900), 0);
-  assert.equal(computeMobileScrollTargetY('gains-archive', 64, 32, 844, 198, 900), 0);
-  assert.equal(computeMobileScrollTargetY('rubric-button', 20, 32, 844, 198, 900), 0);
   assert.equal(computeMobileScrollTargetY('mode-controls', 160, 32, 844, 198, 900), 0);
+
+  // Bottom footer controls (Rubric & Live Gains on mobile) scroll cleanly below the top card sheet
+  const rubricScrollY = computeMobileScrollTargetY('rubric-button', 1280, 36, 844, 198, 906);
+  assert.ok(1280 - rubricScrollY - 10 > 210);
+  const gainsScrollY = computeMobileScrollTargetY('gains-archive', 1324, 36, 844, 198, 906);
+  assert.ok(1324 - gainsScrollY - 10 > 210);
 
   // Center arena (343px tall) is scrolled so it fits cleanly above the bottom card sheet
   const arenaScrollY = computeMobileScrollTargetY('center-arena', 290, 343, 844, 198, 900);

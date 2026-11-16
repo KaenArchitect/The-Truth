@@ -607,8 +607,8 @@ export function getConstellationLayout(
 
   if (mode === 'vertical' && count >= 2) {
     const width = 440;
-    const topPad = 212;
-    const stepY = 420;
+    const topPad = 200;
+    const stepY = 416;
     const positions = Array.from({ length: count }, (_, idx) => ({
       x: 220,
       y: topPad + idx * stepY
