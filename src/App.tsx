@@ -492,7 +492,7 @@ function ThermodynamicAuditApp() {
   const [isArenaHovered, setIsArenaHovered] = useState(false);
   const [pinnedKeys, setPinnedKeys] = useState<string[]>([]);
   const [exitingPins, setExitingPins] = useState<ExitingPinEntry[]>([]);
-  const [expandAllOrbits, setExpandAllOrbits] = useState(true);
+  const [expandAllOrbits, setExpandAllOrbits] = useState(false);
   const [hoveredPinTicker, setHoveredPinTicker] = useState<string | null>(null);
   const arenaRef = useRef<HTMLDivElement | null>(null);
   const singleStageWrapRef = useRef<HTMLDivElement | null>(null);
@@ -1287,12 +1287,19 @@ function ThermodynamicAuditApp() {
   const prevIsMultiStageRef = useRef(false);
   useEffect(() => {
     if (isMultiStage && !prevIsMultiStageRef.current) {
-      setExpandedSyncInvId((prev) => prev || '01');
+      setExpandAllOrbits(false);
+      setExpandedSyncInvId(null);
+      setHoveredInvId(null);
+      setHoveredPinTicker(null);
+      setIsArenaHovered(false);
     } else if (!isMultiStage && prevIsMultiStageRef.current) {
+      setExpandAllOrbits(false);
       if (expandedSyncInvId) {
         setExpandedSyncInvId(null);
       }
       setHoveredInvId(null);
+      setHoveredPinTicker(null);
+      setIsArenaHovered(false);
     }
     prevIsMultiStageRef.current = isMultiStage;
   }, [isMultiStage, expandedSyncInvId]);
@@ -1514,7 +1521,6 @@ function ThermodynamicAuditApp() {
     !isAuditing &&
     hasActiveAudit &&
     (isArenaHovered ||
-      isPinned ||
       Boolean(hoveredInvId) ||
       Boolean(modalInvId) ||
       (isTutorialOpen && activeTutorialStep?.targetId === 'center-arena'));
@@ -3031,6 +3037,8 @@ function ThermodynamicAuditApp() {
           setPinnedKeys(['KAS', 'SOL']);
           setActiveKey('KAS');
           setExpandAllOrbits(false);
+          setExpandedSyncInvId(null);
+          setHoveredInvId(null);
           break;
         }
         case 'open-gains-modal': {
@@ -5652,7 +5660,6 @@ function ThermodynamicAuditApp() {
                   <div
                     ref={arenaRef}
                     data-tutorial-id="center-arena"
-                    onMouseEnter={() => setIsArenaHovered(true)}
                     onMouseLeave={() => {
                       setIsArenaHovered(false);
                       setHoveredInvId(null);
@@ -5929,6 +5936,7 @@ function ThermodynamicAuditApp() {
               {/* Central Grade Nucleus Sphere */}
               <button
                 type="button"
+                onMouseEnter={() => setIsArenaHovered(true)}
                 onClick={() => {
                   if (!isAuditing && hasActiveAudit && activeKey) togglePinTicker(activeKey);
                 }}
