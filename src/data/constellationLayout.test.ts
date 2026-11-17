@@ -204,6 +204,10 @@ test('collapsed harmonic wave delta links enlarge pills and keep zero overlap ac
     [1440, 900],
     [1920, 1080],
     [2560, 1440],
+    [2560, 1080],
+    [2560, 950],
+    [1920, 820],
+    [1600, 760],
     [3840, 2160],
     [1295, 1250]
   ] as const;
@@ -228,6 +232,21 @@ test('collapsed harmonic wave delta links enlarge pills and keep zero overlap ac
         assert.ok(link.pillHeight >= 30, `expected enlarged pillHeight >= 30, got ${link.pillHeight}`);
         assert.ok(link.fontSize >= 13.5, `expected enlarged fontSize >= 13.5, got ${link.fontSize}`);
         assert.ok(link.strokeWidth >= 2.2, `expected enlarged strokeWidth >= 2.2, got ${link.strokeWidth}`);
+
+        // Verify the delta line itself never passes behind or grazes an intermediate node's wave crest
+        for (let k = 0; k < layout.positions.length; k++) {
+          if (k === link.fromIdx || k === link.toIdx) continue;
+          const nk = layout.positions[k];
+          const vx = link.x2 - link.x1;
+          const vy = link.y2 - link.y1;
+          const lenSq = vx * vx + vy * vy;
+          const t = lenSq > 1e-6 ? Math.max(0, Math.min(1, ((nk.x - link.x1) * vx + (nk.y - link.y1) * vy) / lenSq)) : 0;
+          const segDist = Math.hypot(nk.x - (link.x1 + vx * t), nk.y - (link.y1 + vy * t));
+          assert.ok(
+            segDist >= waveR + 10 * layout.nodeScale,
+            `${count}-pin at ${w}x${h} link ${link.id}: line passes behind node ${k} (${segDist.toFixed(1)} < ${(waveR + 10 * layout.nodeScale).toFixed(1)})`
+          );
+        }
 
         for (const pos of layout.positions) {
           const qx = Math.max(

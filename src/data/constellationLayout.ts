@@ -856,19 +856,18 @@ export function computeCollapsedDeltaLinks(layout: ConstellationLayout): Constel
     const dist = Math.hypot(dx, dy);
     if (dist < 1) continue;
 
-    // Skip diagonals whose chord would slice across an intermediate node's collapsed wave crest
-    if (pair.isDiagonal) {
-      let slicesIntermediate = false;
-      for (let k = 0; k < positions.length; k++) {
-        if (k === pair.fromIdx || k === pair.toIdx) continue;
-        const nk = positions[k];
-        if (pointToSegmentDist(nk.x, nk.y, p1.x, p1.y, p2.x, p2.y) < waveRadius + 10 * s) {
-          slicesIntermediate = true;
-          break;
-        }
+    // Skip any bridge (edge or diagonal) whose chord passes behind or grazes an intermediate node's collapsed wave crest
+    const minIntermediateClearance = waveRadius + Math.max(12 * s, pillHeight * 0.5 + 8 * s);
+    let slicesIntermediate = false;
+    for (let k = 0; k < positions.length; k++) {
+      if (k === pair.fromIdx || k === pair.toIdx) continue;
+      const nk = positions[k];
+      if (pointToSegmentDist(nk.x, nk.y, p1.x, p1.y, p2.x, p2.y) < minIntermediateClearance) {
+        slicesIntermediate = true;
+        break;
       }
-      if (slicesIntermediate) continue;
     }
+    if (slicesIntermediate) continue;
 
     const ux = dx / dist;
     const uy = dy / dist;
