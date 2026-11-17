@@ -25,7 +25,6 @@ import {
   Check,
   ChevronDown,
   Clock,
-  Columns,
   Compass,
   Copy,
   Cpu,
@@ -117,11 +116,11 @@ import {
   SAT_LUT_INNER,
   SAT_LUT_MAIN,
   buildFastWavePath,
+  computeCollapsedDeltaLinks,
   getConstellationLayout,
+  resolveDeltaFlowDirection,
   setGlobalWavePaused,
-  subscribeSharedWave,
-  type FourFormationMode,
-  type ThreeFormationMode
+  subscribeSharedWave
 } from './components/OrbitalNodes.tsx';
 const WartimeSpliceSimulator = lazy(() =>
   import('./components/WartimeSpliceSimulator.tsx').then((m) => ({
@@ -195,7 +194,8 @@ import {
 } from './data/agentArchiveApi.ts';
 import {
   computeConstellationScale,
-  computeDisplayLayoutMetrics
+  computeDisplayLayoutMetrics,
+  shouldShowFloatingCornerControls
 } from './data/displayScale.ts';
 
 const PRELOADED_TICKER_SET = new Set(Object.keys(PRELOADED_AUDITS));
@@ -492,9 +492,8 @@ function ThermodynamicAuditApp() {
   const [isArenaHovered, setIsArenaHovered] = useState(false);
   const [pinnedKeys, setPinnedKeys] = useState<string[]>([]);
   const [exitingPins, setExitingPins] = useState<ExitingPinEntry[]>([]);
-  const [threeFormation, setThreeFormation] = useState<ThreeFormationMode>('TRIANGLE');
-  const [fourFormation, setFourFormation] = useState<FourFormationMode>('RHOMBUS');
   const [expandAllOrbits, setExpandAllOrbits] = useState(true);
+  const [hoveredPinTicker, setHoveredPinTicker] = useState<string | null>(null);
   const arenaRef = useRef<HTMLDivElement | null>(null);
   const singleStageWrapRef = useRef<HTMLDivElement | null>(null);
   const heroDockRef = useRef<HTMLDivElement | null>(null);
@@ -1289,8 +1288,11 @@ function ThermodynamicAuditApp() {
   useEffect(() => {
     if (isMultiStage && !prevIsMultiStageRef.current) {
       setExpandedSyncInvId((prev) => prev || '01');
-    } else if (!isMultiStage && expandedSyncInvId) {
-      setExpandedSyncInvId(null);
+    } else if (!isMultiStage && prevIsMultiStageRef.current) {
+      if (expandedSyncInvId) {
+        setExpandedSyncInvId(null);
+      }
+      setHoveredInvId(null);
     }
     prevIsMultiStageRef.current = isMultiStage;
   }, [isMultiStage, expandedSyncInvId]);
@@ -1387,7 +1389,10 @@ function ThermodynamicAuditApp() {
       const arenaEl = arenaRef.current;
       let nextWrapPt: number | null = null;
       let nextWrapMt: number | null = null;
-      if (wrapEl && arenaEl && !isLandingIdle && !isMultiStage) {
+      if (isLandingIdle || isMultiStage) {
+        prev.wrapPt = -1;
+        prev.wrapMt = 9999;
+      } else if (wrapEl && arenaEl) {
         if (currentWinW < 768) {
           nextWrapPt = 0;
           nextWrapMt = 0;
@@ -1519,6 +1524,14 @@ function ThermodynamicAuditApp() {
   const activeModalInvariant =
     currentAudit.invariants.find((i) => i.id === modalInvId) || currentAudit.invariants[0];
   const currentGeniusParagraphs = getGeniusForensicParagraphs(currentAudit);
+  const showFloatingCornerControls = shouldShowFloatingCornerControls({
+    isAnyModalOpen,
+    isTutorialOpen,
+    isLandingIdle,
+    isMultiStage,
+    isAuditing,
+    hasActiveHoveredInvariant: Boolean(activeHoveredInvariant)
+  });
 
   // Drives the harmonic wave perimeter (+25% amplitude upgrade) on the center nucleus when collapsed,
   // and transfers that wave energy into the 6 invariant bubbles when expanded (isSplitOpen).
@@ -1677,8 +1690,6 @@ function ThermodynamicAuditApp() {
         if (stageTickers.length > 2) {
           const curLayout = getConstellationLayout(
             stageTickers.length,
-            threeFormation,
-            fourFormation,
             pinOrientationMode,
             {
               wrapWidth: constellationWrapWidth,
@@ -1742,8 +1753,6 @@ function ThermodynamicAuditApp() {
       if (stageTickers.length > 2) {
         const curLayout = getConstellationLayout(
           stageTickers.length,
-          threeFormation,
-          fourFormation,
           pinOrientationMode,
           {
             wrapWidth: constellationWrapWidth,
@@ -1808,8 +1817,6 @@ function ThermodynamicAuditApp() {
     if (stageTickers.length > 2) {
       const curLayout = getConstellationLayout(
         stageTickers.length,
-        threeFormation,
-        fourFormation,
         pinOrientationMode,
         {
           wrapWidth: constellationWrapWidth,
@@ -3833,6 +3840,18 @@ function ThermodynamicAuditApp() {
             translate 340ms cubic-bezier(0.22, 1, 0.36, 1),
             scale 340ms cubic-bezier(0.22, 1, 0.36, 1);
         }
+        @keyframes deltaTintShift {
+          0%, 100% {
+            opacity: 0.12;
+          }
+          50% {
+            opacity: 0.88;
+          }
+        }
+        .delta-tint-shift {
+          animation: deltaTintShift 3.6s ease-in-out infinite;
+          will-change: opacity;
+        }
         @keyframes selectContentFade {
           0% {
             opacity: 0.14;
@@ -3929,10 +3948,18 @@ function ThermodynamicAuditApp() {
           animation: scanPulseRing 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
         @keyframes dashFlow {
+          from { stroke-dashoffset: 0; }
           to { stroke-dashoffset: -24; }
+        }
+        @keyframes dashFlowReverse {
+          from { stroke-dashoffset: 0; }
+          to { stroke-dashoffset: 24; }
         }
         .sim-flow-line {
           animation: dashFlow 1.15s linear infinite;
+        }
+        .sim-flow-line-reverse {
+          animation: dashFlowReverse 1.15s linear infinite;
         }
         @keyframes spinSlowCw {
           from { transform: rotate(0deg); }
@@ -4045,7 +4072,10 @@ function ThermodynamicAuditApp() {
           .bg-core-breath,
           .bg-halo-wave,
           .genius-vortex-spin,
-          .genius-math-float {
+          .genius-math-float,
+          .delta-tint-shift,
+          .sim-flow-line,
+          .sim-flow-line-reverse {
             animation: none !important;
           }
           .animate-stage-enter,
@@ -4786,8 +4816,6 @@ function ThermodynamicAuditApp() {
             const count = stageTickers.length;
             const layout = getConstellationLayout(
               count,
-              threeFormation,
-              fourFormation,
               pinOrientationMode,
               {
                 wrapWidth: constellationWrapWidth,
@@ -4805,10 +4833,19 @@ function ThermodynamicAuditApp() {
               orientationMode: pinOrientationMode
             });
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
-            const deltaBadgeScale = Math.max(0.88, Math.min(1.42, layout.nodeScale));
+            const effectiveHoveredInv = hoveredInvId || expandedSyncInvId || modalInvId;
+            const isConstellationOrbitsOpen = expandAllOrbits || Boolean(expandedSyncInvId);
+            const showCollapsedDeltas = !expandAllOrbits && !effectiveHoveredInv;
+            const deltaLinks = computeCollapsedDeltaLinks(layout);
+            const allowDeltaMotion =
+              typeof window === 'undefined' ||
+              !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
             return (
-              <div className="animate-stage-enter w-full flex flex-col items-center gap-2.5 md:gap-5">
+              <div
+                key="multi-stage"
+                className="animate-stage-enter w-full flex flex-col items-center gap-2.5 md:gap-5"
+              >
                 <div
                   data-tutorial-id="pin-compare"
                   className="w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 py-2.5 flex flex-wrap items-center justify-center md:justify-between gap-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
@@ -4855,116 +4892,22 @@ function ThermodynamicAuditApp() {
                   </div>
 
                   <div className="flex flex-wrap items-center justify-center md:justify-end gap-1.5">
-                    {pinOrientationMode === 'desktop' && count === 2 && (
-                      <div className="px-2.5 py-1 rounded-full bg-[#0B0C0E] border border-white/10 font-mono text-[10.5px] text-neutral-300 flex items-center gap-1.5">
-                        <Columns className="w-3 h-3 color-glide" style={{ color: accent.primary }} />
-                        <span>Side-by-Side</span>
-                        <span className="text-neutral-500 hidden xl:inline">
-                          • Pin 1–2 more for △ / □ / ◇
-                        </span>
-                      </div>
-                    )}
-
-                    {pinOrientationMode === 'desktop' && count === 3 && (
-                      <div className="p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 flex items-center font-mono text-[10.5px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            trackDotDiscovery('pin_constellation');
-                            setThreeFormation('TRIANGLE');
-                          }}
-                          className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
-                            threeFormation === 'TRIANGLE'
-                              ? 'bg-[#191E27] text-white font-semibold border border-white/15'
-                              : 'text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          <svg viewBox="0 0 12 12" className="w-3 h-3 stroke-current fill-none" strokeWidth="1.6">
-                            <polygon points="6,1.5 11,10.2 1,10.2" />
-                          </svg>
-                          <span>Triangle</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            trackDotDiscovery('pin_constellation');
-                            setThreeFormation('SIDE_BY_SIDE');
-                          }}
-                          className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
-                            threeFormation === 'SIDE_BY_SIDE'
-                              ? 'bg-[#191E27] text-white font-semibold border border-white/15'
-                              : 'text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          <Columns className="w-3 h-3" />
-                          <span>Side-by-Side</span>
-                        </button>
-                      </div>
-                    )}
-
-                    {pinOrientationMode === 'desktop' && count === 4 && (
-                      <div className="p-0.5 rounded-full bg-[#0B0C0E] border border-white/10 flex items-center font-mono text-[10.5px]">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            trackDotDiscovery('pin_constellation');
-                            setFourFormation('RHOMBUS');
-                          }}
-                          className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
-                            fourFormation === 'RHOMBUS'
-                              ? 'bg-[#191E27] text-white font-semibold border border-white/15'
-                              : 'text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          <svg viewBox="0 0 12 12" className="w-3 h-3 stroke-current fill-none" strokeWidth="1.6">
-                            <polygon points="6,1 11,6 6,11 1,6" />
-                          </svg>
-                          <span>Rhombus</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            trackDotDiscovery('pin_constellation');
-                            setFourFormation('SQUARE');
-                          }}
-                          className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
-                            fourFormation === 'SQUARE'
-                              ? 'bg-[#191E27] text-white font-semibold border border-white/15'
-                              : 'text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          <svg viewBox="0 0 12 12" className="w-3 h-3 stroke-current fill-none" strokeWidth="1.6">
-                            <rect x="1.8" y="1.8" width="8.4" height="8.4" rx="1" />
-                          </svg>
-                          <span>Square</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            trackDotDiscovery('pin_constellation');
-                            setFourFormation('SIDE_BY_SIDE');
-                          }}
-                          className={`px-2.5 py-1 rounded-full transition flex items-center gap-1.5 ${
-                            fourFormation === 'SIDE_BY_SIDE'
-                              ? 'bg-[#191E27] text-white font-semibold border border-white/15'
-                              : 'text-neutral-400 hover:text-neutral-200'
-                          }`}
-                        >
-                          <Columns className="w-3 h-3" />
-                          <span>Side-by-Side</span>
-                        </button>
-                      </div>
-                    )}
-
                     <button
                       type="button"
                       onClick={() => {
                         trackDotDiscovery('pin_constellation');
-                        setExpandAllOrbits((p) => !p);
+                        if (isConstellationOrbitsOpen) {
+                          setExpandAllOrbits(false);
+                          setExpandedSyncInvId(null);
+                          setHoveredInvId(null);
+                          setHoveredPinTicker(null);
+                        } else {
+                          setExpandAllOrbits(true);
+                        }
                       }}
                       className="px-2.5 py-1 rounded-full bg-[#0B0C0E] hover:bg-[#181C24] border border-white/10 font-mono text-[10.5px] text-neutral-300 hover:text-white transition"
                     >
-                      {expandAllOrbits ? '6-Inv Orbits: Open' : 'Harmonic Waves'}
+                      {isConstellationOrbitsOpen ? '6-Inv Orbits: Open' : 'Harmonic Waves'}
                     </button>
 
                     <button
@@ -4973,6 +4916,7 @@ function ThermodynamicAuditApp() {
                         setPinnedKeys([]);
                         setHoveredInvId(null);
                         setExpandedSyncInvId(null);
+                        setHoveredPinTicker(null);
                       }}
                       className="color-glide px-2.5 py-1 rounded-full bg-[#0B0C0E] hover:bg-[#181C24] font-mono text-[10.5px] hover:text-white transition flex items-center gap-1"
                       style={{
@@ -5001,97 +4945,258 @@ function ThermodynamicAuditApp() {
                       transformOrigin: 'top center'
                     }}
                   >
-                    <svg
-                      width={layout.width}
-                      height={layout.height}
-                      viewBox={`0 0 ${layout.width} ${layout.height}`}
-                      className="absolute inset-0 pointer-events-none z-10"
+                    <div
+                      data-testid="collapsed-delta-overlay"
+                      data-visible={showCollapsedDeltas ? 'true' : 'false'}
+                      aria-hidden="true"
+                      className="color-glide absolute inset-0 pointer-events-none z-10"
+                      style={{
+                        opacity: showCollapsedDeltas ? 1 : 0,
+                        transform: showCollapsedDeltas ? 'scale(1)' : 'scale(0.96)',
+                        transformOrigin: 'center center'
+                      }}
                     >
-                      {layout.diagonals.map(([aIdx, bIdx], dIdx) => {
-                        const pA = layout.positions[aIdx];
-                        const pB = layout.positions[bIdx];
-                        if (!pA || !pB) return null;
-                        return (
-                          <line
-                            key={`diag-${dIdx}`}
-                            x1={pA.x}
-                            y1={pA.y}
-                            x2={pB.x}
-                            y2={pB.y}
-                            stroke="rgba(255,255,255,0.11)"
-                            strokeWidth="1"
-                            strokeDasharray="3 7"
-                          />
-                        );
-                      })}
+                      <svg
+                        width={layout.width}
+                        height={layout.height}
+                        viewBox={`0 0 ${layout.width} ${layout.height}`}
+                        className="absolute inset-0 pointer-events-none overflow-visible"
+                      >
+                        <defs>
+                          {deltaLinks.map((link) => {
+                            const tkA = stageTickers[link.fromIdx];
+                            const tkB = stageTickers[link.toIdx];
+                            const itemA = audits[tkA];
+                            const itemB = audits[tkB];
+                            if (!itemA || !itemB) return null;
+                            const accA = getGradeAccent(itemA.grade);
+                            const accB = getGradeAccent(itemB.grade);
+                            const lineGradId = `collapsedDeltaLine-${link.id}-${tkA}-${tkB}`;
 
-                      {layout.edges.map(([aIdx, bIdx], eIdx) => {
-                        const pA = layout.positions[aIdx];
-                        const pB = layout.positions[bIdx];
-                        const audA = audits[stageTickers[aIdx]];
-                        const audB = audits[stageTickers[bIdx]];
-                        if (!pA || !pB || !audA || !audB) return null;
-                        const colA = getGradeAccent(audA.grade).primary;
-                        const colB = getGradeAccent(audB.grade).primary;
-                        const gradId = `constellationEdge-${eIdx}`;
-                        const midX = (pA.x + pB.x) / 2;
-                        const midY = (pA.y + pB.y) / 2;
-                        const delta = Math.abs(
-                          (Number(audA.totalScore) || 0) - (Number(audB.totalScore) || 0)
-                        );
-
-                        return (
-                          <g key={`edge-${eIdx}`} className="animate-card-fade">
-                            <defs>
+                            return (
                               <linearGradient
-                                id={gradId}
-                                x1={pA.x}
-                                y1={pA.y}
-                                x2={pB.x}
-                                y2={pB.y}
+                                key={`defs-${link.id}`}
+                                id={lineGradId}
                                 gradientUnits="userSpaceOnUse"
+                                x1={link.x1}
+                                y1={link.y1}
+                                x2={link.x2}
+                                y2={link.y2}
                               >
-                                <stop offset="0%" style={{ stopColor: colA, stopOpacity: 0.48 }} />
-                                <stop offset="100%" style={{ stopColor: colB, stopOpacity: 0.48 }} />
+                                <stop offset="0%" stopColor={accA.primary} />
+                                <stop offset="36%" stopColor={accA.secondary} />
+                                <stop offset="64%" stopColor={accB.secondary} />
+                                <stop offset="100%" stopColor={accB.primary} />
                               </linearGradient>
-                            </defs>
-                            <line
-                              x1={pA.x}
-                              y1={pA.y}
-                              x2={pB.x}
-                              y2={pB.y}
-                              stroke={`url(#${gradId})`}
-                              strokeWidth="1.6"
-                              strokeDasharray="6 6"
-                              className="sim-flow-line"
-                            />
-                            <g transform={`translate(${midX}, ${midY}) scale(${deltaBadgeScale})`}>
-                              <rect
-                                x="-26"
-                                y="-9"
-                                width="52"
-                                height="18"
-                                rx="9"
-                                fill="#0B0C0E"
-                                stroke="rgba(255,255,255,0.14)"
-                                strokeWidth="1"
+                            );
+                          })}
+                        </defs>
+
+                        {deltaLinks.map((link) => {
+                          const tkA = stageTickers[link.fromIdx];
+                          const tkB = stageTickers[link.toIdx];
+                          const itemA = audits[tkA];
+                          const itemB = audits[tkB];
+                          if (!itemA || !itemB) return null;
+
+                          const isIncidentFocused = activeKey === tkA || activeKey === tkB;
+                          const isIncidentLocallySplit =
+                            hoveredPinTicker === tkA || hoveredPinTicker === tkB;
+                          const lineOpacity = isIncidentLocallySplit
+                            ? 0.16
+                            : link.isDiagonal
+                            ? isIncidentFocused
+                              ? 0.9
+                              : 0.68
+                            : isIncidentFocused
+                            ? 1
+                            : 0.88;
+
+                          const lineGradId = `collapsedDeltaLine-${link.id}-${tkA}-${tkB}`;
+                          const flowDir = resolveDeltaFlowDirection(itemA, itemB);
+                          const flowTarget =
+                            flowDir === 'toA' ? tkA : flowDir === 'toB' ? tkB : 'tie';
+                          const dashPattern = link.isDiagonal ? '6 6' : '7 5';
+                          const primaryStrokeW = isIncidentFocused
+                            ? link.strokeWidth * 1.16
+                            : link.strokeWidth;
+                          const primaryOpacity = link.isDiagonal ? 0.84 : 0.92;
+
+                          return (
+                            <g
+                              key={link.id}
+                              style={{
+                                opacity: lineOpacity,
+                                transition: 'opacity 320ms ease'
+                              }}
+                            >
+                              {/* Soft chromatic aura under the delta bridge */}
+                              <line
+                                x1={link.x1}
+                                y1={link.y1}
+                                x2={link.x2}
+                                y2={link.y2}
+                                stroke={`url(#${lineGradId})`}
+                                strokeWidth={link.strokeWidth * 3.1}
+                                strokeOpacity={
+                                  link.isDiagonal ? 0.16 : isIncidentFocused ? 0.25 : 0.16
+                                }
+                                strokeLinecap="round"
                               />
-                              <text
-                                x="0"
-                                y="3.2"
-                                textAnchor="middle"
-                                fill="#D1D5DB"
-                                fontSize="8.5"
-                                fontFamily="JetBrains Mono, monospace"
-                                fontWeight="600"
+
+                              {/* Primary color-transitioning harmonic bridge flowing toward the better-graded network */}
+                              {flowDir === 'tie' ? (
+                                <>
+                                  <line
+                                    x1={link.pillX}
+                                    y1={link.pillY}
+                                    x2={link.x1}
+                                    y2={link.y1}
+                                    stroke={`url(#${lineGradId})`}
+                                    strokeWidth={primaryStrokeW}
+                                    strokeOpacity={primaryOpacity}
+                                    strokeDasharray={dashPattern}
+                                    strokeLinecap="round"
+                                    data-delta-link={link.id}
+                                    data-flow-dir="tie"
+                                    data-flow-target="tie"
+                                    className={allowDeltaMotion ? 'sim-flow-line' : ''}
+                                  />
+                                  <line
+                                    x1={link.pillX}
+                                    y1={link.pillY}
+                                    x2={link.x2}
+                                    y2={link.y2}
+                                    stroke={`url(#${lineGradId})`}
+                                    strokeWidth={primaryStrokeW}
+                                    strokeOpacity={primaryOpacity}
+                                    strokeDasharray={dashPattern}
+                                    strokeLinecap="round"
+                                    data-delta-link={link.id}
+                                    data-flow-dir="tie"
+                                    data-flow-target="tie"
+                                    className={allowDeltaMotion ? 'sim-flow-line' : ''}
+                                  />
+                                </>
+                              ) : (
+                                <line
+                                  x1={link.x1}
+                                  y1={link.y1}
+                                  x2={link.x2}
+                                  y2={link.y2}
+                                  stroke={`url(#${lineGradId})`}
+                                  strokeWidth={primaryStrokeW}
+                                  strokeOpacity={primaryOpacity}
+                                  strokeDasharray={dashPattern}
+                                  strokeLinecap="round"
+                                  data-delta-link={link.id}
+                                  data-flow-dir={flowDir}
+                                  data-flow-target={flowTarget}
+                                  className={
+                                    allowDeltaMotion
+                                      ? flowDir === 'toA'
+                                        ? 'sim-flow-line-reverse'
+                                        : 'sim-flow-line'
+                                      : ''
+                                  }
+                                />
+                              )}
+                            </g>
+                          );
+                        })}
+                      </svg>
+
+                      {deltaLinks.map((link) => {
+                        const tkA = stageTickers[link.fromIdx];
+                        const tkB = stageTickers[link.toIdx];
+                        const itemA = audits[tkA];
+                        const itemB = audits[tkB];
+                        if (!itemA || !itemB) return null;
+
+                        const delta = Math.abs(
+                          (Number(itemA.totalScore) || 0) - (Number(itemB.totalScore) || 0)
+                        );
+                        const accA = getGradeAccent(itemA.grade);
+                        const accB = getGradeAccent(itemB.grade);
+                        const posA = layout.positions[link.fromIdx];
+                        const posB = layout.positions[link.toIdx];
+                        const aIsFirst =
+                          posA && posB
+                            ? Math.abs(posA.x - posB.x) > 8
+                              ? posA.x <= posB.x
+                              : posA.y <= posB.y
+                            : true;
+                        const leftAcc = aIsFirst ? accA : accB;
+                        const rightAcc = aIsFirst ? accB : accA;
+                        const forwardGradient = `linear-gradient(90deg, ${leftAcc.primary} 0%, ${leftAcc.secondary} 32%, ${rightAcc.secondary} 68%, ${rightAcc.primary} 100%)`;
+                        const reverseGradient = `linear-gradient(90deg, ${rightAcc.primary} 0%, ${rightAcc.secondary} 34%, ${leftAcc.secondary} 66%, ${leftAcc.primary} 100%)`;
+
+                        const isIncidentFocused = activeKey === tkA || activeKey === tkB;
+                        const isIncidentLocallySplit =
+                          hoveredPinTicker === tkA || hoveredPinTicker === tkB;
+                        const pillOpacity = isIncidentLocallySplit
+                          ? 0.16
+                          : link.isDiagonal
+                          ? isIncidentFocused
+                            ? 0.95
+                            : 0.82
+                          : 1;
+
+                        return (
+                          <div
+                            key={`pill-${link.id}`}
+                            data-testid="collapsed-delta-pill"
+                            className="color-glide absolute rounded-full p-[1.75px]"
+                            style={{
+                              left: `${link.pillX}px`,
+                              top: `${link.pillY}px`,
+                              width: `${link.pillWidth}px`,
+                              height: `${link.pillHeight}px`,
+                              opacity: pillOpacity,
+                              backgroundImage: forwardGradient,
+                              transform: `translate(-50%, -50%) scale(${
+                                isIncidentFocused ? 1.06 : 1
+                              })`,
+                              boxShadow: isIncidentFocused
+                                ? `0 8px 24px rgba(0,0,0,0.85), 0 0 18px ${leftAcc.glow}, 0 0 18px ${rightAcc.glow}`
+                                : `0 6px 18px rgba(0,0,0,0.78), 0 0 12px ${leftAcc.secondaryGlow}`
+                            }}
+                          >
+                            {allowDeltaMotion && (
+                              <div
+                                className="delta-tint-shift absolute inset-0 rounded-full p-[1.75px] pointer-events-none"
+                                style={{ backgroundImage: reverseGradient }}
+                              />
+                            )}
+                            <div
+                              className="w-full h-full rounded-full flex items-center justify-center relative overflow-hidden"
+                              style={{ backgroundColor: '#0B0D12' }}
+                            >
+                              <div
+                                className="color-glide absolute inset-0 rounded-full pointer-events-none"
+                                style={{
+                                  backgroundImage: forwardGradient,
+                                  opacity: isIncidentFocused ? 0.2 : 0.13
+                                }}
+                              />
+                              <span
+                                className="color-glide relative z-10 font-mono font-bold tracking-[0.03em] leading-none whitespace-nowrap"
+                                style={{
+                                  fontSize: `${link.fontSize}px`,
+                                  backgroundImage: forwardGradient,
+                                  backgroundClip: 'text',
+                                  WebkitBackgroundClip: 'text',
+                                  WebkitTextFillColor: 'transparent',
+                                  color: leftAcc.primary
+                                }}
                               >
                                 Δ {formatScore(delta)}
-                              </text>
-                            </g>
-                          </g>
+                              </span>
+                            </div>
+                          </div>
                         );
                       })}
-                    </svg>
+                    </div>
 
                     {exitingPins.map((ghost) => (
                       <PinnedOrbitalNode
@@ -5129,10 +5234,18 @@ function ThermodynamicAuditApp() {
                           nodeScale={layout.nodeScale}
                           isFocused={activeKey === tk}
                           expandOrbits={expandAllOrbits}
-                          hoveredInvId={hoveredInvId || expandedSyncInvId || modalInvId}
+                          hoveredInvId={effectiveHoveredInv}
                           onHoverInv={setHoveredInvId}
+                          onHoverChange={(hovered) => {
+                            setHoveredPinTicker((prev) =>
+                              hovered ? tk : prev === tk ? null : prev
+                            );
+                          }}
                           onFocusBubble={() => setActiveKey(tk)}
-                          onUnpin={() => unpinFromConstellation(tk)}
+                          onUnpin={() => {
+                            setHoveredPinTicker((prev) => (prev === tk ? null : prev));
+                            unpinFromConstellation(tk);
+                          }}
                           onOpenInvariantModal={(invId) => {
                             trackDotDiscovery('explore_invariant');
                             setActiveKey(tk);
@@ -5152,9 +5265,7 @@ function ThermodynamicAuditApp() {
                 <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-2.5 md:space-y-3 scroll-mt-4 pt-0 md:pt-2">
                   <div
                     onMouseLeave={() => {
-                      if (expandedSyncInvId) {
-                        setHoveredInvId(expandedSyncInvId);
-                      }
+                      setHoveredInvId(expandedSyncInvId || null);
                     }}
                     className="flex flex-col items-center gap-1.5 text-center"
                   >
@@ -5179,7 +5290,7 @@ function ThermodynamicAuditApp() {
                               trackDotDiscovery('explore_invariant');
                               const nextId = expandedSyncInvId === idStr ? null : idStr;
                               setExpandedSyncInvId(nextId);
-                              setHoveredInvId(idStr);
+                              setHoveredInvId(nextId);
                               if (nextId) {
                                 scrollToSyncComparison();
                               }
@@ -5516,10 +5627,10 @@ function ThermodynamicAuditApp() {
           (() => {
             const nonLgScale = !isLgDesktop
               ? viewportMetrics.width < 640
-                ? Math.min(0.76, Math.max(0.62, (viewportMetrics.width - 28) / stageSize))
+                ? Math.min(0.86, Math.max(0.68, (viewportMetrics.width - 14) / stageSize))
                 : viewportMetrics.width < 768
-                ? 0.88
-                : 0.82
+                ? 0.98
+                : 1.05
               : displayMetrics.arenaScale;
             const wrapperPx = isLgDesktop
               ? displayMetrics.stageSizePx
@@ -5527,6 +5638,7 @@ function ThermodynamicAuditApp() {
 
             return (
               <div
+                key="single-stage"
                 ref={singleStageWrapRef}
                 className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
               >
@@ -6192,7 +6304,7 @@ function ThermodynamicAuditApp() {
 
                   <p className="font-mono text-xs text-neutral-400 transition-opacity duration-300">
                     {isPinned
-                      ? `Pinned $${currentAudit.ticker} (1/4) — click up to 3 more bubbles in Passed or Failed to compare in Side-by-Side, △, □, or ◇`
+                      ? `Pinned $${currentAudit.ticker} (1/4) — click up to 3 more bubbles in Passed or Failed to compare automatically`
                       : isSplitOpen
                       ? 'Hover any invariant bubble for quick physics verdict • Click center sphere to pin & compare up to 4 bubbles'
                       : 'Hover center sphere (or tap to pin & compare up to 4 bubbles) to trigger 6-invariant radial fission'}
@@ -6319,7 +6431,7 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           3. MINIMAL THERMODYNAMIC FOOTER (BALANCED MOBILE DOCK + DESKTOP FOOTER)
          ===================================================================== */}
-      <footer className="relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 py-3.5 border-t border-white/[0.05] text-[11px] font-mono text-neutral-500">
+      <footer className="relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-16 md:py-3.5 border-t border-white/[0.05] text-[11px] font-mono text-neutral-500">
         {/* Mobile balanced matched-size bottom button dock */}
         <div
           data-testid="mobile-footer-actions"
@@ -6432,29 +6544,6 @@ function ThermodynamicAuditApp() {
                 )}
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={startTutorial}
-              className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-              title="Launch Interactive Step-by-Step Tutorial"
-            >
-              <Compass className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
-              <span>Tutorial</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsDonateModalOpen(true)}
-              className="color-glide w-full h-9 px-2.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-medium text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-sm whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-              style={{
-                borderColor: accent.border
-              }}
-              title="Support Open-Access Thermodynamic Audits"
-            >
-              <Heart className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
-              <span>Donate</span>
-            </button>
           </div>
 
           <div className="flex flex-col items-center gap-1 text-center text-[10px] leading-relaxed text-neutral-500 px-1 pt-0.5">
@@ -6465,20 +6554,8 @@ function ThermodynamicAuditApp() {
           </div>
         </div>
 
-        {/* Desktop 3-column footer */}
-        <div className="hidden md:grid grid-cols-[150px_1fr_150px] items-center gap-x-3">
-          <div className="flex items-center justify-start">
-            <button
-              type="button"
-              onClick={startTutorial}
-              className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-              title="Launch Interactive Step-by-Step Tutorial"
-            >
-              <Compass className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
-              <span>Tutorial</span>
-            </button>
-          </div>
-
+        {/* Desktop centered footer (Tutorial & Donate float persistently in bottom corners) */}
+        <div className="hidden md:flex items-center justify-center md:px-28 lg:px-36 min-h-[36px]">
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center px-2">
             <span>Landauer’s Principle: ΔQ ≥ kB·T·ln2 • E = 0 Forces Terminal Grade F</span>
             <span className="hidden lg:inline text-white/15" aria-hidden="true">
@@ -6488,23 +6565,46 @@ function ThermodynamicAuditApp() {
               Carrier Subordination Law: M_overlay &lt; M_L1 ≤ 1.0 • {sortedTickers.length} Assets Audited
             </span>
           </div>
-
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={() => setIsDonateModalOpen(true)}
-              className="color-glide min-h-[36px] px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
-              style={{
-                borderColor: accent.border
-              }}
-              title="Support Open-Access Thermodynamic Audits"
-            >
-              <Heart className="w-3.5 h-3.5 color-glide" style={{ color: accent.primary }} />
-              <span>Donate</span>
-            </button>
-          </div>
         </div>
       </footer>
+
+      {/* Persistent Floating Corner Controls (Tutorial bottom-left, Donate bottom-right) */}
+      <button
+        type="button"
+        data-testid="floating-tutorial-btn"
+        onClick={startTutorial}
+        tabIndex={showFloatingCornerControls ? 0 : -1}
+        aria-hidden={!showFloatingCornerControls}
+        className={`color-glide fixed bottom-3.5 sm:bottom-4 left-3 sm:left-4 xl:left-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border border-white/12 font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+          showFloatingCornerControls
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-1.5 pointer-events-none'
+        }`}
+        title="Launch Interactive Step-by-Step Tutorial"
+      >
+        <Compass className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+        <span>Tutorial</span>
+      </button>
+
+      <button
+        type="button"
+        data-testid="floating-donate-btn"
+        onClick={() => setIsDonateModalOpen(true)}
+        tabIndex={showFloatingCornerControls ? 0 : -1}
+        aria-hidden={!showFloatingCornerControls}
+        className={`color-glide fixed bottom-3.5 sm:bottom-4 right-3 sm:right-4 xl:right-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+          showFloatingCornerControls
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-1.5 pointer-events-none'
+        }`}
+        style={{
+          borderColor: accent.border
+        }}
+        title="Support Open-Access Thermodynamic Audits"
+      >
+        <Heart className="w-3.5 h-3.5 shrink-0 color-glide" style={{ color: accent.primary }} />
+        <span>Donate</span>
+      </button>
 
       {/* =====================================================================
           4. EXPANDED EXAMINATION, INTERROGATION & WARTIME SIMULATOR MODAL

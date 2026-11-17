@@ -104,7 +104,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
       'Pin two to four assets simultaneously to contrast their waveforms, total score deltas, and invariant-by-invariant evidence side by side.',
     instructions: [
       'Click the pin button on any sidebar orb—or Pin to Compare beneath the center sphere—to add up to 4 assets.',
-      'Switch formations between Side-by-Side, Triangle, Rhombus, and Square as more assets are pinned.',
+      'Constellations automatically arrange pinned bubbles (including horizontal zig-zag at 4 pins) to fit the largest bubbles on your screen.',
       'Select any button in the Sync Invariant bar below the stage to expand synchronized comparison cards.'
     ],
     actionLabel: 'Demo $KAS vs $SOL',

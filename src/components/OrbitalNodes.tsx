@@ -8,12 +8,14 @@ import {
   type AuditData
 } from '../data/rubricSpec.ts';
 import {
+  computeCollapsedDeltaLinks,
   getConstellationLayout,
+  resolveDeltaFlowDirection,
   type ConstellationClearanceMetrics,
+  type ConstellationDeltaLink,
   type ConstellationFitOptions,
   type ConstellationLayout,
-  type FourFormationMode,
-  type ThreeFormationMode
+  type DeltaFlowDirection
 } from '../data/constellationLayout.ts';
 
 export interface WaveLut {
@@ -588,12 +590,14 @@ export const HarmonicProjectBubble = memo(function HarmonicProjectBubble({
 });
 
 export {
+  computeCollapsedDeltaLinks,
   getConstellationLayout,
+  resolveDeltaFlowDirection,
   type ConstellationClearanceMetrics,
+  type ConstellationDeltaLink,
   type ConstellationFitOptions,
   type ConstellationLayout,
-  type FourFormationMode,
-  type ThreeFormationMode
+  type DeltaFlowDirection
 };
 
 export interface PinnedOrbitalNodeProps {
@@ -606,6 +610,7 @@ export interface PinnedOrbitalNodeProps {
   expandOrbits: boolean;
   hoveredInvId: string | null;
   onHoverInv: (invId: string | null) => void;
+  onHoverChange?: (hovered: boolean) => void;
   onFocusBubble: () => void;
   onUnpin: () => void;
   onOpenInvariantModal: (invId: string) => void;
@@ -622,6 +627,7 @@ export const PinnedOrbitalNode = memo(function PinnedOrbitalNode({
   expandOrbits,
   hoveredInvId,
   onHoverInv,
+  onHoverChange,
   onFocusBubble,
   onUnpin,
   onOpenInvariantModal,
@@ -759,11 +765,17 @@ export const PinnedOrbitalNode = memo(function PinnedOrbitalNode({
   return (
     <div
       onMouseEnter={() => {
-        if (!isExiting) setLocalHovered(true);
+        if (!isExiting) {
+          setLocalHovered(true);
+          onHoverChange?.(true);
+        }
       }}
       onMouseLeave={() => {
         setLocalHovered(false);
-        if (!isExiting) onHoverInv(null);
+        if (!isExiting) {
+          onHoverChange?.(false);
+          onHoverInv(null);
+        }
       }}
       className={`absolute flex items-center justify-center select-none ${
         isExiting ? 'pointer-events-none' : ''

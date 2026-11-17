@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { PRELOADED_AUDITS } from './preloadedAudits.ts';
 import { ALIAS_MAP } from './rubricSpec.ts';
 import { buildSsrRootInnerHtml, injectSsrRootHtml } from './ssrSnapshotHtml.ts';
@@ -46,3 +48,12 @@ test('injectSsrRootHtml preserves $ ticker tokens cleanly without RegExp backref
   assert.ok(out.includes('truth-ssr-snapshot'));
   assert.ok(out.includes('<script src="/main.js"></script>'));
 });
+
+test('index.html hides .truth-ssr-snapshot synchronously in head for JS-enabled browsers and sets dark background before CSS loads', () => {
+  const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
+  assert.match(indexHtml, /document\.documentElement\.dataset\.js\s*=\s*['"]1['"]/);
+  assert.match(indexHtml, /html,\s*body\s*\{\s*background-color:\s*#0B0C0E;\s*color:\s*#FFFFFF;\s*\}/i);
+  assert.match(indexHtml, /html\[data-js=["']1["']\]\s*\.truth-ssr-snapshot\s*\{\s*display:\s*none\s*!important;\s*\}/);
+  assert.match(indexHtml, /<div id="root"><\/div>/);
+});
+

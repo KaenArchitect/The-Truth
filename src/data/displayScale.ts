@@ -22,7 +22,7 @@ export const BASE_SIDEBAR_BUBBLE_SIZE_PX = 68;
 
 const DEFAULT_FOOTER_HEIGHT_PX = 50;
 const ESTIMATED_SETTLED_CONTROLS_HEIGHT_PX = 122;
-const ESTIMATED_HEADER_AND_SEARCH_BOTTOM_PX = 230;
+const ESTIMATED_TOP_HEADROOM_PX = 193;
 
 export function resolveDisplayScaleTier({ width, height }: DisplayScaleInput): DisplayScaleTier {
   const w = Math.max(0, Number(width) || 0);
@@ -80,18 +80,18 @@ export function computeDisplayLayoutMetrics({
     sidebarBubbleSizePx = 78;
   }
 
-  const targetArenaScale = tier === '2160' ? 1.82 : tier === '1440' ? 1.34 : 1;
+  const targetArenaScale = tier === '2160' ? 2.24 : tier === '1440' ? 1.72 : 1.48;
   const availableCenterWidth = Math.max(440, w - effectiveSidebarReservePerSide * 2 - 24);
-  const maxWidthScale = availableCenterWidth / (BASE_STAGE_SIZE_PX + 20);
-  const availableVerticalDiameter = Math.max(440, h - ESTIMATED_HEADER_AND_SEARCH_BOTTOM_PX * 2);
-  const maxHeightScale = availableVerticalDiameter / (BASE_STAGE_SIZE_PX + 20);
+  const maxWidthScale = availableCenterWidth / (BASE_STAGE_SIZE_PX + 12);
+  const availableVerticalDiameter = Math.max(400, h - ESTIMATED_TOP_HEADROOM_PX * 2);
+  const maxHeightScale = availableVerticalDiameter / BASE_STAGE_SIZE_PX;
   const compactLaptopScale =
-    h < 860 ? Math.max(0.84, Math.min(1, (h - 392) / BASE_STAGE_SIZE_PX)) : 1;
+    h < 860 ? Math.max(0.84, Math.min(1, (h - 376) / BASE_STAGE_SIZE_PX)) : 2.5;
 
-  const rawArenaScale =
-    targetArenaScale > 1
-      ? Math.max(1, Math.min(targetArenaScale, maxWidthScale, maxHeightScale))
-      : Math.min(compactLaptopScale, maxWidthScale);
+  const rawArenaScale = Math.max(
+    0.84,
+    Math.min(targetArenaScale, maxWidthScale, maxHeightScale, compactLaptopScale)
+  );
   const arenaScale = Math.round(rawArenaScale * 100) / 100;
   const stageSizePx = Math.round(BASE_STAGE_SIZE_PX * arenaScale);
 
@@ -101,17 +101,18 @@ export function computeDisplayLayoutMetrics({
       ? Math.max(1.9, Math.min(2.85, smoothWidthPinScale))
       : tier === '1440'
       ? Math.max(1.5, Math.min(2.35, smoothWidthPinScale))
-      : Math.max(1, Math.min(1.82, smoothWidthPinScale));
+      : Math.max(1, Math.min(1.56, smoothWidthPinScale));
 
   // Center arena is anchored around 50vh. Position bottom controls cleanly toward the lower band above footer.
   const arenaBottomY = h * 0.5 + stageSizePx / 2;
   const footerTopY = h - DEFAULT_FOOTER_HEIGHT_PX;
   const targetFooterBreathingPx =
-    tier === '2160' ? 90 : tier === '1440' ? (h >= 1360 ? 52 : 38) : h >= 1000 ? 32 : 20;
+    tier === '2160' ? 90 : tier === '1440' ? (h >= 1360 ? 52 : 38) : h >= 1000 ? 32 : 18;
 
   const naturalOffsetPx =
     footerTopY - arenaBottomY - ESTIMATED_SETTLED_CONTROLS_HEIGHT_PX - targetFooterBreathingPx;
-  const minOffsetPx = h >= 1040 ? 48 : h >= 880 ? 24 : h >= 840 ? 12 : 4;
+  const minOffsetPx =
+    tier === '2160' ? 28 : tier === '1440' ? 18 : h >= 1000 ? 12 : h >= 880 ? 10 : 4;
   const bottomControlsOffsetPx = Math.round(Math.max(minOffsetPx, naturalOffsetPx));
 
   const buttonRowGapPx = tier === '2160' ? 20 : tier === '1440' ? 14 : h < 860 ? 10 : 12;
@@ -160,7 +161,7 @@ export function computeConstellationScale({
   const safeHView = Math.max(480, Number(viewportHeight) || 900);
 
   const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
-  const desktopAvailableHeight = Math.max(380, safeHView - 284);
+  const desktopAvailableHeight = Math.max(360, safeHView - 326);
   const verticalTwoAvailableHeight = Math.max(460, safeHView - 184);
   const maxContainerScale = pinMaxScale / safeNodeScale;
   const heightFitScale =
@@ -173,3 +174,33 @@ export function computeConstellationScale({
   const rawScale = Math.min(maxContainerScale, widthFitScale, heightFitScale);
   return Math.round(rawScale * 1000) / 1000;
 }
+
+export interface FloatingCornerControlsInput {
+  isAnyModalOpen: boolean;
+  isTutorialOpen: boolean;
+  isLandingIdle: boolean;
+  isMultiStage: boolean;
+  isAuditing: boolean;
+  hasActiveHoveredInvariant: boolean;
+}
+
+/**
+ * Tutorial (bottom-left) and Donate (bottom-right) float persistently in the viewport corners
+ * during scroll, and hide automatically when any modal/tutorial is open or when a quick-scan
+ * card is pulled for a single bubble.
+ */
+export function shouldShowFloatingCornerControls({
+  isAnyModalOpen,
+  isTutorialOpen,
+  isLandingIdle,
+  isMultiStage,
+  isAuditing,
+  hasActiveHoveredInvariant
+}: FloatingCornerControlsInput): boolean {
+  if (isAnyModalOpen || isTutorialOpen) return false;
+  if (!isLandingIdle && !isMultiStage && !isAuditing && hasActiveHoveredInvariant) {
+    return false;
+  }
+  return true;
+}
+

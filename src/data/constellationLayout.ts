@@ -1,8 +1,5 @@
-import { ORBIT_ANGLES_DEG } from './rubricSpec.ts';
+import { GRADE_RANK, ORBIT_ANGLES_DEG } from './rubricSpec.ts';
 import type { PinOrientationMode } from './constellationOrientation.ts';
-
-export type ThreeFormationMode = 'TRIANGLE' | 'SIDE_BY_SIDE';
-export type FourFormationMode = 'RHOMBUS' | 'SQUARE' | 'SIDE_BY_SIDE';
 
 export interface ConstellationLayout {
   width: number;
@@ -11,6 +8,23 @@ export interface ConstellationLayout {
   positions: Array<{ x: number; y: number }>;
   edges: Array<[number, number]>;
   diagonals: Array<[number, number]>;
+}
+
+export interface ConstellationDeltaLink {
+  id: string;
+  fromIdx: number;
+  toIdx: number;
+  isDiagonal: boolean;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  pillX: number;
+  pillY: number;
+  pillWidth: number;
+  pillHeight: number;
+  fontSize: number;
+  strokeWidth: number;
 }
 
 export interface ConstellationFitOptions {
@@ -297,7 +311,7 @@ function solveTriangleLayout(
   availH: number,
   maxScale: number,
   explicitBufferPx?: number
-): ConstellationLayout {
+): ConstellationLayout | null {
   const edges: Array<[number, number]> = [
     [0, 1],
     [1, 2],
@@ -308,25 +322,51 @@ function solveTriangleLayout(
     const buf = resolveDesiredWaveBufferPx(s, explicitBufferPx);
     const hw = PIN_HEX_HALF_WIDTH_PX * s;
     const hh = PIN_HEX_HALF_HEIGHT_PX * s;
-    const maxDy = availH - 2 * hh;
-    const maxDx = availW / 2 - hw;
+    const maxDy = availH - 1 - 2 * hh;
+    const maxDx = (availW - 1) / 2 - hw;
     const minHorizStep = minCenterStepAlongAxis(1, 0, s, buf);
     if (maxDy <= 0 || maxDx < minHorizStep * 0.5) return null;
 
-    // Keep balanced triangle proportions across both widescreen and tall-crop displays
-    const dx = Math.min(maxDx, maxDy * 1.65);
-    const dy = Math.min(maxDy, Math.max(dx * 1.12, 220 * s));
-    if (2 * dx < minHorizStep) return null;
+    const minTriDy = Math.min(maxDy, 120 * s);
+    let bestCandidate: { dx: number; dy: number; score: number } | null = null;
+    const idealDy = Math.min(maxDy, 290 * s);
 
-    const top = { x: 0, y: 0 };
-    const botL = { x: -dx, y: dy };
-    const botR = { x: dx, y: dy };
+    for (let k = 0; k <= 20; k++) {
+      const dy = minTriDy + (maxDy - minTriDy) * (k / 20);
+      if (!pairFitsWithBuffer(0, 0, maxDx, dy, s, buf)) continue;
 
-    if (!pairFitsWithBuffer(top.x, top.y, botL.x, botL.y, s, buf)) return null;
-    if (!pairFitsWithBuffer(botL.x, botL.y, botR.x, botR.y, s, buf)) return null;
+      let loX = minHorizStep * 0.5;
+      let hiX = maxDx;
+      for (let iter = 0; iter < 18; iter++) {
+        const midX = (loX + hiX) * 0.5;
+        if (pairFitsWithBuffer(0, 0, midX, dy, s, buf)) {
+          hiX = midX;
+        } else {
+          loX = midX;
+        }
+      }
 
-    return { positions: [top, botL, botR] };
+      const dx = Math.min(maxDx, Math.max(hiX, hiX * 1.12));
+      const balancePenalty = Math.abs(dy - idealDy);
+      if (!bestCandidate || balancePenalty < bestCandidate.score) {
+        bestCandidate = { dx, dy, score: balancePenalty };
+      }
+    }
+
+    if (!bestCandidate) return null;
+    const { dx, dy } = bestCandidate;
+    return {
+      positions: [
+        { x: 0, y: 0 },
+        { x: -dx, y: dy },
+        { x: dx, y: dy }
+      ]
+    };
   };
+
+  if (!computeGeometry(0.25)) {
+    return null;
+  }
 
   let lo = 0.25;
   let hi = Math.max(lo, maxScale);
@@ -340,9 +380,7 @@ function solveTriangleLayout(
   }
 
   const best = computeGeometry(lo);
-  if (!best) {
-    return solveRowLayout(3, availW, availH, lo, explicitBufferPx);
-  }
+  if (!best) return null;
   return normalizeAndRoundLayout(best.positions, lo, edges, []);
 }
 
@@ -351,7 +389,7 @@ function solveSquareLayout(
   availH: number,
   maxScale: number,
   explicitBufferPx?: number
-): ConstellationLayout {
+): ConstellationLayout | null {
   const edges: Array<[number, number]> = [
     [0, 1],
     [1, 3],
@@ -367,14 +405,14 @@ function solveSquareLayout(
     const buf = resolveDesiredWaveBufferPx(s, explicitBufferPx);
     const hw = PIN_HEX_HALF_WIDTH_PX * s;
     const hh = PIN_HEX_HALF_HEIGHT_PX * s;
-    const maxDx = availW - 2 * hw;
-    const maxDy = availH - 2 * hh;
+    const maxDx = availW - 1 - 2 * hw;
+    const maxDy = availH - 1 - 2 * hh;
     const minDx = minCenterStepAlongAxis(1, 0, s, buf);
     const minDy = minCenterStepAlongAxis(0, 1, s, buf);
     if (maxDx < minDx || maxDy < minDy) return null;
 
-    const dy = Math.min(maxDy, Math.max(minDy, maxDx * 1.05));
-    const dx = Math.min(maxDx, Math.max(minDx, dy * 1.42));
+    const dy = Math.min(maxDy, Math.max(minDy, minDy * 1.12));
+    const dx = Math.min(maxDx, Math.max(minDx, minDx * 1.15));
 
     const positions = [
       { x: 0, y: 0 },
@@ -385,6 +423,10 @@ function solveSquareLayout(
     return { positions };
   };
 
+  if (!computeGeometry(0.25)) {
+    return null;
+  }
+
   let lo = 0.25;
   let hi = Math.max(lo, maxScale);
   for (let iter = 0; iter < 24; iter++) {
@@ -397,55 +439,86 @@ function solveSquareLayout(
   }
 
   const best = computeGeometry(lo);
-  if (!best) {
-    return solveRowLayout(4, availW, availH, lo, explicitBufferPx);
-  }
+  if (!best) return null;
   return normalizeAndRoundLayout(best.positions, lo, edges, diagonals);
 }
 
-function solveRhombusLayout(
+function solveHorizZigZagLayout(
   availW: number,
   availH: number,
   maxScale: number,
   explicitBufferPx?: number
-): ConstellationLayout {
+): ConstellationLayout | null {
   const edges: Array<[number, number]> = [
     [0, 1],
-    [1, 3],
-    [3, 2],
-    [2, 0]
+    [1, 2],
+    [2, 3]
   ];
   const diagonals: Array<[number, number]> = [
-    [0, 3],
-    [1, 2]
+    [0, 2],
+    [1, 3]
   ];
 
   const computeGeometry = (s: number) => {
     const buf = resolveDesiredWaveBufferPx(s, explicitBufferPx);
     const hw = PIN_HEX_HALF_WIDTH_PX * s;
     const hh = PIN_HEX_HALF_HEIGHT_PX * s;
-    const maxDxHalf = availW / 2 - hw;
-    const maxDyHalf = (availH - 2 * hh) / 2;
-    const minVertDist = minCenterStepAlongAxis(0, 1, s, buf);
-    const minHorizDist = minCenterStepAlongAxis(1, 0, s, buf);
+    const maxDy = availH - 1 - 2 * hh;
+    const maxDx = (availW - 1 - 2 * hw) / 3;
+    if (maxDy <= 0 || maxDx <= 0) return null;
 
-    if (2 * maxDyHalf < minVertDist || 2 * maxDxHalf < minHorizDist) return null;
+    const minSameRowDx = minCenterStepAlongAxis(1, 0, s, buf) * 0.5;
+    if (maxDx < minSameRowDx) return null;
 
-    const minDyHalf = minVertDist * 0.5;
-    const dxHalf = Math.min(maxDxHalf, Math.max(minHorizDist * 0.5, maxDyHalf * 2.35));
-    const dyHalf = Math.min(maxDyHalf, Math.max(minDyHalf, dxHalf * 1.12));
+    const minZigDy = Math.min(maxDy, 120 * s);
+    const idealDy = Math.min(maxDy, 295 * s);
+    let bestCandidate: { dx: number; dy: number; score: number } | null = null;
 
-    const top = { x: 0, y: -dyHalf };
-    const left = { x: -dxHalf, y: 0 };
-    const right = { x: dxHalf, y: 0 };
-    const bottom = { x: 0, y: dyHalf };
+    for (let k = 0; k <= 24; k++) {
+      const dy = minZigDy + (maxDy - minZigDy) * (k / 24);
+      if (
+        !pairFitsWithBuffer(0, -dy * 0.5, maxDx, dy * 0.5, s, buf) ||
+        !pairFitsWithBuffer(0, -dy * 0.5, 3 * maxDx, dy * 0.5, s, buf)
+      ) {
+        continue;
+      }
 
-    if (!pairFitsWithBuffer(top.x, top.y, bottom.x, bottom.y, s, buf)) return null;
-    if (!pairFitsWithBuffer(left.x, left.y, right.x, right.y, s, buf)) return null;
-    if (!pairFitsWithBuffer(top.x, top.y, left.x, left.y, s, buf)) return null;
+      let loX = minSameRowDx;
+      let hiX = maxDx;
+      for (let iter = 0; iter < 18; iter++) {
+        const midX = (loX + hiX) * 0.5;
+        if (
+          pairFitsWithBuffer(0, -dy * 0.5, midX, dy * 0.5, s, buf) &&
+          pairFitsWithBuffer(0, -dy * 0.5, 3 * midX, dy * 0.5, s, buf)
+        ) {
+          hiX = midX;
+        } else {
+          loX = midX;
+        }
+      }
 
-    return { positions: [top, left, right, bottom] };
+      const dx = Math.min(maxDx, hiX * 1.12);
+      const balancePenalty = Math.abs(dy - idealDy);
+      if (!bestCandidate || balancePenalty < bestCandidate.score) {
+        bestCandidate = { dx, dy, score: balancePenalty };
+      }
+    }
+
+    if (!bestCandidate) return null;
+    const { dx, dy } = bestCandidate;
+    return {
+      positions: [
+        { x: 0, y: -dy * 0.5 },
+        { x: dx, y: dy * 0.5 },
+        { x: 2 * dx, y: -dy * 0.5 },
+        { x: 3 * dx, y: dy * 0.5 }
+      ]
+    };
   };
+
+  if (!computeGeometry(0.25)) {
+    return null;
+  }
 
   let lo = 0.25;
   let hi = Math.max(lo, maxScale);
@@ -459,21 +532,126 @@ function solveRhombusLayout(
   }
 
   const best = computeGeometry(lo);
-  if (!best) {
-    return solveRowLayout(4, availW, availH, lo, explicitBufferPx);
-  }
+  if (!best) return null;
   return normalizeAndRoundLayout(best.positions, lo, edges, diagonals);
 }
 
+function solveVertZigZagLayout(
+  availW: number,
+  availH: number,
+  maxScale: number,
+  explicitBufferPx?: number
+): ConstellationLayout | null {
+  const edges: Array<[number, number]> = [
+    [0, 1],
+    [1, 2],
+    [2, 3]
+  ];
+  const diagonals: Array<[number, number]> = [
+    [0, 2],
+    [1, 3]
+  ];
+
+  const computeGeometry = (s: number) => {
+    const buf = resolveDesiredWaveBufferPx(s, explicitBufferPx);
+    const hw = PIN_HEX_HALF_WIDTH_PX * s;
+    const hh = PIN_HEX_HALF_HEIGHT_PX * s;
+    const maxDx = availW - 1 - 2 * hw;
+    const maxDy = (availH - 1 - 2 * hh) / 3;
+    if (maxDx <= 0 || maxDy <= 0) return null;
+
+    const minSameColDy = minCenterStepAlongAxis(0, 1, s, buf) * 0.5;
+    if (maxDy < minSameColDy) return null;
+
+    const minZigDx = Math.min(maxDx, 120 * s);
+    const idealDx = Math.min(maxDx, 285 * s);
+    let bestCandidate: { dx: number; dy: number; score: number } | null = null;
+
+    for (let k = 0; k <= 24; k++) {
+      const dx = minZigDx + (maxDx - minZigDx) * (k / 24);
+      if (
+        !pairFitsWithBuffer(-dx * 0.5, 0, dx * 0.5, maxDy, s, buf) ||
+        !pairFitsWithBuffer(-dx * 0.5, 0, dx * 0.5, 3 * maxDy, s, buf)
+      ) {
+        continue;
+      }
+
+      let loY = minSameColDy;
+      let hiY = maxDy;
+      for (let iter = 0; iter < 18; iter++) {
+        const midY = (loY + hiY) * 0.5;
+        if (
+          pairFitsWithBuffer(-dx * 0.5, 0, dx * 0.5, midY, s, buf) &&
+          pairFitsWithBuffer(-dx * 0.5, 0, dx * 0.5, 3 * midY, s, buf)
+        ) {
+          hiY = midY;
+        } else {
+          loY = midY;
+        }
+      }
+
+      const dy = Math.min(maxDy, hiY * 1.1);
+      const balancePenalty = Math.abs(dx - idealDx);
+      if (!bestCandidate || balancePenalty < bestCandidate.score) {
+        bestCandidate = { dx, dy, score: balancePenalty };
+      }
+    }
+
+    if (!bestCandidate) return null;
+    const { dx, dy } = bestCandidate;
+    return {
+      positions: [
+        { x: -dx * 0.5, y: 0 },
+        { x: dx * 0.5, y: dy },
+        { x: -dx * 0.5, y: 2 * dy },
+        { x: dx * 0.5, y: 3 * dy }
+      ]
+    };
+  };
+
+  if (!computeGeometry(0.25)) {
+    return null;
+  }
+
+  let lo = 0.25;
+  let hi = Math.max(lo, maxScale);
+  for (let iter = 0; iter < 24; iter++) {
+    const mid = (lo + hi) * 0.5;
+    if (computeGeometry(mid)) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+
+  const best = computeGeometry(lo);
+  if (!best) return null;
+  return normalizeAndRoundLayout(best.positions, lo, edges, diagonals);
+}
+
+function pickLargestBubbleLayout(
+  candidates: Array<ConstellationLayout | null>,
+  fallback: ConstellationLayout
+): ConstellationLayout {
+  let best: ConstellationLayout | null = null;
+  for (const cand of candidates) {
+    if (!cand) continue;
+    if (!best || cand.nodeScale > best.nodeScale + 0.004) {
+      best = cand;
+    }
+  }
+  return best ?? fallback;
+}
+
 /**
- * Computes optimal pinned constellation positions & bubble scale.
- * When `fitOptions` is supplied (runtime arena width & height), dynamically maximizes
- * harmonic bubble size to fill available space while maintaining a guaranteed overlap buffer.
+ * Deterministically places 2–4 pinned bubbles into whichever formation fits
+ * the available arena with the largest harmonic bubble scale and guaranteed overlap buffer:
+ * - 2 pins: horizontal pair (or vertical stack on narrow-tall desktop viewports)
+ * - 3 pins: adaptive triangle / row / vertical stack
+ * - 4 pins: horizontal zig-zag on widescreen displays, falling back to 2x2 square / vertical zig-zag / row where taller or wider viewports allow larger bubbles
  */
 export function getConstellationLayout(
   count: number,
-  threeMode: ThreeFormationMode = 'TRIANGLE',
-  fourMode: FourFormationMode = 'RHOMBUS',
   orientationMode: PinOrientationMode | boolean = 'desktop',
   fitOptions?: ConstellationFitOptions
 ): ConstellationLayout {
@@ -495,37 +673,71 @@ export function getConstellationLayout(
       const availH =
         count === 2 ? baseTwoH : Math.max(540, Math.round(baseTwoH * (1 + (count - 2) * 0.62)));
       const maxScale = Math.min(1.25, Math.max(0.6, fitOptions.pinMaxScale ?? 1.15));
-      return solveVerticalLayout(count, availW, availH, maxScale, explicitBuf);
+      const vert = solveVerticalLayout(count, availW, availH, maxScale, explicitBuf);
+      if (count >= 4) {
+        return pickLargestBubbleLayout(
+          [vert, solveVertZigZagLayout(availW, availH, maxScale, explicitBuf)],
+          vert
+        );
+      }
+      return vert;
     }
 
     if (mode === 'horizontal' && count >= 2) {
       const availW = Math.max(280, safeWrap - 8);
       const availH = Math.max(250, safeViewH - 210);
       const maxScale = Math.min(1.65, Math.max(0.55, fitOptions.pinMaxScale ?? 1.35));
-      return solveRowLayout(count, availW, availH, maxScale, explicitBuf);
+      const rowFallback = solveRowLayout(count, availW, availH, maxScale, explicitBuf);
+      if (count === 2) return rowFallback;
+      if (count === 3) {
+        return pickLargestBubbleLayout(
+          [solveTriangleLayout(availW, availH, maxScale, explicitBuf), rowFallback],
+          rowFallback
+        );
+      }
+      return pickLargestBubbleLayout(
+        [
+          solveHorizZigZagLayout(availW, availH, maxScale, explicitBuf),
+          rowFallback,
+          solveSquareLayout(availW, availH, maxScale, explicitBuf)
+        ],
+        rowFallback
+      );
     }
 
-    // Desktop formations
+    // Desktop: deterministically pick the formation that yields the largest bubbles
     const availW = Math.max(280, safeWrap - 8);
-    const availH = Math.max(380, safeViewH - 284);
+    const availH = Math.max(360, safeViewH - 326);
     const maxScale = Math.min(2.9, Math.max(0.75, fitOptions.pinMaxScale ?? 2.8));
 
     if (count === 2) {
-      return solveRowLayout(2, availW, availH, maxScale, explicitBuf);
+      const row2 = solveRowLayout(2, availW, availH, maxScale, explicitBuf);
+      const vert2 = solveVerticalLayout(2, availW, availH, maxScale, explicitBuf);
+      return pickLargestBubbleLayout([row2, vert2], row2);
     }
+
     if (count === 3) {
-      if (threeMode === 'SIDE_BY_SIDE') {
-        return solveRowLayout(3, availW, availH, maxScale, explicitBuf);
-      }
-      return solveTriangleLayout(availW, availH, maxScale, explicitBuf);
+      const row3 = solveRowLayout(3, availW, availH, maxScale, explicitBuf);
+      return pickLargestBubbleLayout(
+        [
+          solveTriangleLayout(availW, availH, maxScale, explicitBuf),
+          row3,
+          solveVerticalLayout(3, availW, availH, maxScale, explicitBuf)
+        ],
+        row3
+      );
     }
-    if (fourMode === 'SQUARE') {
-      return solveSquareLayout(availW, availH, maxScale, explicitBuf);
-    }
-    if (fourMode === 'SIDE_BY_SIDE') {
-      return solveRowLayout(4, availW, availH, maxScale, explicitBuf);
-    }
-    return solveRhombusLayout(availW, availH, maxScale, explicitBuf);
+
+    const row4 = solveRowLayout(4, availW, availH, maxScale, explicitBuf);
+    return pickLargestBubbleLayout(
+      [
+        solveHorizZigZagLayout(availW, availH, maxScale, explicitBuf),
+        row4,
+        solveSquareLayout(availW, availH, maxScale, explicitBuf),
+        solveVertZigZagLayout(availW, availH, maxScale, explicitBuf)
+      ],
+      row4
+    );
   }
 
   // Canonical un-fitted layouts (used by pure scaling callers without container bounds)
@@ -570,51 +782,203 @@ export function getConstellationLayout(
   }
 
   if (count === 3) {
-    if (threeMode === 'SIDE_BY_SIDE') {
-      const stepX = 394;
-      return {
-        width: PIN_HEX_HALF_WIDTH_PX * 2 + stepX * 2,
-        height: PIN_HEX_HALF_HEIGHT_PX * 2,
-        nodeScale: 1,
-        positions: [
-          { x: PIN_HEX_HALF_WIDTH_PX, y: PIN_HEX_HALF_HEIGHT_PX },
-          { x: PIN_HEX_HALF_WIDTH_PX + stepX, y: PIN_HEX_HALF_HEIGHT_PX },
-          { x: PIN_HEX_HALF_WIDTH_PX + stepX * 2, y: PIN_HEX_HALF_HEIGHT_PX }
-        ],
-        edges: [
-          [0, 1],
-          [1, 2]
-        ],
-        diagonals: []
-      };
-    }
-    return solveTriangleLayout(1120, 760, 1.0);
+    return solveTriangleLayout(1120, 760, 1.0) ?? solveRowLayout(3, 1280, 500, 1.0);
   }
 
-  if (fourMode === 'SQUARE') {
-    return solveSquareLayout(1120, 760, 1.0);
-  }
-
-  if (fourMode === 'SIDE_BY_SIDE') {
-    const stepX = 394;
-    return {
-      width: PIN_HEX_HALF_WIDTH_PX * 2 + stepX * 3,
-      height: PIN_HEX_HALF_HEIGHT_PX * 2,
-      nodeScale: 1,
-      positions: [
-        { x: PIN_HEX_HALF_WIDTH_PX, y: PIN_HEX_HALF_HEIGHT_PX },
-        { x: PIN_HEX_HALF_WIDTH_PX + stepX, y: PIN_HEX_HALF_HEIGHT_PX },
-        { x: PIN_HEX_HALF_WIDTH_PX + stepX * 2, y: PIN_HEX_HALF_HEIGHT_PX },
-        { x: PIN_HEX_HALF_WIDTH_PX + stepX * 3, y: PIN_HEX_HALF_HEIGHT_PX }
-      ],
-      edges: [
-        [0, 1],
-        [1, 2],
-        [2, 3]
-      ],
-      diagonals: []
-    };
-  }
-
-  return solveRhombusLayout(1120, 760, 1.0);
+  return solveHorizZigZagLayout(1332, 754, 1.0) ?? solveRowLayout(4, 1580, 500, 1.0);
 }
+
+function pointToSegmentDist(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number
+): number {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const lenSq = vx * vx + vy * vy;
+  if (lenSq <= 1e-6) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / lenSq));
+  return Math.hypot(px - (ax + vx * t), py - (ay + vy * t));
+}
+
+function pillNodeWaveClearance(
+  pillX: number,
+  pillY: number,
+  pillW: number,
+  pillH: number,
+  nodeX: number,
+  nodeY: number,
+  waveRadius: number
+): number {
+  const qx = Math.max(pillX - pillW * 0.5, Math.min(pillX + pillW * 0.5, nodeX));
+  const qy = Math.max(pillY - pillH * 0.5, Math.min(pillY + pillH * 0.5, nodeY));
+  return Math.hypot(nodeX - qx, nodeY - qy) - waveRadius;
+}
+
+/**
+ * Computes enlarged, collision-free delta connector links and Δ pill coordinates
+ * for the collapsed harmonic wave constellation view.
+ */
+export function computeCollapsedDeltaLinks(layout: ConstellationLayout): ConstellationDeltaLink[] {
+  const positions = layout.positions;
+  if (positions.length < 2) return [];
+
+  const s = Math.max(0.25, layout.nodeScale);
+  const badgeScale = Math.max(0.96, Math.min(1.52, s * 1.12));
+  const lineScale = Math.max(0.95, Math.min(1.45, s));
+
+  const pillWidth = Math.round(92 * badgeScale);
+  const pillHeight = Math.round(32 * badgeScale);
+  const fontSize = Math.round(14.5 * badgeScale * 10) / 10;
+  const strokeWidth = Math.round(2.5 * lineScale * 10) / 10;
+
+  const waveRadius = PIN_NUCLEUS_UNSPLIT_WAVE_RADIUS_PX * s;
+  const trimDist = 104 * s;
+
+  const rawPairs: Array<{ fromIdx: number; toIdx: number; isDiagonal: boolean }> = [
+    ...layout.edges.map(([fromIdx, toIdx]) => ({ fromIdx, toIdx, isDiagonal: false })),
+    ...layout.diagonals.map(([fromIdx, toIdx]) => ({ fromIdx, toIdx, isDiagonal: true }))
+  ];
+
+  const placedPills: Array<{ x: number; y: number; w: number; h: number }> = [];
+  const results: ConstellationDeltaLink[] = [];
+
+  for (const pair of rawPairs) {
+    const p1 = positions[pair.fromIdx];
+    const p2 = positions[pair.toIdx];
+    if (!p1 || !p2) continue;
+
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) continue;
+
+    // Skip diagonals whose chord would slice across an intermediate node's collapsed wave crest
+    if (pair.isDiagonal) {
+      let slicesIntermediate = false;
+      for (let k = 0; k < positions.length; k++) {
+        if (k === pair.fromIdx || k === pair.toIdx) continue;
+        const nk = positions[k];
+        if (pointToSegmentDist(nk.x, nk.y, p1.x, p1.y, p2.x, p2.y) < waveRadius + 10 * s) {
+          slicesIntermediate = true;
+          break;
+        }
+      }
+      if (slicesIntermediate) continue;
+    }
+
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const trim = Math.min(trimDist, dist * 0.34);
+    const x1 = Math.round((p1.x + ux * trim) * 10) / 10;
+    const y1 = Math.round((p1.y + uy * trim) * 10) / 10;
+    const x2 = Math.round((p2.x - ux * trim) * 10) / 10;
+    const y2 = Math.round((p2.y - uy * trim) * 10) / 10;
+
+    // Candidate fractional positions along the chord (center first, then symmetric offsets for crossing diagonals)
+    const candidateTs = pair.isDiagonal ? [0.5, 0.34, 0.66] : [0.5, 0.42, 0.58];
+    let chosenPill: { x: number; y: number } | null = null;
+    let bestFallback: { x: number; y: number; score: number } | null = null;
+
+    for (const t of candidateTs) {
+      const cx = p1.x + dx * t;
+      const cy = p1.y + dy * t;
+
+      let minWaveClr = Infinity;
+      for (let k = 0; k < positions.length; k++) {
+        const nk = positions[k];
+        minWaveClr = Math.min(
+          minWaveClr,
+          pillNodeWaveClearance(cx, cy, pillWidth, pillHeight, nk.x, nk.y, waveRadius)
+        );
+      }
+
+      let overlapsSiblingPill = false;
+      for (const prev of placedPills) {
+        if (
+          Math.abs(cx - prev.x) < (pillWidth + prev.w) * 0.5 + 8 &&
+          Math.abs(cy - prev.y) < (pillHeight + prev.h) * 0.5 + 8
+        ) {
+          overlapsSiblingPill = true;
+          break;
+        }
+      }
+
+      if (!overlapsSiblingPill && minWaveClr >= 6) {
+        chosenPill = { x: cx, y: cy };
+        break;
+      }
+
+      const fallbackScore = (overlapsSiblingPill ? -1000 : 0) + minWaveClr;
+      if (!bestFallback || fallbackScore > bestFallback.score) {
+        bestFallback = { x: cx, y: cy, score: fallbackScore };
+      }
+    }
+
+    const finalPill = chosenPill ?? bestFallback;
+    if (!finalPill) continue;
+
+    // If a diagonal pill still overlaps another pill even after offset candidates, omit it cleanly
+    if (
+      pair.isDiagonal &&
+      placedPills.some(
+        (prev) =>
+          Math.abs(finalPill.x - prev.x) < (pillWidth + prev.w) * 0.5 + 4 &&
+          Math.abs(finalPill.y - prev.y) < (pillHeight + prev.h) * 0.5 + 4
+      )
+    ) {
+      continue;
+    }
+
+    placedPills.push({ x: finalPill.x, y: finalPill.y, w: pillWidth, h: pillHeight });
+    results.push({
+      id: `${pair.isDiagonal ? 'diag' : 'edge'}-${pair.fromIdx}-${pair.toIdx}`,
+      fromIdx: pair.fromIdx,
+      toIdx: pair.toIdx,
+      isDiagonal: pair.isDiagonal,
+      x1,
+      y1,
+      x2,
+      y2,
+      pillX: Math.round(finalPill.x * 10) / 10,
+      pillY: Math.round(finalPill.y * 10) / 10,
+      pillWidth,
+      pillHeight,
+      fontSize,
+      strokeWidth
+    });
+  }
+
+  return results;
+}
+
+export type DeltaFlowDirection = 'toA' | 'toB' | 'tie';
+
+/**
+ * Determines which endpoint of a delta bridge holds the better grade (or higher
+ * score on identical letter grades) so dash flow animates toward the stronger network.
+ */
+export function resolveDeltaFlowDirection(
+  assetA: { grade?: unknown; totalScore?: unknown } | null | undefined,
+  assetB: { grade?: unknown; totalScore?: unknown } | null | undefined
+): DeltaFlowDirection {
+  const rankA = GRADE_RANK[String(assetA?.grade || 'F').toUpperCase()] ?? 99;
+  const rankB = GRADE_RANK[String(assetB?.grade || 'F').toUpperCase()] ?? 99;
+  if (rankA !== rankB) {
+    return rankA < rankB ? 'toA' : 'toB';
+  }
+
+  const scoreA = Number(assetA?.totalScore);
+  const scoreB = Number(assetB?.totalScore);
+  const safeA = Number.isFinite(scoreA) ? scoreA : 0;
+  const safeB = Number.isFinite(scoreB) ? scoreB : 0;
+  if (Math.abs(safeA - safeB) > 1e-6) {
+    return safeA > safeB ? 'toA' : 'toB';
+  }
+
+  return 'tie';
+}
+
