@@ -69,6 +69,9 @@ import { classifyAuditQueryForSandbox } from './src/data/auditProvenance.ts';
 import {
   MCP_ARCHIVE_TOOL_SCHEMAS,
   answerArchiveResearchQuestion,
+  buildAgentGainsReference,
+  buildAgentOriginThesisReference,
+  buildAgentRubricReference,
   buildArchiveComparison,
   buildOpenGraphMetaForUrl,
   findArchivedAudit,
@@ -1617,10 +1620,94 @@ ${
     });
   });
 
-  app.post('/api/agent/research', async (req: Request, res: Response) => {
+  app.get('/api/agent/rubric', async (req: Request, res: Response) => {
     await syncFirestoreArchivedAuditsToCache();
-    const body = (req.body || {}) as { question?: string; query?: string; mode?: string };
-    const question = String(body.question || body.query || '').trim();
+    const origin = resolvePublicOrigin(req);
+    const rubric = buildAgentRubricReference(getServerArchiveMap());
+    res.json({
+      ...rubric,
+      absoluteUrl: `${origin}${rubric.deepLinkUrl}`
+    });
+  });
+
+  app.get('/api/agent/gains', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const origin = resolvePublicOrigin(req);
+    const gains = buildAgentGainsReference(
+      getServerArchiveMap(),
+      getPersistedGainsCohort(),
+      getCachedM2BenchmarkDataset()
+    );
+    res.json({
+      ...gains,
+      absoluteUrl: `${origin}${gains.deepLinkUrl}`
+    });
+  });
+
+  app.get('/api/agent/origin-thesis', (req: Request, res: Response) => {
+    const origin = resolvePublicOrigin(req);
+    const mode = String(req.query.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+    const thesis = buildAgentOriginThesisReference(mode);
+    res.json({
+      ...thesis,
+      absoluteUrl: `${origin}${thesis.deepLinkUrl}`
+    });
+  });
+
+  app.get('/api/agent/pillars', async (req: Request, res: Response) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const origin = resolvePublicOrigin(req);
+    const map = getServerArchiveMap();
+    const rubric = buildAgentRubricReference(map);
+    const gains = buildAgentGainsReference(
+      map,
+      getPersistedGainsCohort(),
+      getCachedM2BenchmarkDataset()
+    );
+    const thesis = buildAgentOriginThesisReference('GENIUS');
+    res.json({
+      ok: true,
+      archiveOnly: true,
+      creditsUsed: 0,
+      pillars: {
+        archive: {
+          title: 'Pillar 1 — Verified Thermodynamic Audit Archive',
+          uiUrl: `${origin}/?archive=1`,
+          apiUrl: `${origin}/api/agent/archive`,
+          totalArchived: Object.keys(map).length
+        },
+        rubric: {
+          title: 'Pillar 2 — Deterministic 6-Invariant Grading Rubric & Consistency Proof',
+          uiUrl: `${origin}/?rubric=1`,
+          apiUrl: `${origin}/api/agent/rubric`,
+          standardGradeCurveSummary: rubric.standardGradeCurveSummary,
+          sovereigntyCompromisedCurveSummary: rubric.sovereigntyCompromisedCurveSummary,
+          allConsistent: rubric.consistencyVerification.allConsistent,
+          verifiedCount: rubric.consistencyVerification.verifiedCount,
+          mismatchCount: rubric.consistencyVerification.mismatchCount
+        },
+        gains: {
+          title: 'Pillar 3 — Live Thermodynamic Gains & US M2 Money Supply Benchmark',
+          uiUrl: `${origin}/?gains=1`,
+          apiUrl: `${origin}/api/agent/gains`,
+          cycleSummary: gains.horizons.CYCLE,
+          latestM2Trillions: gains.m2Benchmark.latestM2Trillions,
+          m2AllTimeSummary: gains.m2Benchmark.horizons.ALL_TIME
+        },
+        originThesis: {
+          title: 'Pillar 4 — First Principles: Physics Over Consensus (17 Axioms)',
+          uiUrl: `${origin}/?genesis=1`,
+          apiUrl: `${origin}/api/agent/origin-thesis`,
+          axiomCount: thesis.axiomCount,
+          chapters: thesis.chapters
+        }
+      }
+    });
+  });
+
+  const handleAgentResearch = async (req: Request, res: Response, rawQuestion: string, rawMode: string) => {
+    await syncFirestoreArchivedAuditsToCache();
+    const question = String(rawQuestion || '').trim();
     if (!question || question.length > 500) {
       res.status(400).json({
         ok: false,
@@ -1631,7 +1718,7 @@ ${
       return;
     }
 
-    const mode = String(body.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+    const mode = String(rawMode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
     const map = getServerArchiveMap();
     const aliases = getServerAliasObject();
     const answer = answerArchiveResearchQuestion(map, question, {
@@ -1646,6 +1733,17 @@ ${
       ...answer,
       absoluteUrl: answer.deepLinkUrl ? `${origin}${answer.deepLinkUrl}` : null
     });
+  };
+
+  app.get('/api/agent/research', async (req: Request, res: Response) => {
+    const q = String(req.query.question || req.query.q || '');
+    const mode = String(req.query.mode || '');
+    await handleAgentResearch(req, res, q, mode);
+  });
+
+  app.post('/api/agent/research', async (req: Request, res: Response) => {
+    const body = (req.body || {}) as { question?: string; query?: string; mode?: string };
+    await handleAgentResearch(req, res, String(body.question || body.query || ''), String(body.mode || ''));
   });
 
   app.get('/mcp', (req: Request, res: Response) => {
@@ -1818,6 +1916,74 @@ ${
         return;
       }
 
+      if (toolName === 'get_grading_rubric') {
+        const rubric = buildAgentRubricReference(map);
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  { ...rubric, absoluteUrl: `${origin}${rubric.deepLinkUrl}` },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      if (toolName === 'get_live_gains_and_m2') {
+        const gains = buildAgentGainsReference(
+          map,
+          getPersistedGainsCohort(),
+          getCachedM2BenchmarkDataset()
+        );
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  { ...gains, absoluteUrl: `${origin}${gains.deepLinkUrl}` },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
+      if (toolName === 'get_origin_thesis') {
+        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
+        const thesis = buildAgentOriginThesisReference(mode);
+        res.json({
+          jsonrpc: '2.0',
+          id,
+          result: {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(
+                  { ...thesis, absoluteUrl: `${origin}${thesis.deepLinkUrl}` },
+                  null,
+                  2
+                )
+              }
+            ]
+          }
+        });
+        return;
+      }
+
       if (toolName === 'research_archive') {
         const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
         const ans = answerArchiveResearchQuestion(map, String(args.question || ''), {
@@ -1869,17 +2035,24 @@ ${
     res.json({
       openapi: '3.1.0',
       info: {
-        title: 'The Truth — Thermodynamic Archive Agent API',
-        version: '1.0.0',
+        title: 'The Truth — 4-Pillar Thermodynamic Reference Agent API',
+        version: '1.1.0',
         description:
-          'Strictly read-only, 0-credit API exposing verified cryptocurrency and physical commodity audits from The Truth Vault for AI agent comparisons, education, and deep-linking.'
+          'Strictly read-only, 0-credit API exposing the 4 canonical reference pillars of The Truth: (1) Archive, (2) Deterministic Grading Rubric & Consistency Proof, (3) Live Gains & US M2 Benchmark, and (4) First-Principles Origin Thesis.'
       },
       servers: [{ url: origin }],
       paths: {
+        '/api/agent/pillars': {
+          get: {
+            operationId: 'getReferencePillarsIndex',
+            summary: 'Fetch a compact index and headline proof across all 4 canonical reference pillars.',
+            responses: { '200': { description: '4-pillar summary index' } }
+          }
+        },
         '/api/agent/archive': {
           get: {
             operationId: 'listArchivedAudits',
-            summary: 'List all archived audits (strictly archive-only, 0 AI credits).',
+            summary: 'Pillar 1: List all archived audits (strictly archive-only, 0 AI credits).',
             parameters: [
               { name: 'basket', in: 'query', schema: { type: 'string', enum: ['ALL', 'PASSED', 'FAILED'] } },
               { name: 'category', in: 'query', schema: { type: 'string' } },
@@ -1892,7 +2065,7 @@ ${
         '/api/agent/audit/{ticker}': {
           get: {
             operationId: 'getArchivedAudit',
-            summary: 'Fetch full 6-invariant thermodynamic audit for an archived asset.',
+            summary: 'Pillar 1: Fetch full 6-invariant thermodynamic audit for an archived asset.',
             parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' } }],
             responses: {
               '200': { description: 'Full archived audit' },
@@ -1903,7 +2076,7 @@ ${
         '/api/agent/compare': {
           get: {
             operationId: 'compareArchivedAudits',
-            summary: 'Run side-by-side 6-invariant comparison across 2–4 archived assets.',
+            summary: 'Pillar 1: Run side-by-side 6-invariant comparison across 2–4 archived assets.',
             parameters: [
               { name: 'tickers', in: 'query', required: true, schema: { type: 'string' } },
               { name: 'mode', in: 'query', schema: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
@@ -1914,10 +2087,46 @@ ${
             }
           }
         },
+        '/api/agent/rubric': {
+          get: {
+            operationId: 'getGradingRubric',
+            summary:
+              'Pillar 2: Fetch exact 6-invariant quantitative scoring brackets, Standard vs Sovereignty-Compromised grade curves, and 100% mathematical consistency verification across all archived assets.',
+            responses: { '200': { description: 'Deterministic rubric and per-asset consistency proof' } }
+          }
+        },
+        '/api/agent/gains': {
+          get: {
+            operationId: 'getLiveGainsAndM2',
+            summary:
+              'Pillar 3: Fetch Passed (E > 0) vs Failed (E = 0) cohort returns across Cycle, All-Time, 180D, 1Y, 2Y, and 4Y windows plus KAS, BTC, Gold, and S&P 500 vs FRED US M2 money supply.',
+            responses: { '200': { description: 'Live cohort gains and US M2 benchmark dataset' } }
+          }
+        },
+        '/api/agent/origin-thesis': {
+          get: {
+            operationId: 'getOriginThesis',
+            summary:
+              'Pillar 4: Fetch the 17-axiom First-Principles Origin Thesis ("Physics Over Consensus"), conservation equations, and 100 MJ human biological workweek ledger.',
+            parameters: [
+              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['GENIUS', 'NORMIE'] } }
+            ],
+            responses: { '200': { description: 'Full 17-axiom origin thesis' } }
+          }
+        },
         '/api/agent/research': {
+          get: {
+            operationId: 'researchThermodynamicArchiveGet',
+            summary: 'Answer coin, rubric consistency, M2 gains, or origin thesis questions via GET.',
+            parameters: [
+              { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
+              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
+            ],
+            responses: { '200': { description: 'Deterministic reference answer' } }
+          },
           post: {
             operationId: 'researchThermodynamicArchive',
-            summary: 'Answer coin comparison or PoS-vs-PoW questions using strictly archived audits.',
+            summary: 'Answer coin comparison, rubric, M2 gains, or PoS-vs-PoW questions using deterministic reference data.',
             requestBody: {
               required: true,
               content: {
@@ -1946,30 +2155,38 @@ ${
   app.get('/llms.txt', async (req: Request, res: Response) => {
     await syncFirestoreArchivedAuditsToCache();
     const origin = resolvePublicOrigin(req);
-    const ordered = sortAuditTickersByGrade(getServerArchiveMap());
+    const map = getServerArchiveMap();
+    const ordered = sortAuditTickersByGrade(map);
+    const rubric = buildAgentRubricReference(map);
     const content = `# The Truth — Thermodynamic Audit
 > Sovereign Thermodynamic Verification Engine grading Layer-1 protocols, overlays, and physical commodities strictly against six immutable laws of physics.
 
-## Strictly Archive-Only AI Agent Policy (Zero Credit Guarantee & GENIUS Default)
-- External AI assistants, MCP clients, and browser agents may read, compare, and cite ONLY verified audits stored in the Archive.
-- All agent endpoints and MCP tools default to **GENIUS** mode (delivering complete codebase constants, mathematical proofs, consensus mechanics, receipts, AND concise normie summaries) so the calling AI has full understanding and can adapt its explanation to what its user will best understand.
-- Agent endpoints NEVER call Gemini generation, spend API credits, or invent scores for unarchived coins.
+## 4 Canonical Reference Pillars (Zero-Credit Deterministic Access)
+AI assistants, link readers (ChatGPT, Claude, Perplexity), and MCP agents should reference these 4 canonical pillars directly rather than simulating orbital UI interactions:
+1. **The Archive** (All ${ordered.length} verified 6-invariant audits)
+   - HTML View: ${origin}/?archive=1
+   - JSON Endpoint: ${origin}/api/agent/archive
+   - Single Asset JSON: ${origin}/api/agent/audit/{TICKER}
+   - Side-by-Side Comparison JSON: ${origin}/api/agent/compare?tickers=KAS,BTC,ETH,SOL&mode=GENIUS
+2. **The Deterministic Grading Rubric & Consistency Proof** (${rubric.consistencyVerification.verifiedCount}/${rubric.consistencyVerification.totalAudited} verified, ${rubric.consistencyVerification.mismatchCount} mismatches)
+   - HTML View: ${origin}/?rubric=1
+   - JSON Endpoint: ${origin}/api/agent/rubric
+   - Standard Curve (Sovereignty > 0): ${rubric.standardGradeCurveSummary}
+   - Sovereignty-Compromised Curve (Sovereignty = 0): ${rubric.sovereigntyCompromisedCurveSummary}
+   - Zero-Joule Floor (Cost Floor = 0): automatic Grade F (0.00 / 6.00)
+3. **Live Thermodynamic Gains & US M2 Money Supply Benchmark** (Passed E > 0 vs Failed E = 0 + KAS, BTC, Gold, S&P 500 vs FRED M2)
+   - HTML View: ${origin}/?gains=1
+   - JSON Endpoint: ${origin}/api/agent/gains
+4. **First-Principles Origin Thesis ("Physics Over Consensus")** (17 axioms, conservation equations, 100 MJ human biological workweek ledger, Grand Canyon & Sequoia PoW proofs)
+   - HTML View: ${origin}/?genesis=1
+   - JSON Endpoint: ${origin}/api/agent/origin-thesis
 
-## Live Machine Endpoints
-- Archive Directory JSON: ${origin}/api/agent/archive
-- Single Archived Audit: ${origin}/api/agent/audit/{TICKER}
-- Side-by-Side Comparison: ${origin}/api/agent/compare?tickers=KAS,ETH,SOL&mode=GENIUS
-- Archive Research QA (POST): ${origin}/api/agent/research
+## Unified Discovery & Tooling
+- 4-Pillar Summary Bundle (GET): ${origin}/api/agent/pillars
+- Deterministic Research QA (GET or POST): ${origin}/api/agent/research?q=Is%20grading%20consistent
 - Streamable HTTP MCP Endpoint: ${origin}/mcp
 - OpenAPI 3.1 Spec: ${origin}/openapi.json
 - XML Sitemap: ${origin}/sitemap.xml
-
-## Deep-Link UI Routes (Shareable Comparisons)
-- Side-by-side constellation: ${origin}/?compare=KAS,ETH,SOL&mode=GENIUS
-- Single archived asset: ${origin}/?asset=BTC&mode=GENIUS
-- Wartime partition lab: ${origin}/?asset=SOL&lab=wartime
-- Empirical Cycle Gains chart: ${origin}/?gains=1
-- First-Principles Origin Thesis: ${origin}/?genesis=1
 
 ## Currently Archived Tickers (${ordered.length})
 ${ordered.join(', ')}
@@ -1983,8 +2200,9 @@ ${ordered.join(', ')}
     const ordered = sortAuditTickersByGrade(getServerArchiveMap());
     const urls = [
       `${origin}/`,
-      `${origin}/?gains=1`,
+      `${origin}/?archive=1`,
       `${origin}/?rubric=1`,
+      `${origin}/?gains=1`,
       `${origin}/?genesis=1`,
       `${origin}/?compare=KAS,BTC,ETH,SOL&mode=GENIUS`,
       `${origin}/?compare=KAS,ETH&mode=GENIUS`,
@@ -2037,7 +2255,11 @@ ${ordered.join(', ')}
       req.originalUrl || '/',
       origin,
       archiveMap,
-      aliasObj
+      aliasObj,
+      {
+        cohortRecord: getPersistedGainsCohort(),
+        m2Dataset: getCachedM2BenchmarkDataset()
+      }
     );
     return injectSsrRootHtml(withMeta, ssrInnerHtml);
   };

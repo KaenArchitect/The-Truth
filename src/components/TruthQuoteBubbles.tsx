@@ -246,6 +246,7 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
   const isTitleCurrent = isTheCurrent || isTruthCurrent;
   const isTheSpoken = parsed.hasLeadingThe && parsed.theStepIndex !== null && stepIndex >= parsed.theStepIndex;
   const isTruthSpoken = stepIndex >= parsed.truthStepIndex;
+  const trailingSuffix = `${parsed.isPlural ? 's' : ''}${parsed.titleTrailingPunct}`;
 
   return (
     <h1
@@ -253,12 +254,8 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
       data-speaking-title={isTitleCurrent ? 'true' : 'false'}
       className="font-display text-[36px] sm:text-[46px] lg:text-[52px] xl:text-[58px] font-bold tracking-tight leading-none inline-flex items-baseline whitespace-nowrap select-none"
     >
-      {parsed.titleLeadingPunct ? (
-        <span className="text-neutral-400 mr-0.5">{parsed.titleLeadingPunct}</span>
-      ) : null}
-
       <span
-        className="inline-block transition-[color,opacity,transform,text-shadow] duration-150 ease-out"
+        className="relative inline-block transition-[color,opacity,transform,text-shadow] duration-150 ease-out"
         style={{
           color: !parsed.hasLeadingThe
             ? 'rgba(163, 163, 163, 0.45)'
@@ -280,13 +277,21 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
               : 'none'
         }}
       >
+        {parsed.titleLeadingPunct ? (
+          <span
+            data-testid="hero-title-leading-punct"
+            className="pointer-events-none absolute right-full top-0 pr-0.5 whitespace-nowrap text-neutral-400"
+          >
+            {parsed.titleLeadingPunct}
+          </span>
+        ) : null}
         The
       </span>
 
       <span>&nbsp;</span>
 
       <span
-        className="inline-block transition-[color,opacity,transform,text-shadow] duration-150 ease-out"
+        className="relative inline-block transition-[color,opacity,transform,text-shadow] duration-150 ease-out"
         style={{
           color: isTruthCurrent
             ? accent.primary
@@ -304,14 +309,22 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
             : 'none'
         }}
       >
-        Truth{parsed.isPlural ? 's' : ''}
-        {parsed.titleTrailingPunct ? (
+        Truth
+        {trailingSuffix ? (
           <span
-            style={{
-              color: isTruthCurrent || isTruthSpoken ? accent.primary : 'rgba(255,255,255,0.42)'
-            }}
+            data-testid="hero-title-trailing-suffix"
+            className="pointer-events-none absolute left-full top-0 whitespace-nowrap"
           >
-            {parsed.titleTrailingPunct}
+            {parsed.isPlural ? 's' : ''}
+            {parsed.titleTrailingPunct ? (
+              <span
+                style={{
+                  color: isTruthCurrent || isTruthSpoken ? accent.primary : 'rgba(255,255,255,0.42)'
+                }}
+              >
+                {parsed.titleTrailingPunct}
+              </span>
+            ) : null}
           </span>
         ) : null}
       </span>

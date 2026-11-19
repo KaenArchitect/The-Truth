@@ -49,11 +49,40 @@ test('injectSsrRootHtml preserves $ ticker tokens cleanly without RegExp backref
   assert.ok(out.includes('<script src="/main.js"></script>'));
 });
 
-test('index.html hides .truth-ssr-snapshot synchronously in head for JS-enabled browsers and sets dark background before CSS loads', () => {
+test('buildSsrRootInnerHtml renders exact live rubric grade brackets with 0 mismatches and dedicated SSR views for all 4 pillars', () => {
+  const homeHtml = buildSsrRootInnerHtml('/', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  // Must match live deriveGradeFromTotal brackets, never stale 5.70 / 4.20 cutoffs
+  assert.match(homeHtml, /A\+ \(5\.75–6\.00\)/);
+  assert.match(homeHtml, /B\+ \(4\.40–4\.89\)/);
+  assert.match(homeHtml, /0 Mismatches/);
+  assert.doesNotMatch(homeHtml, /5\.70–6\.00/);
+
+  const rubricHtml = buildSsrRootInnerHtml('/?rubric=1', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  assert.match(rubricHtml, /Pillar 2 — Deterministic 6-Invariant Grading Rubric/);
+  assert.match(rubricHtml, /100% Mathematically Consistent/);
+  assert.match(rubricHtml, /VERIFIED/);
+
+  const gainsHtml = buildSsrRootInnerHtml('/?gains=1', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  assert.match(gainsHtml, /Pillar 3 — Live Thermodynamic Gains/);
+  assert.match(gainsHtml, /Macro Purchasing-Power Benchmark vs FRED US M2 Money Supply/);
+
+  const genesisHtml = buildSsrRootInnerHtml('/?genesis=1', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  assert.match(genesisHtml, /Pillar 4 — First Principles: Physics Over Consensus/);
+  assert.match(genesisHtml, /100 megajoules/i);
+
+  const archiveHtml = buildSsrRootInnerHtml('/?archive=1', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  assert.match(archiveHtml, /Pillar 1 — Complete Verified Thermodynamic Archive/);
+});
+
+test('index.html hides .truth-ssr-snapshot synchronously in head for JS-enabled browsers and exposes 4-pillar alternate links', () => {
   const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
   assert.match(indexHtml, /document\.documentElement\.dataset\.js\s*=\s*['"]1['"]/);
   assert.match(indexHtml, /html,\s*body\s*\{\s*background-color:\s*#0B0C0E;\s*color:\s*#FFFFFF;\s*\}/i);
   assert.match(indexHtml, /html\[data-js=["']1["']\]\s*\.truth-ssr-snapshot\s*\{\s*display:\s*none\s*!important;\s*\}/);
+  assert.match(indexHtml, /href="\/api\/agent\/rubric"/);
+  assert.match(indexHtml, /href="\/api\/agent\/gains"/);
+  assert.match(indexHtml, /href="\/api\/agent\/origin-thesis"/);
   assert.match(indexHtml, /<div id="root"><\/div>/);
 });
+
 

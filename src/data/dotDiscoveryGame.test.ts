@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  DOT_CLICKS_TO_FILL,
+  DOT_CLICK_INCREMENT,
+  DOT_DISCHARGE_DELAY_MS,
   DOT_DISCOVERY_INTERACTIONS,
   DOT_DISCOVERY_STORAGE_KEY,
   DOT_DISCOVERY_TARGET_COUNT,
+  DOT_HOLD_DURATION_MS,
+  DOT_HOLD_ENGAGE_DELAY_MS,
+  advanceDotClickCharge,
+  computeDotDischargedCharge,
+  computeDotHoldProgress,
+  computeDotTimeToZeroMs,
   createInitialDotDiscoveryState,
   formatMysteryCounterValue,
   getDotDiscoveryCount,
@@ -107,3 +116,67 @@ test('State sanitizes corrupt inputs and round-trips cleanly with storage', () =
   assert.deepEqual(sanitized.discovered, ['inspect_asset', 'hands_on_tool']);
   assert.equal(sanitized.unlockedAtMs, null);
 });
+
+test('Discrete dot clicks fill charge very slowly (200 clicks) while continuous holding reaches 100% in 5s', () => {
+  assert.equal(DOT_CLICKS_TO_FILL, 200);
+  assert.equal(DOT_CLICK_INCREMENT, 0.005);
+
+  let charge = 0;
+  for (let i = 1; i < DOT_CLICKS_TO_FILL; i++) {
+    const step = advanceDotClickCharge(charge);
+    assert.equal(step.triggered, false);
+    assert.ok(step.nextCharge > charge);
+    charge = step.nextCharge;
+  }
+  assert.ok(Math.abs(charge - 0.995) < 1e-6);
+
+  const finalClick = advanceDotClickCharge(charge);
+  assert.equal(finalClick.triggered, true);
+  assert.equal(finalClick.nextCharge, 1);
+
+  // Continuous hold from 0 hits exact tap increment at engage threshold and 1.0 at 5000ms
+  assert.equal(computeDotHoldProgress(0, 0), 0);
+  assert.ok(Math.abs(computeDotHoldProgress(0, DOT_HOLD_ENGAGE_DELAY_MS) - DOT_CLICK_INCREMENT) < 1e-6);
+  assert.ok(computeDotHoldProgress(0, 2500) > 0.45 && computeDotHoldProgress(0, 2500) < 0.55);
+  assert.equal(computeDotHoldProgress(0, DOT_HOLD_DURATION_MS), 1);
+
+  // Pre-banked click charge carries smoothly into a subsequent continuous hold without backward jump
+  const preBanked = 0.25;
+  assert.equal(computeDotHoldProgress(preBanked, 0), 0.25);
+  assert.ok(computeDotHoldProgress(preBanked, 100) >= 0.25);
+  assert.equal(computeDotHoldProgress(preBanked, 4000), 1);
+});
+
+test('Dot discharges smoothly back to 0 when no energy is being put into it', () => {
+  assert.equal(computeDotDischargedCharge(0, 1000), 0);
+  assert.equal(computeDotTimeToZeroMs(0), 0);
+
+  // Within brief thermal relaxation window, charge holds steady so rapid clicks accumulate
+  assert.equal(computeDotDischargedCharge(0.5, 0), 0.5);
+  assert.equal(computeDotDischargedCharge(0.5, DOT_DISCHARGE_DELAY_MS), 0.5);
+
+  // Once idle beyond the onset window, charge monotonically decreases to exact 0
+  let prev = 0.5;
+  for (const t of [350, 800, 1600, 2800, 4000]) {
+    const cur = computeDotDischargedCharge(0.5, t);
+    assert.ok(cur < prev, `expected charge at ${t}ms (${cur}) < ${prev}`);
+    prev = cur;
+  }
+
+  const zeroAtHalf = computeDotTimeToZeroMs(0.5);
+  assert.ok(zeroAtHalf > 2500 && zeroAtHalf < 6000, `unexpected zero time: ${zeroAtHalf}ms`);
+  assert.equal(computeDotDischargedCharge(0.5, zeroAtHalf + 25), 0);
+
+  // Single click impulse also completely discharges to 0 when left idle
+  const singleClickZeroMs = computeDotTimeToZeroMs(DOT_CLICK_INCREMENT);
+  assert.ok(singleClickZeroMs > DOT_DISCHARGE_DELAY_MS && singleClickZeroMs < 800);
+  assert.equal(computeDotDischargedCharge(DOT_CLICK_INCREMENT, singleClickZeroMs + 25), 0);
+
+  // Catching a discharging dot mid-drain and holding resumes smoothly from exact remaining charge
+  const midDrain = computeDotDischargedCharge(0.6, 1500);
+  assert.ok(midDrain > 0.1 && midDrain < 0.6);
+  assert.equal(computeDotHoldProgress(midDrain, 0), midDrain);
+  assert.ok(computeDotHoldProgress(midDrain, 500) > midDrain);
+});
+
+

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { PRELOADED_AUDITS } from './preloadedAudits.ts';
 import {
   answerArchiveResearchQuestion,
+  buildAgentGainsReference,
+  buildAgentOriginThesisReference,
+  buildAgentRubricReference,
   buildArchiveComparison,
   buildOpenGraphMetaForUrl,
   findArchivedAudit,
@@ -75,7 +78,7 @@ test('buildArchiveComparison computes side-by-side matrix and enforces archive-o
   }
 });
 
-test('answerArchiveResearchQuestion answers coin comparisons & PoS vs PoW strictly from archive', () => {
+test('answerArchiveResearchQuestion answers coin comparisons, grading consistency, M2 gains, & origin thesis from archive', () => {
   const defaultResearch = answerArchiveResearchQuestion(
     PRELOADED_AUDITS,
     'Tell me about Bitcoin vs Ethereum'
@@ -94,6 +97,28 @@ test('answerArchiveResearchQuestion answers coin comparisons & PoS vs PoW strict
   assert.deepEqual(compareAns.matchedTickers, ['KAS', 'SOL']);
   assert.ok(compareAns.comparison);
 
+  const consistencyAns = answerArchiveResearchQuestion(
+    PRELOADED_AUDITS,
+    'Is your grading rubric consistent across all assets?'
+  );
+  assert.equal(consistencyAns.ok, true);
+  assert.equal(consistencyAns.deepLinkUrl, '/?rubric=1');
+  assert.match(consistencyAns.answer, /0 mismatches \(100% mathematically consistent\)/i);
+
+  const m2Ans = answerArchiveResearchQuestion(
+    PRELOADED_AUDITS,
+    'How do live gains compare against M2 money supply?'
+  );
+  assert.equal(m2Ans.ok, true);
+  assert.equal(m2Ans.deepLinkUrl, '/?gains=1');
+
+  const thesisAns = answerArchiveResearchQuestion(
+    PRELOADED_AUDITS,
+    'Explain the 100 MJ origin thesis easter egg'
+  );
+  assert.equal(thesisAns.ok, true);
+  assert.equal(thesisAns.deepLinkUrl, '/?genesis=1');
+
   const posAns = answerArchiveResearchQuestion(
     PRELOADED_AUDITS,
     'Why is Proof of Stake an illusion compared to PoW?',
@@ -108,11 +133,41 @@ test('answerArchiveResearchQuestion answers coin comparisons & PoS vs PoW strict
   assert.match(unknownAns.answer, /not in the verified Thermodynamic Archive/i);
 });
 
-test('parseDeepLinkSearchParams & buildOpenGraphMetaForUrl handle compare, asset, and genesis links', () => {
+test('Pillar 2, 3, and 4 reference builders return complete deterministic payloads with 0 mismatches', () => {
+  const rubric = buildAgentRubricReference(PRELOADED_AUDITS);
+  assert.equal(rubric.ok, true);
+  assert.equal(rubric.invariants.length, 6);
+  assert.equal(rubric.consistencyVerification.allConsistent, true);
+  assert.equal(rubric.consistencyVerification.mismatchCount, 0);
+  assert.equal(
+    rubric.consistencyVerification.verifiedCount,
+    Object.keys(PRELOADED_AUDITS).length
+  );
+  assert.match(rubric.standardGradeCurveSummary, /A\+ \(5\.75–6\.00\)/);
+  assert.match(rubric.sovereigntyCompromisedCurveSummary, /D\+ \(2\.30–6\.00/);
+
+  const gains = buildAgentGainsReference(PRELOADED_AUDITS);
+  assert.equal(gains.ok, true);
+  assert.ok(gains.passedAssets.length > 0);
+  assert.ok(gains.failedAssets.length > 0);
+  assert.ok(gains.m2Benchmark.horizons.ALL_TIME.assets.length === 4);
+
+  const thesis = buildAgentOriginThesisReference('GENIUS');
+  assert.equal(thesis.ok, true);
+  assert.equal(thesis.axiomCount, 17);
+  assert.equal(thesis.chapters.length, 3);
+  assert.match(thesis.axioms[6].geniusText, /100 megajoules/i);
+});
+
+test('parseDeepLinkSearchParams & buildOpenGraphMetaForUrl handle all 4 canonical pillars', () => {
   const parsedCompare = parseDeepLinkSearchParams('?compare=KAS,ETH,SOL&mode=GENIUS');
   assert.equal(parsedCompare.hasDeepLink, true);
   assert.deepEqual(parsedCompare.compareTickers, ['KAS', 'ETH', 'SOL']);
   assert.equal(parsedCompare.mode, 'GENIUS');
+
+  const parsedArchive = parseDeepLinkSearchParams('?archive=1');
+  assert.equal(parsedArchive.hasDeepLink, true);
+  assert.equal(parsedArchive.openArchiveModal, true);
 
   const parsedLab = parseDeepLinkSearchParams('?asset=SOL&lab=wartime&genesis=1');
   assert.equal(parsedLab.assetTicker, 'SOL');
@@ -123,6 +178,15 @@ test('parseDeepLinkSearchParams & buildOpenGraphMetaForUrl handle compare, asset
   assert.match(ogCompare.title, /KAS vs ETH/);
   assert.match(ogCompare.description, /\$KAS A\+ \(6\.0\/6\.0\) vs \$ETH F \(0\.0\/6\.0\)/);
 
+  const ogRubric = buildOpenGraphMetaForUrl('/?rubric=1', PRELOADED_AUDITS);
+  assert.equal(ogRubric.urlPath, '/?rubric=1');
+  assert.match(ogRubric.title, /Rubric/);
+
+  const ogGains = buildOpenGraphMetaForUrl('/?gains=1', PRELOADED_AUDITS);
+  assert.equal(ogGains.urlPath, '/?gains=1');
+  assert.match(ogGains.title, /M2 Benchmark/);
+
   const ogAsset = buildOpenGraphMetaForUrl('/?asset=BTC', PRELOADED_AUDITS);
   assert.match(ogAsset.title, /Bitcoin \(\$BTC\): Grade B\+/);
 });
+

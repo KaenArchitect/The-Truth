@@ -161,7 +161,12 @@ import {
   type QuotaStatus
 } from './data/auditQuotaAndScope.ts';
 import {
+  DOT_CLICKS_TO_FILL,
   DOT_DISCOVERY_TARGET_COUNT,
+  DOT_HOLD_ENGAGE_DELAY_MS,
+  advanceDotClickCharge,
+  computeDotDischargedCharge,
+  computeDotHoldProgress,
   formatMysteryCounterValue,
   getDotDiscoveryCount,
   isDotPulseActive,
@@ -194,6 +199,9 @@ import { GeniusUniverseBackground } from './components/GeniusUniverseBackground.
 import { ARCHIVE_PULL_STAGE_MS } from './data/auditChaosWave.ts';
 import {
   answerArchiveResearchQuestion,
+  buildAgentGainsReference,
+  buildAgentOriginThesisReference,
+  buildAgentRubricReference,
   buildArchiveComparison,
   findArchivedAudit,
   listArchivedAudits,
@@ -467,10 +475,16 @@ function ThermodynamicAuditApp() {
   const dotDiscoveryCount = getDotDiscoveryCount(dotDiscoveryState);
   const mysteryCounterText = formatMysteryCounterValue(dotDiscoveryState);
   const isMysteryCounterActiveFlash = isMysteryCounterFlashing(dotDiscoveryState);
-  const [truthDotHoldProgress, setTruthDotHoldProgress] = useState(0);
+  const [effectiveDotCharge, setEffectiveDotCharge] = useState(0);
+  const [isDotActivelyHeld, setIsDotActivelyHeld] = useState(false);
   const [truthExplosionActive, setTruthExplosionActive] = useState(false);
   const truthDotRafRef = useRef<number | null>(null);
   const truthDotStartRef = useRef<number | null>(null);
+  const truthDotBaseChargeRef = useRef(0);
+  const truthDotLiveChargeRef = useRef(0);
+  const truthDotIdleAnchorRef = useRef<{ charge: number; atMs: number }>({ charge: 0, atMs: 0 });
+  const truthDotLastReleaseMsRef = useRef(0);
+  const truthDotHoveredRef = useRef(false);
   const truthDotTriggeredRef = useRef(false);
   const truthExplosionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPillRef = useRef<HTMLDivElement | null>(null);
@@ -495,6 +509,15 @@ function ThermodynamicAuditApp() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('autostart') === '1') return false;
     if (parseDeepLinkSearchParams(window.location.search).hasDeepLink) return false;
+    const nav = window.navigator;
+    if (
+      nav?.webdriver === true ||
+      /HeadlessChrome|Playwright|Puppeteer|ChatGPT|GPTBot|OAI-SearchBot|ClaudeBot|PerplexityBot/i.test(
+        nav?.userAgent || ''
+      )
+    ) {
+      return false;
+    }
     return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) !== '1';
   });
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
@@ -3283,17 +3306,18 @@ function ThermodynamicAuditApp() {
   // =========================================================================
   // 5-SECOND TRUTH DOT HOLD -> RADIAL SUPERNOVA EXPLOSION -> GENESIS THESIS
   // =========================================================================
-  const cancelTruthDotHold = useCallback(() => {
+  const triggerTruthSupernova = useCallback(() => {
     if (truthDotRafRef.current !== null && typeof window !== 'undefined') {
       window.cancelAnimationFrame(truthDotRafRef.current);
       truthDotRafRef.current = null;
     }
     truthDotStartRef.current = null;
-    setTruthDotHoldProgress(0);
-  }, []);
-
-  const triggerTruthSupernova = useCallback(() => {
-    cancelTruthDotHold();
+    truthDotBaseChargeRef.current = 0;
+    truthDotLiveChargeRef.current = 0;
+    truthDotIdleAnchorRef.current = { charge: 0, atMs: 0 };
+    setIsDotActivelyHeld(false);
+    setEffectiveDotCharge(0);
+    heroQuoteReader.setHovered(truthDotHoveredRef.current);
     truthDotTriggeredRef.current = true;
     setDotDiscoveryState((prev) => {
       const next = markDotGenesisDiscovered(prev);
@@ -3311,34 +3335,152 @@ function ThermodynamicAuditApp() {
       setTruthExplosionActive(false);
       truthDotTriggeredRef.current = false;
     }, 820);
-  }, [cancelTruthDotHold]);
+  }, [heroQuoteReader]);
 
-  const startTruthDotHold = useCallback(() => {
-    if (typeof window === 'undefined' || isGenesisModalOpen || truthExplosionActive) return;
-    cancelTruthDotHold();
-    truthDotTriggeredRef.current = false;
-    const HOLD_DURATION_MS = 5000;
-    const startTs = performance.now();
-    let lastProgressCommit = 0;
-    truthDotStartRef.current = startTs;
+  const ensureDotPhysicsLoop = useCallback(() => {
+    if (typeof window === 'undefined' || truthDotRafRef.current !== null) return;
+    let lastCommitMs = 0;
 
     const tick = (now: number) => {
-      if (truthDotStartRef.current === null) return;
-      const elapsed = now - truthDotStartRef.current;
-      const ratio = Math.min(1, Math.max(0, elapsed / HOLD_DURATION_MS));
-      if (now - lastProgressCommit >= 48 || ratio >= 1) {
-        lastProgressCommit = now;
-        setTruthDotHoldProgress(ratio);
-      }
-      if (ratio >= 1) {
-        triggerTruthSupernova();
+      truthDotRafRef.current = null;
+
+      if (truthDotStartRef.current !== null) {
+        const elapsed = now - truthDotStartRef.current;
+        const nextCharge = computeDotHoldProgress(truthDotBaseChargeRef.current, elapsed);
+        truthDotLiveChargeRef.current = nextCharge;
+        if (now - lastCommitMs >= 32 || nextCharge >= 1) {
+          lastCommitMs = now;
+          setEffectiveDotCharge(nextCharge);
+        }
+        if (nextCharge >= 1) {
+          triggerTruthSupernova();
+          return;
+        }
+        truthDotRafRef.current = window.requestAnimationFrame(tick);
         return;
+      }
+
+      // No energy is being put into the dot — discharge stored energy back to 0
+      const anchor = truthDotIdleAnchorRef.current;
+      if (anchor.charge <= 0) {
+        truthDotLiveChargeRef.current = 0;
+        setEffectiveDotCharge(0);
+        return;
+      }
+
+      const nextCharge = computeDotDischargedCharge(anchor.charge, now - anchor.atMs);
+      truthDotLiveChargeRef.current = nextCharge;
+      if (nextCharge <= 0) {
+        truthDotIdleAnchorRef.current = { charge: 0, atMs: now };
+        setEffectiveDotCharge(0);
+        return;
+      }
+
+      if (now - lastCommitMs >= 32) {
+        lastCommitMs = now;
+        setEffectiveDotCharge(nextCharge);
       }
       truthDotRafRef.current = window.requestAnimationFrame(tick);
     };
 
     truthDotRafRef.current = window.requestAnimationFrame(tick);
-  }, [cancelTruthDotHold, isGenesisModalOpen, triggerTruthSupernova, truthExplosionActive]);
+  }, [triggerTruthSupernova]);
+
+  const cancelTruthDotHold = useCallback(
+    (commitClickImpulse = false) => {
+      if (truthDotStartRef.current === null) {
+        return;
+      }
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const heldElapsed = Math.max(0, now - truthDotStartRef.current);
+      const baseCharge = truthDotBaseChargeRef.current;
+      truthDotStartRef.current = null;
+      setIsDotActivelyHeld(false);
+      heroQuoteReader.setHovered(truthDotHoveredRef.current);
+
+      if (truthDotTriggeredRef.current) {
+        return;
+      }
+
+      let peakCharge = computeDotHoldProgress(baseCharge, heldElapsed);
+      if (commitClickImpulse) {
+        truthDotLastReleaseMsRef.current = now;
+        if (heldElapsed < DOT_HOLD_ENGAGE_DELAY_MS) {
+          const step = advanceDotClickCharge(baseCharge);
+          if (step.triggered) {
+            triggerTruthSupernova();
+            return;
+          }
+          peakCharge = step.nextCharge;
+        } else if (peakCharge >= 1) {
+          triggerTruthSupernova();
+          return;
+        }
+      }
+
+      truthDotLiveChargeRef.current = peakCharge;
+      truthDotIdleAnchorRef.current = { charge: peakCharge, atMs: now };
+      setEffectiveDotCharge(peakCharge);
+      ensureDotPhysicsLoop();
+    },
+    [ensureDotPhysicsLoop, heroQuoteReader, triggerTruthSupernova]
+  );
+
+  const bankSyntheticDotClick = useCallback(() => {
+    if (isGenesisModalOpen || truthExplosionActive || truthDotTriggeredRef.current) return;
+    if (truthDotStartRef.current !== null) return;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - truthDotLastReleaseMsRef.current <= 90) return;
+    truthDotLastReleaseMsRef.current = now;
+
+    const currentCharge =
+      truthDotIdleAnchorRef.current.charge > 0
+        ? computeDotDischargedCharge(
+            truthDotIdleAnchorRef.current.charge,
+            now - truthDotIdleAnchorRef.current.atMs
+          )
+        : truthDotLiveChargeRef.current;
+
+    const { nextCharge, triggered } = advanceDotClickCharge(currentCharge);
+    if (triggered) {
+      triggerTruthSupernova();
+      return;
+    }
+    truthDotLiveChargeRef.current = nextCharge;
+    truthDotIdleAnchorRef.current = { charge: nextCharge, atMs: now };
+    setEffectiveDotCharge(nextCharge);
+    ensureDotPhysicsLoop();
+  }, [ensureDotPhysicsLoop, isGenesisModalOpen, triggerTruthSupernova, truthExplosionActive]);
+
+  const startTruthDotHold = useCallback(() => {
+    if (typeof window === 'undefined' || isGenesisModalOpen || truthExplosionActive) return;
+    if (truthDotStartRef.current !== null) {
+      cancelTruthDotHold(false);
+    }
+    truthDotTriggeredRef.current = false;
+    const now = performance.now();
+    const liveCharge =
+      truthDotIdleAnchorRef.current.charge > 0
+        ? computeDotDischargedCharge(
+            truthDotIdleAnchorRef.current.charge,
+            now - truthDotIdleAnchorRef.current.atMs
+          )
+        : truthDotLiveChargeRef.current;
+
+    truthDotBaseChargeRef.current = liveCharge;
+    truthDotLiveChargeRef.current = liveCharge;
+    truthDotStartRef.current = now;
+    setIsDotActivelyHeld(true);
+    setEffectiveDotCharge(liveCharge);
+    heroQuoteReader.setHovered(true);
+    ensureDotPhysicsLoop();
+  }, [
+    cancelTruthDotHold,
+    ensureDotPhysicsLoop,
+    heroQuoteReader,
+    isGenesisModalOpen,
+    truthExplosionActive
+  ]);
 
   useEffect(() => {
     return () => {
@@ -3367,6 +3509,7 @@ function ThermodynamicAuditApp() {
       else if (dl.mode === 'GENIUS' || dl.compareTickers.length > 0 || dl.assetTicker) {
         setIsGeniusMode(true);
       }
+      if (dl.openArchiveModal) setIsArchiveModalOpen(true);
       if (dl.openGainsModal) setIsGainsModalOpen(true);
       if (dl.openRubricModal) setIsRubricOpen(true);
       if (dl.openGenesisModal) setIsGenesisModalOpen(true);
@@ -3598,6 +3741,10 @@ function ThermodynamicAuditApp() {
         setIsGeniusMode(mode === 'GENIUS');
         return { ok: true, mode: mode === 'GENIUS' ? 'GENIUS' : 'NORMIE' };
       },
+      getRubric: () => buildAgentRubricReference(agentSnapshotRef.current.audits),
+      getGains: () => buildAgentGainsReference(agentSnapshotRef.current.audits),
+      getOriginThesis: (mode: 'NORMIE' | 'GENIUS' = 'GENIUS') =>
+        buildAgentOriginThesisReference(mode),
       openModal: openAgentModal
     };
 
@@ -3617,6 +3764,10 @@ function ThermodynamicAuditApp() {
       else if (data.action === 'listArchived')
         result = agentApi.listArchived(p as ArchivedAuditListFilters);
       else if (data.action === 'getAudit') result = agentApi.getAudit(String(p.ticker || ''));
+      else if (data.action === 'getRubric') result = agentApi.getRubric();
+      else if (data.action === 'getGains') result = agentApi.getGains();
+      else if (data.action === 'getOriginThesis')
+        result = agentApi.getOriginThesis(String(p.mode || 'GENIUS') as never);
       else if (data.action === 'selectAsset')
         result = agentApi.selectAsset(String(p.ticker || ''), p as never);
       else if (data.action === 'compareArchived')
@@ -3689,9 +3840,34 @@ function ThermodynamicAuditApp() {
             )
         },
         {
+          name: 'truth_get_rubric',
+          description:
+            'Pillar 2: Fetch deterministic 6-invariant quantitative grading brackets, curves, and 100% mathematical consistency verification.',
+          inputSchema: { type: 'object', properties: {} },
+          execute: () => agentApi.getRubric()
+        },
+        {
+          name: 'truth_get_live_gains',
+          description:
+            'Pillar 3: Fetch Passed (E > 0) vs Failed (E = 0) cohort returns and KAS, BTC, Gold, S&P 500 vs FRED US M2 money supply.',
+          inputSchema: { type: 'object', properties: {} },
+          execute: () => agentApi.getGains()
+        },
+        {
+          name: 'truth_get_origin_thesis',
+          description:
+            'Pillar 4: Fetch the 17-axiom First-Principles Origin Thesis ("Physics Over Consensus") and equations.',
+          inputSchema: {
+            type: 'object',
+            properties: { mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
+          },
+          execute: (args: Record<string, unknown>) =>
+            agentApi.getOriginThesis(String(args?.mode || 'GENIUS') as never)
+        },
+        {
           name: 'truth_research_archive',
           description:
-            'Answer cryptocurrency comparison or Proof-of-Stake vs Proof-of-Work questions strictly from archived audits.',
+            'Answer cryptocurrency comparison, grading consistency, M2 gains, origin thesis, or Proof-of-Stake vs Proof-of-Work questions strictly from archived reference data.',
           inputSchema: {
             type: 'object',
             required: ['question'],
@@ -4455,6 +4631,23 @@ function ThermodynamicAuditApp() {
         );
       })()}
 
+      <nav
+        aria-label="Canonical Reference Pillars"
+        data-testid="agent-reference-pillars"
+        className="sr-only"
+      >
+        <a href="/?archive=1">Pillar 1: Complete Thermodynamic Audit Archive</a>
+        <a href="/?rubric=1">Pillar 2: Deterministic 6-Invariant Grading Rubric and Consistency Proof</a>
+        <a href="/?gains=1">Pillar 3: Live Thermodynamic Gains and US M2 Money Supply Benchmark</a>
+        <a href="/?genesis=1">Pillar 4: First-Principles Origin Thesis (Physics Over Consensus)</a>
+        <a href="/api/agent/pillars">JSON Index: All 4 Reference Pillars</a>
+        <a href="/api/agent/archive">JSON Pillar 1: Archive</a>
+        <a href="/api/agent/rubric">JSON Pillar 2: Rubric and Consistency Proof</a>
+        <a href="/api/agent/gains">JSON Pillar 3: Live Gains and M2 Benchmark</a>
+        <a href="/api/agent/origin-thesis">JSON Pillar 4: Origin Thesis</a>
+        <a href="/llms.txt">LLMs Reference Guide</a>
+      </nav>
+
       {/* =====================================================================
           1. EDITORIAL HEADER: Centered Google-Style on Open -> Slides Up on Audit
          ===================================================================== */}
@@ -4633,12 +4826,21 @@ function ThermodynamicAuditApp() {
                 data-dot-unlocked={isDotUnlocked ? 'true' : 'false'}
                 data-dot-pulse={isDotBeaconPulsing ? 'active' : 'idle'}
                 data-dot-progress={`${dotDiscoveryCount}/${DOT_DISCOVERY_TARGET_COUNT}`}
+                data-dot-charge={effectiveDotCharge.toFixed(4)}
+                data-dot-discharging={
+                  effectiveDotCharge > 0 && !isDotActivelyHeld ? 'true' : 'false'
+                }
+                data-dot-clicks-target={String(DOT_CLICKS_TO_FILL)}
                 data-dot-genesis-found={dotDiscoveryState.genesisDiscoveredAtMs !== null ? 'true' : 'false'}
                 aria-label={
                   isDotBeaconPulsing
-                    ? 'The Truth dot is pulsing — hold for 5 seconds to reveal the origin thesis'
-                    : 'Hold The Truth dot for 5 seconds to reveal the origin thesis'
+                    ? 'The Truth dot is pulsing — hold for 5 seconds (or click repeatedly) to reveal the origin thesis'
+                    : 'Hold The Truth dot for 5 seconds (or click repeatedly) to reveal the origin thesis'
                 }
+                onPointerEnter={() => {
+                  truthDotHoveredRef.current = true;
+                  heroQuoteReader.setHovered(true);
+                }}
                 onPointerDown={(e) => {
                   if (e.button === 0 || e.pointerType !== 'mouse') {
                     try {
@@ -4655,15 +4857,19 @@ function ThermodynamicAuditApp() {
                   } catch {
                     // Ignore
                   }
-                  if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                  if (!truthDotTriggeredRef.current) cancelTruthDotHold(true);
                 }}
                 onPointerLeave={() => {
-                  if (truthDotStartRef.current === null && !truthDotTriggeredRef.current) {
-                    cancelTruthDotHold();
+                  truthDotHoveredRef.current = false;
+                  if (truthDotStartRef.current === null) {
+                    heroQuoteReader.setHovered(false);
                   }
                 }}
                 onPointerCancel={() => {
-                  if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                  if (!truthDotTriggeredRef.current) cancelTruthDotHold(false);
+                }}
+                onClick={() => {
+                  bankSyntheticDotClick();
                 }}
                 onKeyDown={(e) => {
                   if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
@@ -4673,12 +4879,12 @@ function ThermodynamicAuditApp() {
                 }}
                 onKeyUp={(e) => {
                   if (e.key === ' ' || e.key === 'Enter') {
-                    if (!truthDotTriggeredRef.current) cancelTruthDotHold();
+                    if (!truthDotTriggeredRef.current) cancelTruthDotHold(true);
                   }
                 }}
                 className="absolute -left-[29px] top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center bg-transparent focus:outline-none cursor-pointer touch-none overflow-visible"
               >
-                {isDotBeaconPulsing && truthDotHoldProgress === 0 && !truthExplosionActive && (
+                {isDotBeaconPulsing && effectiveDotCharge === 0 && !truthExplosionActive && (
                   <span
                     data-testid="truth-dot-pulse-rings"
                     aria-hidden="true"
@@ -4701,7 +4907,7 @@ function ThermodynamicAuditApp() {
                   </span>
                 )}
 
-                {truthDotHoldProgress > 0 && (
+                {effectiveDotCharge > 0 && (
                   <svg
                     data-testid="truth-dot-charge-ring"
                     viewBox="0 0 28 28"
@@ -4724,7 +4930,12 @@ function ThermodynamicAuditApp() {
                       strokeWidth="2.4"
                       strokeLinecap="round"
                       strokeDasharray={2 * Math.PI * 11}
-                      strokeDashoffset={2 * Math.PI * 11 * (1 - truthDotHoldProgress)}
+                      strokeDashoffset={
+                        2 *
+                        Math.PI *
+                        11 *
+                        (1 - Math.min(1, 0.012 + effectiveDotCharge * 0.988))
+                      }
                     />
                   </svg>
                 )}
@@ -4764,19 +4975,19 @@ function ThermodynamicAuditApp() {
 
                 <span
                   className={`color-glide w-2.5 h-2.5 rounded-full block ${
-                    isDotBeaconPulsing && truthDotHoldProgress === 0
+                    isDotBeaconPulsing && effectiveDotCharge === 0
                       ? 'truth-dot-beacon-core'
                       : ''
                   }`}
                   style={{
                     backgroundColor: accent.primary,
                     transform:
-                      truthDotHoldProgress > 0
-                        ? `scale(${(1 + truthDotHoldProgress * 0.55).toFixed(2)})`
+                      effectiveDotCharge > 0
+                        ? `scale(${(1 + effectiveDotCharge * 0.55).toFixed(2)})`
                         : undefined,
                     boxShadow:
-                      truthDotHoldProgress > 0
-                        ? `0 0 ${Math.round(12 + truthDotHoldProgress * 22)}px ${accent.primary}`
+                      effectiveDotCharge > 0
+                        ? `0 0 ${Math.round(12 + effectiveDotCharge * 22)}px ${accent.primary}`
                         : isDotBeaconPulsing
                         ? `0 0 22px ${accent.primary}, 0 0 40px ${accent.secondary}`
                         : `0 0 12px ${accent.primary}`
