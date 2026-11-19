@@ -101,7 +101,6 @@ export function TutorialOverlay({
     }
 
     const alignMobileScroll = () => {
-      if (window.innerWidth >= 768) return;
       const el = findVisibleTarget(step.targetId);
       if (!el) return;
       const r = el.getBoundingClientRect();
@@ -110,6 +109,19 @@ export function TutorialOverlay({
         0,
         document.documentElement.scrollHeight - window.innerHeight
       );
+      if (window.innerWidth >= 768) {
+        // When zoomed to 150%+, baskets stack below the stage even at >= 768px width; scroll offscreen targets cleanly into view
+        const isOffscreen = r.bottom > window.innerHeight - 24 || r.top < 16;
+        if (!isOffscreen) return;
+        const desiredTop = Math.max(
+          0,
+          Math.min(maxScrollY, Math.round(docTop - Math.max(24, (window.innerHeight - r.height) / 2)))
+        );
+        if (Math.abs(window.scrollY - desiredTop) > 8) {
+          window.scrollTo({ top: desiredTop, behavior: 'auto' });
+        }
+        return;
+      }
       const targetScrollY = computeMobileScrollTargetY(
         step.targetId,
         docTop,

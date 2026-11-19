@@ -9,16 +9,26 @@ export interface CohortAssetEntry {
   auditScore: number;
   baselineLabel: string;
   basePrice: number | null;
+  releaseLabel?: string;
+  releasePrice?: number | null;
+  price180d?: number | null;
+  price1y?: number | null;
+  price2y?: number | null;
+  price4y?: number | null;
   snapshotSpot: number | null;
   tactical90dPct: number | null;
   liquidCycle: boolean;
   isOutlier: boolean;
   coinbasePair: string | null;
   geckoId: string | null;
+  yahooSymbol?: string | null;
   note: string;
 }
 
 export type CohortGainAsset = CohortAssetEntry;
+export type GainsWindowHorizonKey = 'D180' | 'Y1' | 'Y2' | 'Y4';
+export type GainsBaselineMode = 'RELEASE' | 'CYCLE' | GainsWindowHorizonKey;
+export type WindowTrajectoriesMap = Partial<Record<GainsWindowHorizonKey, MacroTrajectoryPoint[]>>;
 
 export interface MacroTrajectoryPoint {
   label: string;
@@ -46,12 +56,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 6.0,
     baselineLabel: '$0.0001859',
     basePrice: 0.0001859,
-    snapshotSpot: 0.042,
+    releaseLabel: "$0.0001859 (May '22)",
+    releasePrice: 0.0001859,
+    price180d: 0.03371,
+    price1y: 0.04329,
+    price2y: 0.1707,
+    price4y: 0.006794,
+    snapshotSpot: 0.0267,
     tactical90dPct: 11.2,
     liquidCycle: true,
     isOutlier: true,
     coinbasePair: null,
     geckoId: 'kaspa',
+    yahooSymbol: 'KAS-USD',
     note: 'Massive right-tail convexity driver • 0 VC overhang • Flipped 200 EMA vs BTC'
   },
   {
@@ -61,12 +78,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 1.4,
     baselineLabel: '~$92.00',
     basePrice: 92.0,
-    snapshotSpot: 1050.0,
+    releaseLabel: "$250.55 (Oct '16)",
+    releasePrice: 250.55,
+    price180d: 584.34,
+    price1y: 624.36,
+    price2y: 44.9,
+    price4y: 39.79,
+    snapshotSpot: 918.65,
     tactical90dPct: 144.7,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'ZEC-USD',
     geckoId: 'zcash',
+    yahooSymbol: 'ZEC-USD',
     note: 'High-beta PoW privacy squeeze • #1 90-day performer in E > 0 cohort'
   },
   {
@@ -76,12 +100,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 3.5,
     baselineLabel: '~$195.00',
     basePrice: 195.0,
-    snapshotSpot: 589.7,
+    releaseLabel: "$2.47 (May '14)",
+    releasePrice: 2.47,
+    price180d: 381.19,
+    price1y: 403.8,
+    price2y: 156.21,
+    price4y: 134.36,
+    snapshotSpot: 503.75,
     tactical90dPct: 51.5,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: 'monero',
+    yahooSymbol: 'XMR-USD',
     note: 'Steady RandomX PoW privacy compounding • 0 premine tail-emission floor'
   },
   {
@@ -91,12 +122,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 4.4,
     baselineLabel: '$29,455.76',
     basePrice: 29455.76,
-    snapshotSpot: 75835.0,
+    releaseLabel: "$0.05 (Jul '10)",
+    releasePrice: 0.05,
+    price180d: 75488,
+    price1y: 92949,
+    price2y: 90543,
+    price4y: 16712,
+    snapshotSpot: 63603.0,
     tactical90dPct: 17.1,
     liquidCycle: true,
-    isOutlier: false,
+    isOutlier: true,
     coinbasePair: 'BTC-USD',
     geckoId: 'bitcoin',
+    yahooSymbol: 'BTC-USD',
     note: 'Unshakeable M0 SHA-256d thermodynamic reserve anchor'
   },
   {
@@ -106,12 +144,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 3.65,
     baselineLabel: '$21.50',
     basePrice: 21.5,
-    snapshotSpot: 48.0,
+    releaseLabel: "$5.04 (COMEX '00)",
+    releasePrice: 5.035,
+    price180d: 75.89,
+    price1y: 50.45,
+    price2y: 31.16,
+    price4y: 20.85,
+    snapshotSpot: 47.39,
     tactical90dPct: 22.8,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: null,
+    yahooSymbol: 'SI=F',
     note: 'Zero-default supernova commodity floor • Industrial + monetary breakout'
   },
   {
@@ -121,12 +166,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 4.1,
     baselineLabel: '$1,837.00',
     basePrice: 1837.0,
-    snapshotSpot: 4055.0,
+    releaseLabel: "$277.00 (COMEX '00)",
+    releasePrice: 277.0,
+    price180d: 4523.2,
+    price1y: 4066.5,
+    price2y: 2614.6,
+    price4y: 1739.6,
+    snapshotSpot: 3866.4,
     tactical90dPct: 18.4,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'PAXG-USD',
     geckoId: 'pax-gold',
+    yahooSymbol: 'GC=F',
     note: 'Zero-default r-process physical commodity floor • Crushed ETH & most PoS'
   },
   {
@@ -136,12 +188,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 2.05,
     baselineLabel: '$0.0620 (Open)',
     basePrice: 0.062,
+    releaseLabel: "$0.0620 (Feb '25)",
+    releasePrice: 0.062,
+    price180d: 0.02237,
+    price1y: 0.02379,
+    price2y: null,
+    price4y: null,
     snapshotSpot: 0.108,
     tactical90dPct: 19.4,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: 'quai-network',
+    yahooSymbol: 'QUAI22354-USD',
     note: 'PoEM + SOAP merge-mining buyback/burn (246.6M QUAI burned)'
   },
   {
@@ -151,12 +210,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 2.55,
     baselineLabel: 'KRC-20 Mint Floor',
     basePrice: 0.0000075,
+    releaseLabel: '$0.0000075 (KRC-20)',
+    releasePrice: 0.0000075,
+    price180d: null,
+    price1y: null,
+    price2y: null,
+    price4y: null,
     snapshotSpot: 0.0000128,
     tactical90dPct: 18.5,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: null,
+    yahooSymbol: null,
     note: '0-premint KRC-20 fair-mint carrier cost floor • Zero VC cliff unlocks'
   },
   {
@@ -166,12 +232,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 2.0,
     baselineLabel: '$0.80 (Cycle Base)',
     basePrice: 0.8,
-    snapshotSpot: 1.1,
+    releaseLabel: "$1.60 (Aug '19)",
+    releasePrice: 1.6,
+    price180d: 0.284,
+    price1y: 0.5102,
+    price2y: 1.3352,
+    price4y: 1.5098,
+    snapshotSpot: 0.217,
     tactical90dPct: 21.6,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: 'ergo',
+    yahooSymbol: 'ERG-USD',
     note: 'Autolykos PoW eUTXO • Slower linear velocity, but zero VC wipeout'
   },
   {
@@ -181,12 +254,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 3.63,
     baselineLabel: '$181.48',
     basePrice: 181.48,
-    snapshotSpot: 245.0,
+    releaseLabel: "$555.00 (Aug '17)",
+    releasePrice: 555.0,
+    price180d: 360.16,
+    price1y: 523.06,
+    price2y: 451.99,
+    price4y: 104.82,
+    snapshotSpot: 206.25,
     tactical90dPct: 12.2,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'BCH-USD',
     geckoId: 'bitcoin-cash',
+    yahooSymbol: 'BCH-USD',
     note: 'Legacy SHA-256d PoW + Layla CashVM covenants • Positive cycle hold'
   },
   {
@@ -196,12 +276,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 4.45,
     baselineLabel: '$0.0190',
     basePrice: 0.019,
-    snapshotSpot: 0.015,
+    releaseLabel: "$0.0265 (Mar '18)",
+    releasePrice: 0.0265,
+    price180d: 0.005391,
+    price1y: 0.009142,
+    price2y: 0.0232,
+    price4y: 0.02167,
+    snapshotSpot: 0.00109,
     tactical90dPct: 25.7,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: 'ravencoin',
+    yahooSymbol: 'RVN-USD',
     note: 'Fair-launch KawPoW lags BlockDAG velocity, but zero insider cliff dump'
   },
   {
@@ -211,12 +298,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 4.17,
     baselineLabel: '$64.00',
     basePrice: 64.0,
-    snapshotSpot: 50.0,
+    releaseLabel: "$4.30 (Apr '13)",
+    releasePrice: 4.3,
+    price180d: 52.62,
+    price1y: 95.66,
+    price2y: 89.18,
+    price4y: 63.81,
+    snapshotSpot: 44.07,
     tactical90dPct: 11.3,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'LTC-USD',
     geckoId: 'litecoin',
+    yahooSymbol: 'LTC-USD',
     note: 'Legacy 150s Scrypt PoW lags, yet avoids -70% PoS treasury liquidation'
   },
   {
@@ -226,13 +320,20 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 2.35,
     baselineLabel: 'Native BTC Rail',
     basePrice: null,
+    releaseLabel: 'Native BTC Rail',
+    releasePrice: null,
+    price180d: null,
+    price1y: null,
+    price2y: null,
+    price4y: null,
     snapshotSpot: null,
     tactical90dPct: null,
     liquidCycle: false,
     isOutlier: false,
     coinbasePair: null,
     geckoId: null,
-    note: '0-token Bitcoin payment-channel mesh (tracks native BTC +157.5%)'
+    yahooSymbol: null,
+    note: '0-token Bitcoin payment-channel mesh (tracks native BTC)'
   },
   {
     ticker: 'IGRA',
@@ -241,12 +342,19 @@ export const PASSED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 2.3,
     baselineLabel: 'Kaspa L1 Rollup',
     basePrice: null,
+    releaseLabel: 'Kaspa L1 Rollup',
+    releasePrice: null,
+    price180d: null,
+    price1y: null,
+    price2y: null,
+    price4y: null,
     snapshotSpot: null,
     tactical90dPct: null,
     liquidCycle: false,
     isOutlier: false,
     coinbasePair: null,
     geckoId: null,
+    yahooSymbol: null,
     note: 'Kaspa L1-sequenced Based EVM execution rail (viaduct + reth)'
   }
 ];
@@ -259,12 +367,19 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '~$50.00 (2023 Open)',
     basePrice: 50.0,
-    snapshotSpot: 420.0,
+    releaseLabel: "$50.00 ('23 Open)",
+    releasePrice: 50.0,
+    price180d: 265.11,
+    price1y: 332.1,
+    price2y: 511.4,
+    price4y: null,
+    snapshotSpot: 189.42,
     tactical90dPct: 8.5,
     liquidCycle: true,
     isOutlier: true,
     coinbasePair: 'TAO-USD',
     geckoId: 'bittensor',
+    yahooSymbol: 'TAO22974-USD',
     note: 'Only major multi-X outlier in the E = 0 basket • Lagged BTC over 90D (+8.5%)'
   },
   {
@@ -274,13 +389,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$0.42',
     basePrice: 0.42,
-    snapshotSpot: 1.16,
+    releaseLabel: "$0.0059 (Aug '13)",
+    releasePrice: 0.0059,
+    price180d: 1.3337,
+    price1y: 2.2165,
+    price2y: 1.1179,
+    price4y: 0.3847,
+    snapshotSpot: 0.9542,
     tactical90dPct: 10.2,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'XRP-USD',
     geckoId: 'ripple',
-    note: 'Outperformed ETH, but lagged KAS (225.9x) & continuous Ripple escrow sales'
+    yahooSymbol: 'XRP-USD',
+    note: 'Outperformed ETH post-2022, but continuous Ripple escrow distribution'
   },
   {
     ticker: 'SOL',
@@ -289,13 +411,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$45.80',
     basePrice: 45.8,
-    snapshotSpot: 89.57,
+    releaseLabel: "$0.83 (Apr '20)",
+    releasePrice: 0.832,
+    price180d: 84.31,
+    price1y: 140.71,
+    price2y: 239.79,
+    price4y: 12.85,
+    snapshotSpot: 72.11,
     tactical90dPct: 14.1,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'SOL-USD',
     geckoId: 'solana',
-    note: 'Outperformed ETH, but trailed BTC (+157.5%), Gold (+120.7%), XMR & KAS'
+    yahooSymbol: 'SOL-USD',
+    note: 'High beta VC chain • Heavy insider foundation unlocks & validator subsidy'
   },
   {
     ticker: 'QNT',
@@ -304,13 +433,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$68.00',
     basePrice: 68.0,
-    snapshotSpot: 92.0,
+    releaseLabel: "$0.29 (Aug '18)",
+    releasePrice: 0.288,
+    price180d: 77.16,
+    price1y: 81.21,
+    price2y: 87.36,
+    price4y: 115.44,
+    snapshotSpot: 151.6,
     tactical90dPct: 236.0,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'QNT-USD',
     geckoId: 'quant-network',
-    note: 'Localized 90D short squeeze (+236%); failed to beat Gold or BTC over cycle'
+    yahooSymbol: 'QNT-USD',
+    note: 'Closed-source enterprise middleware • No PoW physical floor'
   },
   {
     ticker: 'STX',
@@ -319,13 +455,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$0.55',
     basePrice: 0.55,
-    snapshotSpot: 0.72,
+    releaseLabel: "$0.21 (Oct '19)",
+    releasePrice: 0.213,
+    price180d: 0.2408,
+    price1y: 0.3463,
+    price2y: 1.9424,
+    price4y: 0.2361,
+    snapshotSpot: 0.2695,
     tactical90dPct: 143.6,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'STX-USD',
     geckoId: 'blockstack',
-    note: '90D relief bounce (+143.6%) after SIP-031 500M print; +30.9% over 4.5 yrs'
+    yahooSymbol: 'STX4847-USD',
+    note: '90D relief bounce after SIP-031 500M print; minimal multi-year traction'
   },
   {
     ticker: 'ETH',
@@ -334,13 +477,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$1,940.00',
     basePrice: 1940.0,
-    snapshotSpot: 2231.5,
+    releaseLabel: "$2.77 (Aug '15)",
+    releasePrice: 2.77,
+    price180d: 2064.6,
+    price1y: 3123.0,
+    price2y: 3207.9,
+    price4y: 1218.4,
+    snapshotSpot: 1782.23,
     tactical90dPct: 13.9,
     liquidCycle: true,
-    isOutlier: false,
+    isOutlier: true,
     coinbasePair: 'ETH-USD',
     geckoId: 'ethereum',
-    note: 'Post-Merge 0-Joule PoS (+15.0% in 4.5 yrs) failed to beat Gold or Bitcoin'
+    yahooSymbol: 'ETH-USD',
+    note: '72M ICO premine (2015); post-Merge 0-Joule PoS lagged BTC & Gold'
   },
   {
     ticker: 'XLM',
@@ -349,13 +499,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$0.14',
     basePrice: 0.14,
-    snapshotSpot: 0.1504,
+    releaseLabel: "$0.0030 (Aug '14)",
+    releasePrice: 0.003,
+    price180d: 0.1434,
+    price1y: 0.2561,
+    price2y: 0.2327,
+    price4y: 0.09043,
+    snapshotSpot: 0.1369,
     tactical90dPct: -9.2,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'XLM-USD',
     geckoId: 'stellar',
-    note: 'Flat nominal performance (+7.4%) over 4.5 years; -9.2% over 90 days'
+    yahooSymbol: 'XLM-USD',
+    note: '100B genesis premint • Foundation SDF distribution overhang'
   },
   {
     ticker: 'NEAR',
@@ -364,13 +521,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$5.90',
     basePrice: 5.9,
-    snapshotSpot: 3.85,
+    releaseLabel: "$1.69 (Oct '20)",
+    releasePrice: 1.69,
+    price180d: 2.1047,
+    price1y: 2.2791,
+    price2y: 6.0235,
+    price4y: 1.748,
+    snapshotSpot: 3.15,
     tactical90dPct: 124.1,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'NEAR-USD',
     geckoId: 'near',
-    note: '90D squeeze (+124.1%) rolling over vs BTC; -34.7% full-cycle staking dilution'
+    yahooSymbol: 'NEAR-USD',
+    note: 'Staking inflation & VC unlock overhang eroded cycle returns vs BTC'
   },
   {
     ticker: 'SUI',
@@ -379,13 +543,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '~$1.40 (May 2023)',
     basePrice: 1.4,
-    snapshotSpot: 0.8503,
+    releaseLabel: "$1.40 (May '23)",
+    releasePrice: 1.4,
+    price180d: 1.0475,
+    price1y: 1.6683,
+    price2y: 3.7029,
+    price4y: null,
+    snapshotSpot: 0.715,
     tactical90dPct: 20.2,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'SUI-USD',
     geckoId: 'sui',
-    note: 'Heavy Mysten/VC cliff unlocks crushed early mainnet buyers (-39.3%)'
+    yahooSymbol: 'SUI20947-USD',
+    note: 'Heavy Mysten/VC cliff unlocks crushed early mainnet buyers (-48.9%)'
   },
   {
     ticker: 'ICP',
@@ -394,13 +565,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$8.50',
     basePrice: 8.5,
-    snapshotSpot: 4.8,
+    releaseLabel: "$428.48 (May '21)",
+    releasePrice: 428.48,
+    price180d: 2.4783,
+    price1y: 5.0924,
+    price2y: 9.4092,
+    price4y: 3.972,
+    snapshotSpot: 2.26,
     tactical90dPct: 1.8,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'ICP-USD',
     geckoId: 'internet-computer',
-    note: '-43.5% since mid-2022 (-99% since 2021 VC genesis launch)'
+    yahooSymbol: 'ICP-USD',
+    note: '-99.5% since May 2021 VC genesis launch ($428 -> ~$2.26)'
   },
   {
     ticker: 'AVAX',
@@ -409,13 +587,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$27.00',
     basePrice: 27.0,
-    snapshotSpot: 8.2,
+    releaseLabel: "$4.61 (Sep '20)",
+    releasePrice: 4.61,
+    price180d: 9.1466,
+    price1y: 14.573,
+    price2y: 35.448,
+    price4y: 12.882,
+    snapshotSpot: 7.06,
     tactical90dPct: 23.5,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'AVAX-USD',
     geckoId: 'avalanche-2',
-    note: 'Unvested P-Chain insider staking yield & unlock bleed (-69.6%)'
+    yahooSymbol: 'AVAX-USD',
+    note: 'Unvested P-Chain insider staking yield & unlock bleed'
   },
   {
     ticker: 'ADA',
@@ -424,13 +609,20 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$0.62',
     basePrice: 0.62,
-    snapshotSpot: 0.1804,
+    releaseLabel: "$0.0252 (Oct '17)",
+    releasePrice: 0.0252,
+    price180d: 0.2424,
+    price1y: 0.475,
+    price2y: 0.7346,
+    price4y: 0.3285,
+    snapshotSpot: 0.1513,
     tactical90dPct: -8.5,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'ADA-USD',
     geckoId: 'cardano',
-    note: 'Continuous epoch reserve drip & premined whale dilution (-70.9%)'
+    yahooSymbol: 'ADA-USD',
+    note: 'Continuous epoch reserve drip & premined whale dilution'
   },
   {
     ticker: 'ALGO',
@@ -439,14 +631,31 @@ export const FAILED_COHORT_GAINS: CohortAssetEntry[] = [
     auditScore: 0.0,
     baselineLabel: '$0.41',
     basePrice: 0.41,
-    snapshotSpot: 0.11,
+    releaseLabel: "$3.28 (Jun '19)",
+    releasePrice: 3.28,
+    price180d: 0.1116,
+    price1y: 0.1569,
+    price2y: 0.2159,
+    price4y: 0.2986,
+    snapshotSpot: 0.0777,
     tactical90dPct: 10.6,
     liquidCycle: true,
     isOutlier: false,
     coinbasePair: 'ALGO-USD',
     geckoId: 'algorand',
-    note: 'Total thermodynamic liquidation against BTC (-73.2%)'
+    yahooSymbol: 'ALGO-USD',
+    note: '-97.6% bleed since June 2019 release open ($3.28 -> ~$0.08)'
   }
+];
+
+export const RELEASE_COHORT_TRAJECTORY: MacroTrajectoryPoint[] = [
+  { label: "2010", event: 'BTC First Exchange Open ($0.05)', passAll: 1.0, passEx: 1.0, failAll: 1.0, failEx: 1.0 },
+  { label: "2013", event: 'LTC + XRP Initial Markets', passAll: 650.0, passEx: 2.2, failAll: 1.0, failEx: 1.0 },
+  { label: "2015", event: 'ETH + XMR Launch Era', passAll: 1450.0, passEx: 11.4, failAll: 1.4, failEx: 1.2 },
+  { label: "2017", event: 'ICO Boom (ADA / BCH)', passAll: 18200.0, passEx: 24.8, failAll: 18.5, failEx: 9.8 },
+  { label: "2020", event: 'SOL / AVAX / NEAR Releases', passAll: 38400.0, passEx: 48.0, failAll: 34.0, failEx: 16.5 },
+  { label: "2022", event: 'KAS Launch + ICP/ALGO Bleed', passAll: 74200.0, passEx: 190.0, failAll: 68.0, failEx: 28.4 },
+  { label: "Now", event: 'Live Inception -> Today', passAll: 141380.0, passEx: 1320.0, failAll: 79.4, failEx: 35.0 }
 ];
 
 export const MACRO_CYCLE_TRAJECTORY: MacroTrajectoryPoint[] = [
@@ -493,6 +702,9 @@ export function formatBasketUsd(val: unknown): string {
   if (!Number.isFinite(n)) return '—';
   const abs = Math.abs(n);
   const sign = n < 0 ? '-' : '';
+  if (abs >= 1_000_000_000) {
+    return `${sign}$${(abs / 1_000_000_000).toFixed(2).replace(/\.?0+$/, '')}B`;
+  }
   if (abs >= 1_000_000) {
     return `${sign}$${(abs / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
   }
@@ -507,6 +719,9 @@ export function formatPctSigned(val: unknown): string {
   const n = Number(val);
   if (!Number.isFinite(n)) return '—';
   const sign = n >= 0 ? '+' : '';
+  if (Math.abs(n) >= 1_000_000) {
+    return `${sign}${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M%`;
+  }
   if (Math.abs(n) >= 1000) {
     return `${sign}${Math.round(n).toLocaleString()}%`;
   }
@@ -593,33 +808,42 @@ export function sanitizeCohortAssetEntry(
     ? 0
     : 3.0;
 
-  const baseNum =
-    raw.basePrice === null || raw.basePrice === undefined || raw.basePrice === ('' as unknown)
-      ? null
-      : Number(raw.basePrice);
-  const spotNum =
-    raw.snapshotSpot === null ||
-    raw.snapshotSpot === undefined ||
-    raw.snapshotSpot === ('' as unknown)
-      ? null
-      : Number(raw.snapshotSpot);
+  const parsePositivePrice = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const safeBase = parsePositivePrice(raw.basePrice);
+  const safeRelease = parsePositivePrice(raw.releasePrice);
+  const safe180d = parsePositivePrice(raw.price180d);
+  const safe1y = parsePositivePrice(raw.price1y);
+  const safe2y = parsePositivePrice(raw.price2y);
+  const safe4y = parsePositivePrice(raw.price4y);
+  const safeSpot = parsePositivePrice(raw.snapshotSpot);
   const tacticalNum =
     raw.tactical90dPct === null ||
     raw.tactical90dPct === undefined ||
     raw.tactical90dPct === ('' as unknown)
       ? null
       : Number(raw.tactical90dPct);
-
-  const safeBase = baseNum !== null && Number.isFinite(baseNum) && baseNum > 0 ? baseNum : null;
-  const safeSpot = spotNum !== null && Number.isFinite(spotNum) && spotNum > 0 ? spotNum : null;
+  const hasAnyBaseline =
+    safeBase !== null ||
+    safeRelease !== null ||
+    safe180d !== null ||
+    safe1y !== null ||
+    safe2y !== null ||
+    safe4y !== null;
   const liquidCycle =
     raw.liquidCycle !== undefined
-      ? Boolean(raw.liquidCycle) && safeBase !== null && safeSpot !== null
-      : safeBase !== null && safeSpot !== null;
+      ? Boolean(raw.liquidCycle) && hasAnyBaseline && safeSpot !== null
+      : hasAnyBaseline && safeSpot !== null;
 
   const baselineLabel =
     String(raw.baselineLabel || '').trim().slice(0, 48) ||
     (safeBase !== null ? formatUsdPrice(safeBase) : 'Carrier / Unpriced');
+  const releaseLabel =
+    String(raw.releaseLabel || '').trim().slice(0, 48) ||
+    (safeRelease !== null ? formatUsdPrice(safeRelease) : baselineLabel);
 
   return {
     ticker,
@@ -628,6 +852,12 @@ export function sanitizeCohortAssetEntry(
     auditScore,
     baselineLabel,
     basePrice: safeBase,
+    releaseLabel,
+    releasePrice: safeRelease,
+    price180d: safe180d,
+    price1y: safe1y,
+    price2y: safe2y,
+    price4y: safe4y,
     snapshotSpot: safeSpot,
     tactical90dPct:
       tacticalNum !== null && Number.isFinite(tacticalNum)
@@ -644,6 +874,9 @@ export function sanitizeCohortAssetEntry(
           .toLowerCase()
           .replace(/[^a-z0-9-]/g, '')
           .slice(0, 64) || null
+      : null,
+    yahooSymbol: raw.yahooSymbol
+      ? String(raw.yahooSymbol).trim().toUpperCase().slice(0, 24)
       : null,
     note:
       String(raw.note || '')
@@ -783,20 +1016,78 @@ export function removeAssetFromCohortRecord(
   };
 }
 
+export interface ReleaseBaselineOverride {
+  releasePrice?: number | null;
+  releaseLabel?: string;
+  price180d?: number | null;
+  price1y?: number | null;
+  price2y?: number | null;
+  price4y?: number | null;
+  yahooSymbol?: string;
+}
+
 export function applySpotPricesToCohortRecord(
   record: GainsCohortRecord,
   spotMap: Record<string, number>,
-  sourceLabel = 'Live Spot Sync (Saved)'
+  sourceLabel = 'Live Spot Sync (Saved)',
+  releaseOverrides?: Record<string, ReleaseBaselineOverride>
 ): { nextRecord: GainsCohortRecord; updatedTickers: string[] } {
   const updatedTickers: string[] = [];
+  const pickPos = (val: unknown): number | null => {
+    const n = Number(val);
+    return val !== null && val !== undefined && Number.isFinite(n) && n > 0 ? n : null;
+  };
   const updateItem = (item: CohortAssetEntry): CohortAssetEntry => {
     const live = Number(spotMap[item.ticker]);
-    if (!Number.isFinite(live) || live <= 0) return item;
+    const relOv = releaseOverrides?.[item.ticker];
+    const hasLive = Number.isFinite(live) && live > 0;
+    const ovRelease = relOv ? pickPos(relOv.releasePrice) : null;
+    const ov180d = relOv ? pickPos(relOv.price180d) : null;
+    const ov1y = relOv ? pickPos(relOv.price1y) : null;
+    const ov2y = relOv ? pickPos(relOv.price2y) : null;
+    const ov4y = relOv ? pickPos(relOv.price4y) : null;
+    const hasRel = Boolean(
+      ovRelease !== null ||
+        ov180d !== null ||
+        ov1y !== null ||
+        ov2y !== null ||
+        ov4y !== null
+    );
+    if (!hasLive && !hasRel) return item;
+
     updatedTickers.push(item.ticker);
+    const nextSpot = hasLive ? live : item.snapshotSpot;
+    const nextReleasePrice = ovRelease !== null ? ovRelease : item.releasePrice ?? null;
+    const nextReleaseLabel =
+      ovRelease !== null
+        ? String(relOv?.releaseLabel || formatUsdPrice(nextReleasePrice))
+        : item.releaseLabel;
+    const nextPrice180d = ov180d !== null ? ov180d : item.price180d ?? null;
+    const nextPrice1y = ov1y !== null ? ov1y : item.price1y ?? null;
+    const nextPrice2y = ov2y !== null ? ov2y : item.price2y ?? null;
+    const nextPrice4y = ov4y !== null ? ov4y : item.price4y ?? null;
+    const nextYahooSymbol =
+      relOv?.yahooSymbol ? relOv.yahooSymbol : item.yahooSymbol ?? null;
+
+    const hasBaseline =
+      (item.basePrice !== null && item.basePrice > 0) ||
+      (nextReleasePrice !== null && nextReleasePrice > 0) ||
+      (nextPrice180d !== null && nextPrice180d > 0) ||
+      (nextPrice1y !== null && nextPrice1y > 0) ||
+      (nextPrice2y !== null && nextPrice2y > 0) ||
+      (nextPrice4y !== null && nextPrice4y > 0);
+
     return {
       ...item,
-      snapshotSpot: live,
-      liquidCycle: item.basePrice !== null && item.basePrice > 0
+      snapshotSpot: nextSpot,
+      releasePrice: nextReleasePrice,
+      releaseLabel: nextReleaseLabel,
+      price180d: nextPrice180d,
+      price1y: nextPrice1y,
+      price2y: nextPrice2y,
+      price4y: nextPrice4y,
+      yahooSymbol: nextYahooSymbol,
+      liquidCycle: hasBaseline && nextSpot !== null && nextSpot > 0
     };
   };
 
@@ -883,9 +1174,11 @@ export interface CohortLiquidMetrics {
 
 export interface CohortAggregateSummary {
   passCycleAvg: number;
-  passExKasAvg: number;
+  passExOutlierAvg: number;
+  passExOutlierTicker: string | null;
   failCycleAvg: number;
   failExOutlierAvg: number;
+  failExOutlierTicker: string | null;
   pass90dAvg: number;
   fail90dAvg: number;
   pass90dMedian: number;
@@ -915,21 +1208,47 @@ export function computeCohortAggregateSummary(
     ? 2015.0
     : avgOf(safePass.map((i) => i.cyclePct || 0));
 
-  const passedExOutliers = safePass.filter((i) => !i.isOutlier);
-  const passExKasAvg = useCanonicalSnapshotNumbers
+  // Highest percentage gain asset on E > 0
+  let passTopOutlier: CohortLiquidMetrics | null = null;
+  for (const item of safePass) {
+    if (
+      passTopOutlier === null ||
+      (item.cyclePct ?? -Infinity) > (passTopOutlier.cyclePct ?? -Infinity)
+    ) {
+      passTopOutlier = item;
+    }
+  }
+  const passExOutlierTicker =
+    safePass.length > 1 && passTopOutlier ? passTopOutlier.ticker : null;
+  const passedExOutliers = passExOutlierTicker
+    ? safePass.filter((i) => i.ticker !== passExOutlierTicker)
+    : safePass;
+  const passExOutlierAvg = useCanonicalSnapshotNumbers
     ? 165.4
-    : avgOf((passedExOutliers.length > 0 ? passedExOutliers : safePass).map((i) => i.cyclePct || 0));
+    : avgOf(passedExOutliers.map((i) => i.cyclePct || 0));
 
   const failCycleAvg = useCanonicalSnapshotNumbers
     ? 59.4
     : avgOf(safeFail.map((i) => i.cyclePct || 0));
 
-  const failedExOutliers = safeFail.filter(
-    (i) => !i.isOutlier && i.ticker !== 'TAO' && i.ticker !== 'XRP'
-  );
+  // Highest percentage gain asset on E = 0 (symmetric top-gainer exclusion)
+  let failTopOutlier: CohortLiquidMetrics | null = null;
+  for (const item of safeFail) {
+    if (
+      failTopOutlier === null ||
+      (item.cyclePct ?? -Infinity) > (failTopOutlier.cyclePct ?? -Infinity)
+    ) {
+      failTopOutlier = item;
+    }
+  }
+  const failExOutlierTicker =
+    safeFail.length > 1 && failTopOutlier ? failTopOutlier.ticker : null;
+  const failedExOutliers = failExOutlierTicker
+    ? safeFail.filter((i) => i.ticker !== failExOutlierTicker)
+    : safeFail;
   const failExOutlierAvg = useCanonicalSnapshotNumbers
     ? -11.7
-    : avgOf((failedExOutliers.length > 0 ? failedExOutliers : safeFail).map((i) => i.cyclePct || 0));
+    : avgOf(failedExOutliers.map((i) => i.cyclePct || 0));
 
   const pass90dVals = safePass
     .map((i) => i.tactical90dPct)
@@ -959,15 +1278,15 @@ export function computeCohortAggregateSummary(
       );
 
   const passExCount = Math.max(1, passedExOutliers.length || safePass.length);
-  const failExCount = Math.max(1, failedExOutliers.length || Math.max(1, safeFail.length - 1));
+  const failExCount = Math.max(1, failedExOutliers.length || safeFail.length);
 
   const passExEndDollars = useCanonicalSnapshotNumbers
-    ? Math.round(passedExOutliers.length * allocPerAsset * (1 + passExKasAvg / 100))
+    ? Math.round(passedExOutliers.length * allocPerAsset * (1 + passExOutlierAvg / 100))
     : Math.round(
         (passedExOutliers.length > 0 ? passedExOutliers : safePass).reduce(
           (sum, i) => sum + allocPerAsset * Math.max(0, i.multiple ?? 1 + (i.cyclePct || 0) / 100),
           0
-        ) || passExCount * allocPerAsset * (1 + passExKasAvg / 100)
+        ) || passExCount * allocPerAsset * (1 + passExOutlierAvg / 100)
       );
 
   const failExEndDollars = useCanonicalSnapshotNumbers
@@ -979,14 +1298,29 @@ export function computeCohortAggregateSummary(
         ) || failExCount * allocPerAsset * (1 + failExOutlierAvg / 100)
       );
 
+  const passAvgMult =
+    safePass.length > 0
+      ? passEndDollars / Math.max(1, safePass.length * allocPerAsset)
+      : 0;
+  const failAvgMult =
+    safeFail.length > 0
+      ? failEndDollars / Math.max(1, safeFail.length * allocPerAsset)
+      : 0;
+
   const portfolioVictoryMultiple =
-    failEndDollars > 0 ? (passEndDollars / failEndDollars).toFixed(1) : '12.0';
+    failAvgMult > 0
+      ? passAvgMult / failAvgMult >= 100
+        ? Math.round(passAvgMult / failAvgMult).toLocaleString()
+        : (passAvgMult / failAvgMult).toFixed(1)
+      : '12.0';
 
   return {
     passCycleAvg,
-    passExKasAvg,
+    passExOutlierAvg,
+    passExOutlierTicker,
     failCycleAvg,
     failExOutlierAvg,
+    failExOutlierTicker,
     pass90dAvg,
     fail90dAvg,
     pass90dMedian,
@@ -999,6 +1333,99 @@ export function computeCohortAggregateSummary(
     failExEndDollars,
     portfolioVictoryMultiple
   };
+}
+
+export function resolveCohortBaselinePrice(
+  entry: Pick<
+    CohortAssetEntry,
+    | 'basePrice'
+    | 'releasePrice'
+    | 'price180d'
+    | 'price1y'
+    | 'price2y'
+    | 'price4y'
+    | 'baselineLabel'
+    | 'releaseLabel'
+  >,
+  mode: GainsBaselineMode = 'RELEASE'
+): { price: number | null; label: string } {
+  if (mode === 'RELEASE') {
+    const price =
+      entry.releasePrice !== undefined && entry.releasePrice !== null
+        ? entry.releasePrice
+        : entry.basePrice ?? null;
+    const label =
+      entry.releaseLabel ||
+      (entry.releasePrice ? formatUsdPrice(entry.releasePrice) : entry.baselineLabel);
+    return { price, label };
+  }
+  if (mode === 'D180') {
+    const price = entry.price180d ?? null;
+    return {
+      price,
+      label: price !== null ? `${formatUsdPrice(price)} (180d)` : 'Pre-Launch / N/A'
+    };
+  }
+  if (mode === 'Y1') {
+    const price = entry.price1y ?? null;
+    return {
+      price,
+      label: price !== null ? `${formatUsdPrice(price)} (1Y)` : 'Pre-Launch / N/A'
+    };
+  }
+  if (mode === 'Y2') {
+    const price = entry.price2y ?? null;
+    return {
+      price,
+      label: price !== null ? `${formatUsdPrice(price)} (2Y)` : 'Pre-Launch / N/A'
+    };
+  }
+  if (mode === 'Y4') {
+    const price = entry.price4y ?? null;
+    return {
+      price,
+      label: price !== null ? `${formatUsdPrice(price)} (4Y)` : 'Pre-Launch / N/A'
+    };
+  }
+  const price = entry.basePrice ?? null;
+  const label = entry.baselineLabel || entry.releaseLabel || 'Audited in Basket';
+  return { price, label };
+}
+
+export function computeCohortLiquidMetricsList(
+  entries: CohortAssetEntry[],
+  mode: GainsBaselineMode = 'RELEASE',
+  liveSpots?: Record<string, number>
+): CohortLiquidMetrics[] {
+  return entries
+    .map((item) => {
+      const { price: baseline } = resolveCohortBaselinePrice(item, mode);
+      const liveVal = liveSpots?.[item.ticker];
+      const spot =
+        liveVal !== undefined && Number.isFinite(Number(liveVal)) && Number(liveVal) > 0
+          ? Number(liveVal)
+          : item.snapshotSpot;
+      const liquidCycle = Boolean(baseline && baseline > 0 && spot && spot > 0);
+      if (!liquidCycle || !baseline || !spot) {
+        return {
+          ticker: item.ticker,
+          cyclePct: null,
+          multiple: null,
+          tactical90dPct: item.tactical90dPct,
+          liquidCycle: false,
+          isOutlier: item.isOutlier
+        };
+      }
+      return {
+        ticker: item.ticker,
+        cyclePct: ((spot - baseline) / baseline) * 100,
+        multiple: spot / baseline,
+        tactical90dPct: item.tactical90dPct,
+        liquidCycle: true,
+        isOutlier: item.isOutlier
+      };
+    })
+    .filter((m) => m.liquidCycle);
 }
 
 export interface BasketAuditLike {
@@ -1019,12 +1446,19 @@ const KNOWN_AUDIT_COHORT_METADATA: Record<string, Partial<CohortAssetEntry>> = {
     auditScore: 0.0,
     baselineLabel: 'Audited in Basket',
     basePrice: null,
-    snapshotSpot: null,
+    releaseLabel: "$0.84 (Feb '25)",
+    releasePrice: 0.841,
+    price180d: 0.1496,
+    price1y: 0.2281,
+    price2y: null,
+    price4y: null,
+    snapshotSpot: 0.0593,
     tactical90dPct: null,
-    liquidCycle: false,
+    liquidCycle: true,
     isOutlier: false,
     coinbasePair: null,
     geckoId: 'pi-network',
+    yahooSymbol: 'PI35697-USD',
     note: 'Centralized stellar-core fork • 100B 0-Joule mint • Mandatory KYC/KYB'
   }
 };
@@ -1089,12 +1523,23 @@ export function buildBasketSyncedCohortRecord(
       : catalog?.auditScore ?? persisted?.auditScore ?? 0;
 
     const basePrice = persisted?.basePrice ?? catalog?.basePrice ?? null;
+    const releasePrice = persisted?.releasePrice ?? catalog?.releasePrice ?? null;
+    const price180d = persisted?.price180d ?? catalog?.price180d ?? null;
+    const price1y = persisted?.price1y ?? catalog?.price1y ?? null;
+    const price2y = persisted?.price2y ?? catalog?.price2y ?? null;
+    const price4y = persisted?.price4y ?? catalog?.price4y ?? null;
     const snapshotSpot = persisted?.snapshotSpot ?? catalog?.snapshotSpot ?? null;
     const tactical90dPct = persisted?.tactical90dPct ?? catalog?.tactical90dPct ?? null;
+    const hasBaseline =
+      (basePrice !== null && basePrice > 0) ||
+      (releasePrice !== null && releasePrice > 0) ||
+      (price180d !== null && price180d > 0) ||
+      (price1y !== null && price1y > 0) ||
+      (price2y !== null && price2y > 0) ||
+      (price4y !== null && price4y > 0);
     const liquidCycle = Boolean(
-      (persisted?.liquidCycle ?? catalog?.liquidCycle ?? false) &&
-        basePrice !== null &&
-        basePrice > 0 &&
+      (persisted?.liquidCycle ?? catalog?.liquidCycle ?? hasBaseline) &&
+        hasBaseline &&
         snapshotSpot !== null &&
         snapshotSpot > 0
     );
@@ -1110,6 +1555,15 @@ export function buildBasketSyncedCohortRecord(
           catalog?.baselineLabel ||
           (basePrice !== null ? formatUsdPrice(basePrice) : 'Audited in Basket'),
         basePrice,
+        releaseLabel:
+          persisted?.releaseLabel ||
+          catalog?.releaseLabel ||
+          (releasePrice !== null ? formatUsdPrice(releasePrice) : undefined),
+        releasePrice,
+        price180d,
+        price1y,
+        price2y,
+        price4y,
         snapshotSpot,
         tactical90dPct,
         liquidCycle,
@@ -1126,6 +1580,12 @@ export function buildBasketSyncedCohortRecord(
             : catalog?.geckoId !== undefined
             ? catalog.geckoId
             : suggestion?.geckoId ?? null,
+        yahooSymbol:
+          persisted?.yahooSymbol !== undefined
+            ? persisted.yahooSymbol
+            : catalog?.yahooSymbol !== undefined
+            ? catalog.yahooSymbol
+            : `${ticker}-USD`,
         note: catalog?.note || persisted?.note || suggestion?.note || 'Synced from audited basket'
       },
       side
@@ -1169,10 +1629,128 @@ export function getCohortSyncSignature(record: Pick<GainsCohortRecord, 'passed' 
       .sort((a, b) => a.ticker.localeCompare(b.ticker))
       .map(
         (a) =>
-          `${a.ticker}:${a.grade}:${a.auditScore}:${a.snapshotSpot ?? ''}:${a.basePrice ?? ''}`
+          `${a.ticker}:${a.grade}:${a.auditScore}:${a.snapshotSpot ?? ''}:${a.basePrice ?? ''}:${a.releasePrice ?? ''}`
       )
       .join('|');
   return `${serializeSide(record.passed)}=>${serializeSide(record.failed)}`;
+}
+
+export function buildNiceYGridTicks(
+  minVal: number,
+  maxVal: number,
+  isLog: boolean
+): number[] {
+  const safeMin = Number.isFinite(minVal) ? Math.max(0.05, minVal) : 0.5;
+  const safeMax = Number.isFinite(maxVal) && maxVal > safeMin ? maxVal : safeMin * 2;
+
+  if (isLog) {
+    if (safeMax >= 1000) {
+      const powers = [0.25, 0.5, 1, 10, 100, 1000, 10000, 100000, 1000000];
+      const filtered = powers.filter((t) => t >= safeMin * 0.85 && t <= safeMax * 1.05);
+      return filtered.length >= 2 ? filtered : [1, 10, 100, 1000];
+    }
+    const candidates = [0.1, 0.2, 0.25, 0.5, 1, 1.5, 2, 3, 5, 10, 20, 50, 100, 250, 500];
+    const filtered = candidates.filter((t) => t >= safeMin * 0.9 && t <= safeMax * 1.05);
+    return filtered.length >= 2 ? filtered : [Math.max(0.1, Number(safeMin.toFixed(2))), 1.0, Number(safeMax.toFixed(1))];
+  }
+
+  const span = Math.max(0.05, safeMax - safeMin);
+  const rawStep = span / 4.2;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const norm = rawStep / magnitude;
+  const niceNorm = norm <= 1.2 ? 1 : norm <= 2.2 ? 2 : norm <= 2.8 ? 2.5 : norm <= 5.5 ? 5 : 10;
+  const step = niceNorm * magnitude;
+
+  const start = Math.ceil(safeMin / step) * step;
+  const ticks: number[] = [];
+  for (let v = start; v <= safeMax + step * 0.05; v += step) {
+    const rounded = Math.round(v * 1000) / 1000;
+    if (rounded >= safeMin * 0.96 && rounded <= safeMax * 1.02) {
+      ticks.push(rounded);
+    }
+  }
+
+  if (safeMin <= 1.0 && safeMax >= 1.0 && !ticks.some((t) => Math.abs(t - 1.0) < step * 0.35)) {
+    ticks.push(1.0);
+  }
+  ticks.sort((a, b) => a - b);
+  // Deduplicate any overly close ticks
+  const deduped: number[] = [];
+  for (const t of ticks) {
+    if (deduped.length === 0 || Math.abs(t - deduped[deduped.length - 1]) >= step * 0.32) {
+      deduped.push(t);
+    }
+  }
+  return deduped.length >= 2 ? deduped : [Number(safeMin.toFixed(2)), 1.0, Number(safeMax.toFixed(2))];
+}
+
+const WINDOW_CHECKPOINT_DEFS: Record<
+  GainsWindowHorizonKey,
+  Array<{ label: string; event: string }>
+> = {
+  D180: [
+    { label: 'T-180d', event: '180-Day Window Open' },
+    { label: 'T-150d', event: 'Month 1 Repricing' },
+    { label: 'T-120d', event: 'Month 2 Equilibrium' },
+    { label: 'T-90d', event: '90-Day Checkpoint' },
+    { label: 'T-60d', event: 'Late-Window Divergence' },
+    { label: 'T-30d', event: 'Final 30D Compression' },
+    { label: 'Now', event: 'Live 180D Spot' }
+  ],
+  Y1: [
+    { label: 'T-12m', event: '1-Year Window Open' },
+    { label: 'T-10m', event: 'Early Cycle Flow' },
+    { label: 'T-8m', event: 'Mid-Year Consolidation' },
+    { label: 'T-6m', event: '180D Midpoint' },
+    { label: 'T-4m', event: 'Unlock vs Scarcity Split' },
+    { label: 'T-2m', event: 'Pre-Current Leg' },
+    { label: 'Now', event: 'Live 1Y Spot' }
+  ],
+  Y2: [
+    { label: 'T-24m', event: '2-Year Window Open' },
+    { label: 'T-20m', event: 'Early Re-Accumulation' },
+    { label: 'T-16m', event: 'Macro Expansion Test' },
+    { label: 'T-12m', event: '1-Year Midpoint' },
+    { label: 'T-8m', event: 'Supply Absorption' },
+    { label: 'T-4m', event: 'Late Window Trend' },
+    { label: 'Now', event: 'Live 2Y Spot' }
+  ],
+  Y4: [
+    { label: 'T-4Y', event: '4-Year Cycle Open' },
+    { label: 'T-40m', event: 'Post-Drawdown Recovery' },
+    { label: 'T-32m', event: 'Halving Era Advance' },
+    { label: 'T-24m', event: '2-Year Midpoint' },
+    { label: 'T-16m', event: 'Mature Cycle Dispersion' },
+    { label: 'T-8m', event: 'Recent Cohort Separation' },
+    { label: 'Now', event: 'Live 4Y Spot' }
+  ]
+};
+
+export function buildFallbackWindowTrajectory(
+  mode: GainsWindowHorizonKey,
+  summary: Pick<
+    CohortAggregateSummary,
+    'passCycleAvg' | 'passExOutlierAvg' | 'failCycleAvg' | 'failExOutlierAvg'
+  >
+): MacroTrajectoryPoint[] {
+  const defs = WINDOW_CHECKPOINT_DEFS[mode];
+  const targetPass = Math.max(0.05, 1 + summary.passCycleAvg / 100);
+  const targetPassEx = Math.max(0.05, 1 + summary.passExOutlierAvg / 100);
+  const targetFail = Math.max(0.05, 1 + summary.failCycleAvg / 100);
+  const targetFailEx = Math.max(0.05, 1 + summary.failExOutlierAvg / 100);
+
+  return defs.map((def, idx) => {
+    const t = idx / Math.max(1, defs.length - 1);
+    const wave = idx === 0 || idx === defs.length - 1 ? 0 : Math.sin(t * Math.PI) * 0.04;
+    return {
+      label: def.label,
+      event: def.event,
+      passAll: idx === 0 ? 1.0 : Math.max(0.05, 1 + (targetPass - 1) * t + wave),
+      passEx: idx === 0 ? 1.0 : Math.max(0.05, 1 + (targetPassEx - 1) * t + wave * 0.7),
+      failAll: idx === 0 ? 1.0 : Math.max(0.05, 1 + (targetFail - 1) * t - wave * 0.8),
+      failEx: idx === 0 ? 1.0 : Math.max(0.05, 1 + (targetFailEx - 1) * t - wave)
+    };
+  });
 }
 
 

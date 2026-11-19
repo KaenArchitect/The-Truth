@@ -135,9 +135,18 @@ const ThermodynamicGainsModal = lazy(() =>
 import {
   buildBasketSyncedCohortRecord,
   computeCohortAggregateSummary,
-  formatPctSigned
+  computeCohortLiquidMetricsList,
+  formatPctSigned,
+  sanitizeGainsCohortRecord,
+  type GainsCohortRecord
 } from './data/gainsCohortData.ts';
 import { TutorialOverlay } from './components/TutorialOverlay.tsx';
+import {
+  HeroQuoteFollowThrough,
+  HeroQuoteLeadInBubble,
+  HeroQuoteTitleText,
+  useHeroTruthQuoteReader
+} from './components/TruthQuoteBubbles.tsx';
 import {
   MOBILE_TUTORIAL_STEPS,
   TUTORIAL_STEPS,
@@ -195,6 +204,8 @@ import {
 import {
   computeConstellationScale,
   computeDisplayLayoutMetrics,
+  computeSyncInvariantGridLayout,
+  isBrowserZoomAtLeast150,
   shouldShowFloatingCornerControls
 } from './data/displayScale.ts';
 
@@ -444,6 +455,8 @@ function ThermodynamicAuditApp() {
   const [archiveToast, setArchiveToast] = useState<ArchiveToastState | null>(null);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isGainsModalOpen, setIsGainsModalOpen] = useState(false);
+  const [gainsCohortRecord, setGainsCohortRecord] = useState<GainsCohortRecord | null>(null);
+  const [gainsLiveSpots, setGainsLiveSpots] = useState<Record<string, number>>({});
   const [isDonateModalOpen, setIsDonateModalOpen] = useState(false);
   const [isGenesisModalOpen, setIsGenesisModalOpen] = useState(false);
   const [dotDiscoveryState, setDotDiscoveryState] = useState<DotDiscoveryGameState>(() =>
@@ -545,19 +558,61 @@ function ThermodynamicAuditApp() {
   );
   const [singleInvBusy, setSingleInvBusy] = useState<SingleInvBusyState | null>(null);
   const [singleInvNotice, setSingleInvNotice] = useState<SingleInvNoticeState | null>(null);
-  const [viewportMetrics, setViewportMetrics] = useState(() => ({
-    width: typeof window !== 'undefined' ? window.innerWidth : 1440,
-    height: typeof window !== 'undefined' ? window.innerHeight : 900,
-    isCoarsePointer:
-      typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  const appRootRef = useRef<HTMLDivElement | null>(null);
+  const baselineDprRef = useRef<number | null>(null);
+  const [viewportMetrics, setViewportMetrics] = useState(() => {
+    if (typeof window === 'undefined') {
+      return {
+        width: 1440,
+        height: 900,
+        devicePixelRatio: 1,
+        visualViewportScale: 1,
+        screenWidth: 1440,
+        isMacPlatform: false,
+        isCoarsePointer: false
+      };
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const screenWidth = window.screen?.width || window.innerWidth;
+    const isMacPlatform = /Mac|iPhone|iPod|iPad/i.test(
+      window.navigator?.platform || window.navigator?.userAgent || ''
+    );
+    const isCoarsePointer =
+      typeof window.matchMedia === 'function'
         ? window.matchMedia('(pointer: coarse)').matches
-        : false
-  }));
+        : false;
+    if (Math.abs(dpr - 1) <= 0.06) {
+      baselineDprRef.current = 1;
+    } else if (
+      !isCoarsePointer &&
+      Math.abs(dpr - 2) <= 0.06 &&
+      ((isMacPlatform && screenWidth * dpr >= 2500) || (!isMacPlatform && screenWidth * dpr >= 3400))
+    ) {
+      baselineDprRef.current = 2;
+    } else if (isCoarsePointer) {
+      baselineDprRef.current = dpr;
+    }
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      devicePixelRatio: dpr,
+      visualViewportScale: window.visualViewport?.scale || 1,
+      screenWidth,
+      isMacPlatform,
+      isCoarsePointer
+    };
+  });
   const isMobileViewport = viewportMetrics.width < 768;
+  const isZoomed150Plus = isBrowserZoomAtLeast150({
+    ...viewportMetrics,
+    baselineDpr: baselineDprRef.current
+  });
+  const stackBasketsBelow = isMobileViewport || isZoomed150Plus;
   const isLgDesktop = viewportMetrics.width >= 1024;
+  const isCompactHeight = !isMobileViewport && viewportMetrics.height <= 780;
   const displayMetrics = useMemo(
-    () => computeDisplayLayoutMetrics(viewportMetrics),
-    [viewportMetrics]
+    () => computeDisplayLayoutMetrics({ ...viewportMetrics, stackBasketsBelow }),
+    [viewportMetrics, stackBasketsBelow]
   );
   const pinOrientationMode = resolvePinOrientationMode(viewportMetrics);
 
@@ -587,30 +642,91 @@ function ThermodynamicAuditApp() {
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
     let resizeRaf: number | null = null;
+    let dprMql: MediaQueryList | null = null;
+
     const commitViewport = () => {
       resizeRaf = null;
       const nextWidth = window.innerWidth;
       const nextHeight = window.innerHeight;
+      const nextDpr = window.devicePixelRatio || 1;
+      const nextVvScale = window.visualViewport?.scale || 1;
+      const nextScreenWidth = window.screen?.width || nextWidth;
+      const isMacPlatform = /Mac|iPhone|iPod|iPad/i.test(
+        window.navigator?.platform || window.navigator?.userAgent || ''
+      );
       const isCoarsePointer =
         typeof window.matchMedia === 'function'
           ? window.matchMedia('(pointer: coarse)').matches
           : false;
+
+      if (Math.abs(nextDpr - 1) <= 0.06) {
+        baselineDprRef.current = 1;
+      } else if (
+        !isCoarsePointer &&
+        Math.abs(nextDpr - 2) <= 0.06 &&
+        ((isMacPlatform && nextScreenWidth * nextDpr >= 2500) ||
+          (!isMacPlatform && nextScreenWidth * nextDpr >= 3400)) &&
+        baselineDprRef.current === null
+      ) {
+        baselineDprRef.current = 2;
+      } else if (isCoarsePointer && baselineDprRef.current === null) {
+        baselineDprRef.current = nextDpr;
+      }
+
       setViewportMetrics((prev) =>
         prev.width === nextWidth &&
         prev.height === nextHeight &&
+        Math.abs(prev.devicePixelRatio - nextDpr) < 0.005 &&
+        Math.abs(prev.visualViewportScale - nextVvScale) < 0.005 &&
+        prev.screenWidth === nextScreenWidth &&
+        prev.isMacPlatform === isMacPlatform &&
         prev.isCoarsePointer === isCoarsePointer
           ? prev
-          : { width: nextWidth, height: nextHeight, isCoarsePointer }
+          : {
+              width: nextWidth,
+              height: nextHeight,
+              devicePixelRatio: nextDpr,
+              visualViewportScale: nextVvScale,
+              screenWidth: nextScreenWidth,
+              isMacPlatform,
+              isCoarsePointer
+            }
       );
     };
+
+    const armDprListener = () => {
+      if (typeof window.matchMedia !== 'function') return;
+      if (dprMql) {
+        if (dprMql.removeEventListener) {
+          dprMql.removeEventListener('change', onDprMediaChange);
+        } else {
+          dprMql.removeListener(onDprMediaChange);
+        }
+      }
+      dprMql = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      if (dprMql.addEventListener) {
+        dprMql.addEventListener('change', onDprMediaChange);
+      } else {
+        dprMql.addListener(onDprMediaChange);
+      }
+    };
+
     const updateViewport = () => {
       if (resizeRaf !== null) return;
       resizeRaf = window.requestAnimationFrame(commitViewport);
     };
 
+    function onDprMediaChange() {
+      armDprListener();
+      updateViewport();
+    }
+
     commitViewport();
+    armDprListener();
     window.addEventListener('resize', updateViewport, { passive: true });
     window.addEventListener('orientationchange', updateViewport, { passive: true });
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', updateViewport);
     const orientationMq =
       typeof window.matchMedia === 'function'
         ? window.matchMedia('(orientation: portrait)')
@@ -626,6 +742,14 @@ function ThermodynamicAuditApp() {
       if (resizeRaf !== null) window.cancelAnimationFrame(resizeRaf);
       window.removeEventListener('resize', updateViewport);
       window.removeEventListener('orientationchange', updateViewport);
+      vv?.removeEventListener('resize', updateViewport);
+      if (dprMql) {
+        if (dprMql.removeEventListener) {
+          dprMql.removeEventListener('change', onDprMediaChange);
+        } else {
+          dprMql.removeListener(onDprMediaChange);
+        }
+      }
       if (orientationMq) {
         if (orientationMq.removeEventListener) {
           orientationMq.removeEventListener('change', updateViewport);
@@ -650,6 +774,41 @@ function ThermodynamicAuditApp() {
     setGlobalWavePaused(isAnyModalOpen);
     return () => setGlobalWavePaused(false);
   }, [isAnyModalOpen]);
+
+  // Prevent browser middle-mouse ("click and grab with mouse scroll") autoscroll pan mode
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const preventMiddleMouseAutoscroll = (e: MouseEvent) => {
+      if (e.button !== 1) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable) &&
+        document.activeElement === target
+      ) {
+        return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener('mousedown', preventMiddleMouseAutoscroll, {
+      capture: true,
+      passive: false
+    });
+    window.addEventListener('auxclick', preventMiddleMouseAutoscroll, {
+      capture: true,
+      passive: false
+    });
+    return () => {
+      window.removeEventListener('mousedown', preventMiddleMouseAutoscroll, {
+        capture: true
+      });
+      window.removeEventListener('auxclick', preventMiddleMouseAutoscroll, {
+        capture: true
+      });
+    };
+  }, []);
 
   // Escape key closes open dialogs cleanly
   useEffect(() => {
@@ -713,26 +872,51 @@ function ThermodynamicAuditApp() {
   );
   const sandboxTickerSet = useMemo(() => new Set(sandboxTickers), [sandboxTickers]);
 
+  useEffect(() => {
+    let active = true;
+    fetch('/api/gains-cohort')
+      .then((res) => (res.ok ? res.json() : null))
+      .then(
+        (
+          payload: {
+            record?: Partial<GainsCohortRecord>;
+            liveSpotMap?: Record<string, number>;
+          } | null
+        ) => {
+          if (!active) return;
+          if (payload?.record) {
+            setGainsCohortRecord(sanitizeGainsCohortRecord(payload.record));
+          }
+          if (payload?.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
+            setGainsLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
+          }
+        }
+      )
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleCohortSynced = useCallback(
+    (record: GainsCohortRecord, spots: Record<string, number>) => {
+      setGainsCohortRecord(record);
+      if (spots && Object.keys(spots).length > 0) {
+        setGainsLiveSpots((prev) => ({ ...prev, ...spots }));
+      }
+    },
+    []
+  );
+
   const basketGainsSummary = useMemo(() => {
-    const synced = buildBasketSyncedCohortRecord(audits);
-    const toLiquid = (arr: typeof synced.passed) =>
-      arr
-        .filter((i) => i.liquidCycle && i.basePrice && i.snapshotSpot)
-        .map((i) => ({
-          ticker: i.ticker,
-          cyclePct: ((i.snapshotSpot! - i.basePrice!) / i.basePrice!) * 100,
-          multiple: i.snapshotSpot! / i.basePrice!,
-          tactical90dPct: i.tactical90dPct,
-          liquidCycle: i.liquidCycle,
-          isOutlier: i.isOutlier
-        }));
+    const synced = buildBasketSyncedCohortRecord(audits, gainsCohortRecord);
     return computeCohortAggregateSummary(
-      toLiquid(synced.passed),
-      toLiquid(synced.failed),
+      computeCohortLiquidMetricsList(synced.passed, 'RELEASE', gainsLiveSpots),
+      computeCohortLiquidMetricsList(synced.failed, 'RELEASE', gainsLiveSpots),
       1000,
       false
     );
-  }, [audits]);
+  }, [audits, gainsCohortRecord, gainsLiveSpots]);
 
   const flashArchiveToast = (text: string, tone: ArchiveToastState['tone'] = 'hit') => {
     setArchiveToast({ text, tone });
@@ -1305,7 +1489,17 @@ function ThermodynamicAuditApp() {
   }, [isMultiStage, expandedSyncInvId]);
 
   useEffect(() => {
-    if (!isMultiStage) return undefined;
+    if (!isMultiStage) {
+      const iw = viewportMetrics.width;
+      const reserve = stackBasketsBelow
+        ? iw < 768
+          ? 12
+          : 16
+        : displayMetrics.mainHorizontalPadPx ?? (iw >= 1280 ? 290 : iw >= 1024 ? 244 : 196);
+      const fallbackW = Math.max(iw < 768 ? 280 : 320, Math.floor(iw - reserve * 2));
+      setConstellationWrapWidth((prev) => (prev === fallbackW ? prev : fallbackW));
+      return undefined;
+    }
     const el = constellationMeasureRef.current;
     if (!el) return undefined;
 
@@ -1337,7 +1531,13 @@ function ThermodynamicAuditApp() {
       if (measureRaf !== null) window.cancelAnimationFrame(measureRaf);
       window.removeEventListener('resize', updateWidth);
     };
-  }, [isMultiStage, stageTickers.length]);
+  }, [
+    isMultiStage,
+    stageTickers.length,
+    stackBasketsBelow,
+    viewportMetrics.width,
+    displayMetrics.mainHorizontalPadPx
+  ]);
 
   const lastLayoutSyncRef = useRef<{
     heroY: number;
@@ -1360,6 +1560,7 @@ function ThermodynamicAuditApp() {
       // Phase 1: Batch all DOM geometry & computed-style READS before touching .style
       const prev = lastLayoutSyncRef.current;
       const currentWinW = window.innerWidth;
+      const docScrollY = window.scrollY || window.pageYOffset || 0;
       const isTouchOrMobile = viewportMetrics.isCoarsePointer || currentWinW < 768;
       const root = backdropRootRef.current;
       const rootRect = root ? root.getBoundingClientRect() : null;
@@ -1368,6 +1569,7 @@ function ThermodynamicAuditApp() {
 
       const heroEl = heroDockRef.current;
       const searchEl = searchDockRef.current;
+      const pillEl = searchPillRef.current || searchEl;
       let nextHeroY: number | null = null;
       let nextHeroWidth = prev.heroWidth;
 
@@ -1381,12 +1583,19 @@ function ThermodynamicAuditApp() {
         if (!shouldKeepStaticOnTouch) {
           const m = new DOMMatrixReadOnly(window.getComputedStyle(heroEl).transform);
           const currentTy = Number.isFinite(m.m42) ? m.m42 : 0;
+          const heroRect = heroEl.getBoundingClientRect();
           const searchRect = searchEl.getBoundingClientRect();
-          const docScrollY = window.scrollY || window.pageYOffset || 0;
           if (searchRect.height > 0) {
+            const heroTopAtTy0 = heroRect.top + docScrollY - currentTy;
+            const minSafeHeroTopDocY = currentWinW >= 768 ? 58 : 16;
+            const minSafeHeroY = Math.max(0, minSafeHeroTopDocY - heroTopAtTy0);
             const searchCenterAtTy0 =
               searchRect.top + docScrollY + searchRect.height / 2 - currentTy;
-            nextHeroY = Math.max(0, backdropCenterY - searchCenterAtTy0);
+            const desiredSearchCenterY =
+              rootRect && rootRect.height > 0
+                ? rootRect.top + rootRect.height * 0.55
+                : window.innerHeight * 0.55;
+            nextHeroY = Math.max(minSafeHeroY, desiredSearchCenterY - searchCenterAtTy0);
             nextHeroWidth = currentWinW;
           }
         }
@@ -1413,17 +1622,20 @@ function ThermodynamicAuditApp() {
           const currentWrapTy =
             wrapMatrix && Number.isFinite(wrapMatrix.m42) ? wrapMatrix.m42 : 0;
           const arenaRect = arenaEl.getBoundingClientRect();
+          const pillRect = pillEl ? pillEl.getBoundingClientRect() : null;
+          const searchClearancePx = isGeniusMode ? (isCompactHeight ? 16 : 28) : 10;
+          const minArenaTopDocY =
+            pillRect && pillRect.height > 0
+              ? pillRect.bottom + docScrollY + searchClearancePx
+              : 0;
           if (arenaRect.height > 0) {
-            const arenaCenterBase =
-              arenaRect.top + arenaRect.height / 2 - currentPt - currentMt - currentWrapTy;
-            const deltaY = backdropCenterY - arenaCenterBase;
-            if (deltaY >= 0) {
-              nextWrapPt = deltaY;
-              nextWrapMt = 0;
-            } else {
-              nextWrapPt = 0;
-              nextWrapMt = Math.max(-28, deltaY);
-            }
+            const arenaTopBaseDocY =
+              arenaRect.top + docScrollY - currentPt - currentMt - currentWrapTy;
+            const arenaCenterBaseDocY = arenaTopBaseDocY + arenaRect.height / 2;
+            const desiredPt = backdropCenterY - arenaCenterBaseDocY;
+            const minSafePt = Math.max(0, minArenaTopDocY - arenaTopBaseDocY);
+            nextWrapPt = stackBasketsBelow ? minSafePt : Math.max(minSafePt, desiredPt);
+            nextWrapMt = 0;
           }
         }
       }
@@ -1433,7 +1645,9 @@ function ThermodynamicAuditApp() {
         prev.heroWidth = nextHeroWidth;
         if (Math.abs(nextHeroY - prev.heroY) >= 0.25) {
           prev.heroY = nextHeroY;
-          heroEl.style.setProperty('--hero-landing-y', `${nextHeroY.toFixed(2)}px`);
+          const nextHeroYCss = `${nextHeroY.toFixed(2)}px`;
+          heroEl.style.setProperty('--hero-landing-y', nextHeroYCss);
+          appRootRef.current?.style.setProperty('--hero-landing-y', nextHeroYCss);
         }
       }
       if (
@@ -1488,6 +1702,9 @@ function ThermodynamicAuditApp() {
     hasActiveAudit,
     isAuditing,
     isMobileViewport,
+    stackBasketsBelow,
+    isCompactHeight,
+    isGeniusMode,
     viewportMetrics.width,
     viewportMetrics.height,
     displayMetrics.stageSizePx,
@@ -1538,6 +1755,10 @@ function ThermodynamicAuditApp() {
     isAuditing,
     hasActiveHoveredInvariant: Boolean(activeHoveredInvariant)
   });
+
+  const heroQuoteReader = useHeroTruthQuoteReader(
+    isLandingIdle && !isAnyModalOpen && !isTutorialOpen
+  );
 
   // Drives the harmonic wave perimeter (+25% amplitude upgrade) on the center nucleus when collapsed,
   // and transfers that wave energy into the 6 invariant bubbles when expanded (isSplitOpen).
@@ -3673,7 +3894,10 @@ function ThermodynamicAuditApp() {
 
   const mobileSidebarsNode = useMemo(
     () => (
-      <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 pt-6 md:hidden">
+      <div
+        data-testid="stacked-bottom-baskets"
+        className="w-full max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2 pt-6"
+      >
         <aside
           data-tutorial-id="passed-sidebar"
           className="w-full rounded-3xl bg-[#121418]/90 border border-white/[0.06] p-4 flex flex-col items-center"
@@ -3823,7 +4047,17 @@ function ThermodynamicAuditApp() {
   const orbitRadius = 152;
 
   return (
-    <div className="min-h-screen bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans">
+    <div
+      ref={appRootRef}
+      data-baskets-layout={stackBasketsBelow ? 'stacked-below' : 'sidebars'}
+      onMouseDown={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      onAuxClick={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      className="min-h-screen bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans"
+    >
       <style>{`
         .font-sans { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
         .font-display { font-family: 'Space Grotesk', 'Inter', sans-serif; }
@@ -4225,8 +4459,12 @@ function ThermodynamicAuditApp() {
           1. EDITORIAL HEADER: Centered Google-Style on Open -> Slides Up on Audit
          ===================================================================== */}
       <header
-        className={`relative z-30 w-full pt-3.5 md:pt-5 px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
-          !isLandingIdle && !isMultiStage ? 'pb-1' : 'pb-2'
+        className={`relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
+          !isLandingIdle && isCompactHeight
+            ? 'pt-2.5 md:pt-3 pb-0.5'
+            : !isLandingIdle && !isMultiStage
+            ? 'pt-3.5 md:pt-5 pb-1'
+            : 'pt-3.5 md:pt-5 pb-2'
         }`}
       >
         <div className="hidden md:flex relative z-30 w-full flex-wrap items-center justify-between gap-3 pointer-events-none">
@@ -4305,7 +4543,7 @@ function ThermodynamicAuditApp() {
                   border: `1px solid ${accent.border}`
                 }}
               >
-                12x E&gt;0
+                {basketGainsSummary.portfolioVictoryMultiple}x E&gt;0
               </span>
             </button>
 
@@ -4336,21 +4574,25 @@ function ThermodynamicAuditApp() {
           </div>
         </div>
 
-        {/* HERO LOCKUP + SEARCH BAR */}
+        {/* HERO LOCKUP + SPOKEN QUOTE STAGE + SEARCH BAR */}
         <div
           ref={heroDockRef}
           className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-1 md:mt-3 lg:-mt-9 pointer-events-none"
           style={{
             transform: isLandingIdle
-              ? 'translate3d(0, var(--hero-landing-y, 26vh), 0)'
+              ? 'translate3d(0, var(--hero-landing-y, 12vh), 0)'
               : 'translate3d(0, 0px, 0)'
           }}
         >
-          <div
-            className={`hero-title-scale pointer-events-auto flex flex-col items-center justify-center text-center select-none bg-transparent ${
-              isLandingIdle ? 'scale-[1.22] sm:scale-[1.36]' : 'scale-100'
-            }`}
-          >
+          <div className="hero-title-scale pointer-events-auto flex flex-col items-center justify-center text-center select-none bg-transparent scale-100">
+            {isLandingIdle && (
+              <HeroQuoteLeadInBubble
+                reader={heroQuoteReader}
+                accent={accent}
+                compact={isCompactHeight}
+              />
+            )}
+
             <div className="relative inline-flex items-center justify-center">
               <span
                 data-testid="truth-mystery-counter"
@@ -4545,7 +4787,9 @@ function ThermodynamicAuditApp() {
               <button
                 type="button"
                 onClick={() => {
-                  if (!isLandingIdle && !isAuditing) {
+                  if (isLandingIdle) {
+                    heroQuoteReader.nextQuote();
+                  } else if (!isAuditing) {
                     setActiveKey(null);
                     setPinnedKeys([]);
                     setHoveredInvId(null);
@@ -4553,16 +4797,33 @@ function ThermodynamicAuditApp() {
                     setConfirmFullReauditKey(null);
                   }
                 }}
-                title={!isLandingIdle && !isAuditing ? 'Return to centered search' : undefined}
+                title={
+                  isLandingIdle
+                    ? 'Click for next quote'
+                    : !isAuditing
+                    ? 'Return to centered search'
+                    : undefined
+                }
                 className={`bg-transparent focus:outline-none ${
-                  !isLandingIdle && !isAuditing ? 'cursor-pointer' : 'cursor-default'
+                  isLandingIdle || !isAuditing ? 'cursor-pointer' : 'cursor-default'
                 }`}
               >
-                <h1 className="font-display text-2xl sm:text-[30px] font-bold tracking-tight text-white leading-none">
-                  The Truth
-                </h1>
+                <HeroQuoteTitleText
+                  isLandingIdle={isLandingIdle}
+                  reader={heroQuoteReader}
+                  accent={accent}
+                />
               </button>
             </div>
+
+            {isLandingIdle && (
+              <HeroQuoteFollowThrough
+                reader={heroQuoteReader}
+                accent={accent}
+                compact={isCompactHeight}
+              />
+            )}
+
             <button
               type="button"
               onClick={() => {
@@ -4588,7 +4849,7 @@ function ThermodynamicAuditApp() {
 
           <div
             className={`pointer-events-auto flex flex-wrap items-center justify-center gap-2 ${
-              isLandingIdle ? '-mt-0.5 sm:-mt-1' : '-mt-0.5'
+              isLandingIdle ? 'mt-0' : '-mt-0.5'
             }`}
           >
             <div
@@ -4657,7 +4918,13 @@ function ThermodynamicAuditApp() {
 
           <div
             className={`relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
-              isLandingIdle ? 'mt-9 sm:mt-10' : 'mt-6 sm:mt-7'
+              isLandingIdle
+                ? isCompactHeight
+                  ? 'mt-3.5 sm:mt-4'
+                  : 'mt-5 sm:mt-6'
+                : isCompactHeight
+                ? 'mt-3.5 sm:mt-4'
+                : 'mt-6 sm:mt-7'
             }`}
           >
             <form
@@ -4670,6 +4937,7 @@ function ThermodynamicAuditApp() {
                 active={isGeniusMode}
                 isAuditing={isAuditing}
                 targetRef={searchPillRef}
+                compact={!isLandingIdle && isCompactHeight}
               />
 
               <div
@@ -4729,7 +4997,7 @@ function ThermodynamicAuditApp() {
             {((archiveToast && !isAuditing) || auditError) && (
               <div
                 className={`pointer-events-none absolute top-full left-0 right-0 z-30 flex flex-col items-center gap-2 ${
-                  isGeniusMode ? 'mt-8 sm:mt-11' : 'mt-2'
+                  isGeniusMode ? (isCompactHeight ? 'mt-4 sm:mt-5' : 'mt-8 sm:mt-11') : 'mt-2'
                 }`}
               >
                 {archiveToast && !isAuditing && (
@@ -4792,41 +5060,74 @@ function ThermodynamicAuditApp() {
       {/* =====================================================================
           2. STATIC LEFT (PASSED // E > 0) & STATIC RIGHT (FAILED // E = 0) COLUMNS
          ===================================================================== */}
-      {!isMobileViewport && desktopSidebarsNode}
+      {!stackBasketsBelow && desktopSidebarsNode}
 
       {/* =====================================================================
           2B. CENTER ARENA (BLANK GOOGLE-STYLE LANDING, SINGLE SPHERE, OR 2–4 CONSTELLATIONS)
          ===================================================================== */}
       <main
         style={
-          displayMetrics.mainHorizontalPadPx
+          !stackBasketsBelow && displayMetrics.mainHorizontalPadPx
             ? {
                 paddingLeft: `${displayMetrics.mainHorizontalPadPx}px`,
                 paddingRight: `${displayMetrics.mainHorizontalPadPx}px`
               }
             : undefined
         }
-        className={`relative z-10 flex-1 w-full px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-3 sm:pb-4 flex flex-col items-center justify-start ${
+        className={`relative z-10 flex-1 w-full ${
+          stackBasketsBelow
+            ? 'px-4 sm:px-6'
+            : 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px]'
+        } ${
+          isCompactHeight ? 'pb-2 sm:pb-2.5' : 'pb-3 sm:pb-4'
+        } flex flex-col items-center justify-start ${
           !isLandingIdle && !isMultiStage
-            ? 'pt-0.5 sm:pt-2'
+            ? isCompactHeight
+              ? 'pt-0.5 sm:pt-1'
+              : 'pt-0.5 sm:pt-2'
             : isMultiStage
-            ? 'pt-3 sm:pt-4'
+            ? isCompactHeight
+              ? 'pt-2 sm:pt-2.5'
+              : 'pt-3 sm:pt-4'
             : 'pt-7 sm:pt-8'
         }`}
       >
         {isLandingIdle ? (
           <div
-            className="w-full min-h-[46vh] md:min-h-[62vh] pointer-events-none"
+            data-testid="landing-baskets-spacer"
+            style={
+              stackBasketsBelow && !isMobileViewport
+                ? { minHeight: 'calc(var(--hero-landing-y, 12vh) + 44px)' }
+                : undefined
+            }
+            className={`w-full pointer-events-none ${
+              stackBasketsBelow ? (isMobileViewport ? 'min-h-[44vh]' : '') : 'min-h-0'
+            }`}
             aria-hidden="true"
           />
         ) : isMultiStage ? (
           (() => {
             const count = stageTickers.length;
+            const sideReserve = stackBasketsBelow
+              ? viewportMetrics.width < 768
+                ? 12
+                : 16
+              : displayMetrics.mainHorizontalPadPx ??
+                (viewportMetrics.width >= 1280
+                  ? 290
+                  : viewportMetrics.width >= 1024
+                  ? 244
+                  : 196);
+            const maxCenterWrapW = Math.max(
+              viewportMetrics.width < 768 ? 280 : 320,
+              Math.floor(viewportMetrics.width - sideReserve * 2)
+            );
+            const effectiveWrapWidth = Math.min(constellationWrapWidth, maxCenterWrapW);
             const layout = getConstellationLayout(
               count,
               pinOrientationMode,
               {
-                wrapWidth: constellationWrapWidth,
+                wrapWidth: effectiveWrapWidth,
                 viewportHeight: viewportMetrics.height,
                 pinMaxScale: displayMetrics.pinMaxScale
               }
@@ -4835,12 +5136,16 @@ function ThermodynamicAuditApp() {
               layoutWidth: layout.width,
               layoutHeight: layout.height,
               layoutNodeScale: layout.nodeScale,
-              wrapWidth: constellationWrapWidth,
+              wrapWidth: effectiveWrapWidth,
               viewportHeight: viewportMetrics.height,
               pinMaxScale: displayMetrics.pinMaxScale,
               orientationMode: pinOrientationMode
             });
             const scaledArenaHeight = Math.round(layout.height * responsiveScale);
+            const syncInvariantGrid = computeSyncInvariantGridLayout({
+              availableWidth: effectiveWrapWidth,
+              count
+            });
             const effectiveHoveredInv = hoveredInvId || expandedSyncInvId || modalInvId;
             const isConstellationOrbitsOpen = expandAllOrbits || Boolean(expandedSyncInvId);
             const showCollapsedDeltas = !expandAllOrbits && !effectiveHoveredInv;
@@ -4852,11 +5157,15 @@ function ThermodynamicAuditApp() {
             return (
               <div
                 key="multi-stage"
-                className="animate-stage-enter w-full flex flex-col items-center gap-2.5 md:gap-5"
+                className={`animate-stage-enter w-full flex flex-col items-center ${
+                  isCompactHeight ? 'gap-2 md:gap-3' : 'gap-2.5 md:gap-5'
+                }`}
               >
                 <div
                   data-tutorial-id="pin-compare"
-                  className="w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 py-2.5 flex flex-wrap items-center justify-center md:justify-between gap-2.5 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
+                  className={`w-full max-w-5xl rounded-2xl bg-[#121418]/90 border border-white/10 px-3.5 ${
+                    isCompactHeight ? 'py-1.5' : 'py-2.5'
+                  } flex flex-wrap items-center justify-center md:justify-between gap-2 shadow-[0_12px_32px_rgba(0,0,0,0.45)]`}
                 >
                   <div className="flex flex-wrap items-center justify-center md:justify-start gap-1.5">
                     <span className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 mr-1">
@@ -4941,8 +5250,13 @@ function ThermodynamicAuditApp() {
                 <div
                   ref={constellationMeasureRef}
                   data-orientation-mode={pinOrientationMode}
-                  className="w-full flex justify-center overflow-visible transition-[height] duration-500 ease-out"
-                  style={{ height: `${scaledArenaHeight}px` }}
+                  onDragStart={(e) => e.preventDefault()}
+                  className="w-full flex justify-center transition-[height] duration-500 ease-out"
+                  style={{
+                    height: `${scaledArenaHeight}px`,
+                    overflow: 'clip',
+                    overflowClipMargin: '24px'
+                  }}
                 >
                   <div
                     className="relative shrink-0 transition-[width,height] duration-500 ease-out"
@@ -5270,7 +5584,13 @@ function ThermodynamicAuditApp() {
                 </div>
 
                 {/* Synchronized Cross-Bubble Invariant Matrix Bar */}
-                <div ref={syncComparisonAnchorRef} className="w-full max-w-5xl space-y-2.5 md:space-y-3 scroll-mt-4 pt-0 md:pt-2">
+                <div
+                  ref={syncComparisonAnchorRef}
+                  className={`w-full space-y-2.5 md:space-y-3 scroll-mt-4 ${
+                    isCompactHeight ? 'pt-0' : 'pt-0 md:pt-2'
+                  }`}
+                  style={{ maxWidth: `${syncInvariantGrid.containerMaxWidthPx}px` }}
+                >
                   <div
                     onMouseLeave={() => {
                       setHoveredInvId(expandedSyncInvId || null);
@@ -5452,13 +5772,12 @@ function ThermodynamicAuditApp() {
                           </div>
 
                           <div
-                            className={`grid grid-cols-1 ${
-                              pinOrientationMode === 'vertical'
-                                ? ''
-                                : count === 3
-                                ? 'lg:grid-cols-3'
-                                : 'md:grid-cols-2'
-                            } gap-3.5`}
+                            data-testid="sync-invariant-cards-grid"
+                            data-sync-columns={syncInvariantGrid.columns}
+                            className="grid gap-3.5"
+                            style={{
+                              gridTemplateColumns: `repeat(${syncInvariantGrid.columns}, minmax(0, 1fr))`
+                            }}
                           >
                             {stageTickers.map((tk) => {
                               const item = audits[tk];
@@ -5477,7 +5796,9 @@ function ThermodynamicAuditApp() {
                               return (
                                 <div
                                   key={tk}
-                                  className="color-glide rounded-2xl bg-[#0B0C0E] p-4 sm:p-5 flex flex-col justify-between gap-3.5"
+                                  className={`color-glide rounded-2xl bg-[#0B0C0E] ${
+                                    syncInvariantGrid.columns >= 3 ? 'p-3.5 xl:p-4' : 'p-4 sm:p-5'
+                                  } flex flex-col justify-between gap-3.5 min-w-0`}
                                   style={{ border: `1px solid ${sStyle.border}` }}
                                 >
                                   <div className="space-y-3">
@@ -5633,12 +5954,21 @@ function ThermodynamicAuditApp() {
           })()
         ) : (
           (() => {
+            const subLgSideReserve = stackBasketsBelow ? 16 : 196;
+            const subLgLandscapeScale = Math.max(
+              0.66,
+              Math.min(
+                1.05,
+                (viewportMetrics.width - subLgSideReserve * 2 - 20) / stageSize,
+                (viewportMetrics.height - 352) / stageSize
+              )
+            );
             const nonLgScale = !isLgDesktop
               ? viewportMetrics.width < 640
                 ? Math.min(0.86, Math.max(0.68, (viewportMetrics.width - 14) / stageSize))
                 : viewportMetrics.width < 768
                 ? 0.98
-                : 1.05
+                : Math.round(subLgLandscapeScale * 100) / 100
               : displayMetrics.arenaScale;
             const wrapperPx = isLgDesktop
               ? displayMetrics.stageSizePx
@@ -5648,13 +5978,16 @@ function ThermodynamicAuditApp() {
               <div
                 key="single-stage"
                 ref={singleStageWrapRef}
+                onDragStart={(e) => e.preventDefault()}
                 className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
               >
                 <div
                   className="flex items-center justify-center shrink-0"
                   style={{
                     width: `${wrapperPx}px`,
-                    height: `${wrapperPx}px`
+                    height: `${wrapperPx}px`,
+                    overflow: 'clip',
+                    overflowClipMargin: '24px'
                   }}
                 >
                   <div
@@ -6150,10 +6483,16 @@ function ThermodynamicAuditApp() {
               style={{ overflowAnchor: 'none' }}
               className={`w-full max-w-3xl flex flex-col items-center ${
                 isAuditing
-                  ? 'min-h-[184px] mt-3 sm:mt-5 justify-start'
+                  ? isCompactHeight
+                    ? 'min-h-0 mt-2.5 justify-start'
+                    : 'min-h-[184px] mt-3 sm:mt-5 justify-start'
                   : activeHoveredInvariant
-                  ? 'min-h-[184px] mt-1 justify-start pt-1'
-                  : isMobileViewport
+                  ? isCompactHeight
+                    ? 'min-h-0 mt-2.5 justify-start'
+                    : 'min-h-[184px] mt-2 justify-start pt-1'
+                  : stackBasketsBelow
+                  ? 'min-h-0 mt-1 justify-start'
+                  : isCompactHeight
                   ? 'min-h-0 mt-1 justify-start'
                   : 'min-h-[108px] mt-0.5 justify-start'
               }`}
@@ -6222,7 +6561,9 @@ function ThermodynamicAuditApp() {
                         setEssayViewMode(false);
                         setModalInvId(activeHoveredInvariant.id);
                       }}
-                      className="animate-card-fade color-glide text-left w-full rounded-2xl bg-[#121418]/[0.96] p-4 cursor-pointer shadow-[0_16px_40px_rgba(0,0,0,0.65)] hover:brightness-105"
+                      className={`animate-card-fade color-glide text-left w-full rounded-2xl bg-[#121418]/[0.96] ${
+                        isCompactHeight ? 'p-3' : 'p-4'
+                      } cursor-pointer shadow-[0_16px_40px_rgba(0,0,0,0.65)] hover:brightness-105`}
                       style={{
                         border: `1px solid ${sStyle.border}`
                       }}
@@ -6274,7 +6615,13 @@ function ThermodynamicAuditApp() {
                   data-testid="stage-bottom-controls"
                   style={{
                     marginTop: `${
-                      isMobileViewport ? 4 : displayMetrics.bottomControlsOffsetPx
+                      stackBasketsBelow
+                        ? isSplitOpen
+                          ? 10
+                          : 6
+                        : isSplitOpen
+                        ? Math.max(10, displayMetrics.bottomControlsOffsetPx)
+                        : displayMetrics.bottomControlsOffsetPx
                     }px`
                   }}
                   className="animate-card-fade text-center space-y-2 pt-0.5"
@@ -6432,14 +6779,18 @@ function ThermodynamicAuditApp() {
           })()
         )}
 
-        {/* Mobile-Only (< 768px) Pass / Fail Lists */}
-        {isMobileViewport && mobileSidebarsNode}
+        {/* Mobile (< 768px) or 150%+ Browser Zoom Stacked Pass / Fail Baskets */}
+        {stackBasketsBelow && mobileSidebarsNode}
       </main>
 
       {/* =====================================================================
           3. MINIMAL THERMODYNAMIC FOOTER (BALANCED MOBILE DOCK + DESKTOP FOOTER)
          ===================================================================== */}
-      <footer className="relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-16 md:py-3.5 border-t border-white/[0.05] text-[11px] font-mono text-neutral-500">
+      <footer
+        className={`relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-16 ${
+          isCompactHeight ? 'md:py-2' : 'md:py-3.5'
+        } border-t border-white/[0.05] text-[11px] font-mono text-neutral-500`}
+      >
         {/* Mobile balanced matched-size bottom button dock */}
         <div
           data-testid="mobile-footer-actions"
@@ -6522,7 +6873,7 @@ function ThermodynamicAuditApp() {
                   border: `1px solid ${accent.border}`
                 }}
               >
-                12x E&gt;0
+                {basketGainsSummary.portfolioVictoryMultiple}x E&gt;0
               </span>
             </button>
 
@@ -8070,6 +8421,8 @@ function ThermodynamicAuditApp() {
             }}
             onCopyReport={copyTextToClipboard}
             copiedTarget={copiedTarget}
+            initialCohortRecord={gainsCohortRecord}
+            onCohortSynced={handleCohortSynced}
           />
         </Suspense>
       )}

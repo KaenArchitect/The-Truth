@@ -21,7 +21,7 @@ export function resolvePinOrientationMode({
   const safeW = Math.max(0, width);
   const safeH = Math.max(0, height);
   const isPortrait = safeH > safeW;
-  const isTabletOrMobile = safeW < 1280 || (isCoarsePointer && safeW <= 1400);
+  const isTabletOrMobile = safeW < 1240 || (isCoarsePointer && safeW <= 1400);
 
   if (!isTabletOrMobile) {
     return isPortrait ? 'vertical' : 'desktop';

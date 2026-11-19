@@ -120,7 +120,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
       'Stress-test consensus availability under undersea fiber cuts, explore 4.5-year market returns across cohorts, and browse the shared archive.',
     instructions: [
       'Click Contest / Wartime Sim under any audited asset to run the interactive Continent Partition & Cable Resplice lab.',
-      'Open Live Gains to compare the E > 0 cohort against E = 0 across Macro Cycle, Ex-Outlier, and 90-Day horizons.',
+      'Open Live Gains to compare the E > 0 cohort against E = 0 across All Time (since release), 180-Day, 1-Year, 2-Year, and 4-Year timeframes.',
       'Open Archive to browse cached audits, export JSON snapshots, or sign in with Google to publish new audits.'
     ],
     actionLabel: 'Launch Live Gains',

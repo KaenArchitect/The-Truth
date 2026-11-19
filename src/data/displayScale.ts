@@ -3,6 +3,89 @@ export type DisplayScaleTier = 'standard' | '1440' | '2160';
 export interface DisplayScaleInput {
   width: number;
   height: number;
+  stackBasketsBelow?: boolean;
+}
+
+export interface BrowserZoomDetectionInput {
+  width: number;
+  height: number;
+  devicePixelRatio?: number;
+  visualViewportScale?: number;
+  baselineDpr?: number | null;
+  screenWidth?: number;
+  isMacPlatform?: boolean;
+  isCoarsePointer?: boolean;
+}
+
+export const BROWSER_ZOOM_STACK_THRESHOLD = 1.48;
+
+/**
+ * Detects whether browser zoom (either page zoom via Ctrl/Cmd +/- or pinch-zoom via visualViewport)
+ * is at 150% or higher so Passed/Failed baskets stack below the center stage like mobile.
+ * Avoids false positives on unzoomed 2x Retina Macs, 2x 4K HiDPI displays, and touch tablets.
+ */
+export function isBrowserZoomAtLeast150({
+  width,
+  devicePixelRatio = 1,
+  visualViewportScale = 1,
+  baselineDpr = null,
+  screenWidth,
+  isMacPlatform = false,
+  isCoarsePointer = false
+}: BrowserZoomDetectionInput): boolean {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const vvScale =
+    Number.isFinite(visualViewportScale) && visualViewportScale > 0 ? visualViewportScale : 1;
+
+  // 1. Pinch-zoom (trackpad or touchscreen) at 150%+ always stacks baskets below
+  if (vvScale >= BROWSER_ZOOM_STACK_THRESHOLD) {
+    return true;
+  }
+
+  // 2. Coarse-pointer touch devices: native 2x/3x Retina is unzoomed unless page zoom raised DPR over baseline
+  if (isCoarsePointer) {
+    if (baselineDpr && baselineDpr > 0) {
+      return (dpr * vvScale) / baselineDpr >= BROWSER_ZOOM_STACK_THRESHOLD;
+    }
+    return false;
+  }
+
+  // 3. When unzoomed hardware baseline DPR (1.0 on 1x desktop or 2.0 on Retina/4K HiDPI) was observed in-session
+  if (baselineDpr && baselineDpr > 0) {
+    return (dpr * vvScale) / baselineDpr >= BROWSER_ZOOM_STACK_THRESHOLD;
+  }
+
+  // 4. Cold-load detection when page opens directly at a zoomed level:
+  if (dpr < BROWSER_ZOOM_STACK_THRESHOLD) {
+    return false;
+  }
+
+  // DPR >= 2.95 is >= 150% browser zoom even on native 2x Retina / 4K HiDPI displays (2.0 * 1.5 = 3.0)
+  if (dpr >= 2.95) {
+    return true;
+  }
+
+  // DPR in [1.48, 1.95) (e.g. 1.5 = 150% on 1x, 1.75 = 175% on 1x, 1.875 = 150% on 1.25x Windows)
+  // never occurs at 100%-125% browser zoom on 1x, 1.25x, or 2x Retina hardware.
+  if (dpr < 1.95) {
+    return true;
+  }
+
+  // Remaining band [1.95, 2.95) (e.g. 2.0, 2.2, 2.5):
+  // Distinguish native 2x Retina Macs (>= 2560px physical width) and 4K@200% monitors (>= 3840px physical width)
+  // at 100%-125% zoom from 1080p/1440p displays zoomed to 200%+.
+  const effectiveScreenW = screenWidth && screenWidth > 0 ? screenWidth : width;
+  const estimatedPhysicalScreenW = effectiveScreenW * dpr;
+
+  if (isMacPlatform && estimatedPhysicalScreenW >= 2500) {
+    return false;
+  }
+
+  if (!isMacPlatform && estimatedPhysicalScreenW >= 3400) {
+    return false;
+  }
+
+  return true;
 }
 
 export interface DisplayLayoutMetrics {
@@ -34,7 +117,8 @@ export function resolveDisplayScaleTier({ width, height }: DisplayScaleInput): D
 
 export function computeDisplayLayoutMetrics({
   width,
-  height
+  height,
+  stackBasketsBelow = false
 }: DisplayScaleInput): DisplayLayoutMetrics {
   const w = Math.max(320, Number(width) || 1440);
   const h = Math.max(480, Number(height) || 900);
@@ -57,16 +141,18 @@ export function computeDisplayLayoutMetrics({
 
   let sidebarWidthPx: number | null = null;
   let mainHorizontalPadPx: number | null = null;
-  let effectiveSidebarReservePerSide = w >= 1280 ? 290 : 244;
+  let effectiveSidebarReservePerSide = stackBasketsBelow ? 16 : w >= 1280 ? 290 : 244;
 
-  if (w >= 3000) {
-    sidebarWidthPx = 416;
-    mainHorizontalPadPx = 472;
-    effectiveSidebarReservePerSide = 472;
-  } else if (w >= 2200) {
-    sidebarWidthPx = 316;
-    mainHorizontalPadPx = 368;
-    effectiveSidebarReservePerSide = 368;
+  if (!stackBasketsBelow) {
+    if (w >= 3000) {
+      sidebarWidthPx = 416;
+      mainHorizontalPadPx = 472;
+      effectiveSidebarReservePerSide = 472;
+    } else if (w >= 2200) {
+      sidebarWidthPx = 316;
+      mainHorizontalPadPx = 368;
+      effectiveSidebarReservePerSide = 368;
+    }
   }
 
   let sidebarBubbleSizePx = BASE_SIDEBAR_BUBBLE_SIZE_PX;
@@ -83,13 +169,19 @@ export function computeDisplayLayoutMetrics({
   const targetArenaScale = tier === '2160' ? 2.24 : tier === '1440' ? 1.72 : 1.48;
   const availableCenterWidth = Math.max(440, w - effectiveSidebarReservePerSide * 2 - 24);
   const maxWidthScale = availableCenterWidth / (BASE_STAGE_SIZE_PX + 12);
-  const availableVerticalDiameter = Math.max(400, h - ESTIMATED_TOP_HEADROOM_PX * 2);
+  const minScaleFloor = h < 800 ? 0.66 : 0.84;
+  const minVerticalDiameterPx =
+    h < 800 ? Math.round(BASE_STAGE_SIZE_PX * minScaleFloor) : 400;
+  const availableVerticalDiameter = Math.max(
+    minVerticalDiameterPx,
+    h - ESTIMATED_TOP_HEADROOM_PX * 2
+  );
   const maxHeightScale = availableVerticalDiameter / BASE_STAGE_SIZE_PX;
   const compactLaptopScale =
-    h < 860 ? Math.max(0.84, Math.min(1, (h - 376) / BASE_STAGE_SIZE_PX)) : 2.5;
+    h < 860 ? Math.max(minScaleFloor, Math.min(1, (h - 376) / BASE_STAGE_SIZE_PX)) : 2.5;
 
   const rawArenaScale = Math.max(
-    0.84,
+    minScaleFloor,
     Math.min(targetArenaScale, maxWidthScale, maxHeightScale, compactLaptopScale)
   );
   const arenaScale = Math.round(rawArenaScale * 100) / 100;
@@ -103,7 +195,7 @@ export function computeDisplayLayoutMetrics({
       ? Math.max(1.5, Math.min(2.35, smoothWidthPinScale))
       : Math.max(1, Math.min(1.56, smoothWidthPinScale));
 
-  // Center arena is anchored around 50vh. Position bottom controls cleanly toward the lower band above footer.
+  // Center arena is anchored around 50vh when sidebars flank left/right; when baskets stack below, keep controls tight.
   const arenaBottomY = h * 0.5 + stageSizePx / 2;
   const footerTopY = h - DEFAULT_FOOTER_HEIGHT_PX;
   const targetFooterBreathingPx =
@@ -112,10 +204,23 @@ export function computeDisplayLayoutMetrics({
   const naturalOffsetPx =
     footerTopY - arenaBottomY - ESTIMATED_SETTLED_CONTROLS_HEIGHT_PX - targetFooterBreathingPx;
   const minOffsetPx =
-    tier === '2160' ? 28 : tier === '1440' ? 18 : h >= 1000 ? 12 : h >= 880 ? 10 : 4;
-  const bottomControlsOffsetPx = Math.round(Math.max(minOffsetPx, naturalOffsetPx));
+    tier === '2160'
+      ? 28
+      : tier === '1440'
+      ? 18
+      : h >= 1000
+      ? 12
+      : h >= 880
+      ? 10
+      : h < 800
+      ? 8
+      : 4;
+  const bottomControlsOffsetPx = stackBasketsBelow
+    ? 10
+    : Math.round(Math.max(minOffsetPx, naturalOffsetPx));
 
-  const buttonRowGapPx = tier === '2160' ? 20 : tier === '1440' ? 14 : h < 860 ? 10 : 12;
+  const buttonRowGapPx =
+    tier === '2160' ? 20 : tier === '1440' ? 14 : h < 800 ? 8 : h < 860 ? 10 : 12;
 
   return {
     tier,
@@ -161,12 +266,16 @@ export function computeConstellationScale({
   const safeHView = Math.max(480, Number(viewportHeight) || 900);
 
   const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
-  const desktopAvailableHeight = Math.max(360, safeHView - 326);
+  const desktopAvailableHeight =
+    safeHView < 800 ? Math.max(256, safeHView - 384) : Math.max(360, safeHView - 326);
+  const horizontalAvailableHeight = Math.max(250, safeHView - 250);
   const verticalTwoAvailableHeight = Math.max(460, safeHView - 184);
   const maxContainerScale = pinMaxScale / safeNodeScale;
   const heightFitScale =
     orientationMode === 'desktop'
-      ? Math.max(0.76, desktopAvailableHeight / safeH)
+      ? Math.max(safeHView < 800 ? 0.62 : 0.76, desktopAvailableHeight / safeH)
+      : orientationMode === 'horizontal'
+      ? Math.max(0.58, horizontalAvailableHeight / safeH)
       : orientationMode === 'vertical' && safeH <= 900
       ? Math.max(0.6, verticalTwoAvailableHeight / safeH)
       : maxContainerScale;
@@ -204,3 +313,65 @@ export function shouldShowFloatingCornerControls({
   return true;
 }
 
+export interface SyncInvariantGridInput {
+  availableWidth: number;
+  count: number;
+}
+
+export interface SyncInvariantGridLayout {
+  columns: 1 | 2 | 3 | 4;
+  containerMaxWidthPx: number;
+  estimatedCardWidthPx: number;
+}
+
+const SYNC_GRID_GAP_PX = 14;
+const SYNC_DRAWER_H_PAD_WIDE_PX = 40;
+const SYNC_DRAWER_H_PAD_NARROW_PX = 32;
+const MIN_CARD_WIDTH_2COL_PX = 250;
+const MIN_CARD_WIDTH_3COL_PX = 260;
+const MIN_CARD_WIDTH_4COL_PX = 265;
+
+const MAX_CONTAINER_BY_COLUMNS: Record<1 | 2 | 3 | 4, number> = {
+  1: 720,
+  2: 1180,
+  3: 1560,
+  4: 1880
+};
+
+function computeCardWidthForColumns(containerWidth: number, columns: 1 | 2 | 3 | 4): number {
+  const drawerPad = containerWidth >= 640 ? SYNC_DRAWER_H_PAD_WIDE_PX : SYNC_DRAWER_H_PAD_NARROW_PX;
+  const innerWidth = Math.max(200, containerWidth - drawerPad);
+  return Math.round(((innerWidth - (columns - 1) * SYNC_GRID_GAP_PX) / columns) * 10) / 10;
+}
+
+/**
+ * Deterministically picks 1–4 side-by-side description columns for the Sync Invariant drawer
+ * from the measured center-arena width and pinned asset count so wide displays fit 3 or 4
+ * descriptions cleanly across one row while narrower viewports fall back without squishing.
+ */
+export function computeSyncInvariantGridLayout({
+  availableWidth,
+  count
+}: SyncInvariantGridInput): SyncInvariantGridLayout {
+  const safeAvail = Math.max(280, Math.floor(Number(availableWidth) || 320));
+  const safeCount = Math.max(1, Math.min(4, Math.floor(Number(count) || 1)));
+
+  let columns: 1 | 2 | 3 | 4 = 1;
+
+  if (safeCount >= 4 && computeCardWidthForColumns(safeAvail, 4) >= MIN_CARD_WIDTH_4COL_PX) {
+    columns = 4;
+  } else if (safeCount === 3 && computeCardWidthForColumns(safeAvail, 3) >= MIN_CARD_WIDTH_3COL_PX) {
+    columns = 3;
+  } else if (safeCount >= 2 && computeCardWidthForColumns(safeAvail, 2) >= MIN_CARD_WIDTH_2COL_PX) {
+    columns = 2;
+  }
+
+  const containerMaxWidthPx = Math.min(safeAvail, MAX_CONTAINER_BY_COLUMNS[columns]);
+  const estimatedCardWidthPx = computeCardWidthForColumns(containerMaxWidthPx, columns);
+
+  return {
+    columns,
+    containerMaxWidthPx,
+    estimatedCardWidthPx
+  };
+}

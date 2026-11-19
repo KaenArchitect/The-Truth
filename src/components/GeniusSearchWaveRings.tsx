@@ -10,6 +10,7 @@ interface GeniusSearchWaveRingsProps {
   active: boolean;
   isAuditing: boolean;
   targetRef: { current: HTMLDivElement | null };
+  compact?: boolean;
 }
 
 const WAVE_SVG_PAD = 46;
@@ -17,7 +18,8 @@ const WAVE_SVG_PAD = 46;
 export function GeniusSearchWaveRings({
   active,
   isAuditing,
-  targetRef
+  targetRef,
+  compact = false
 }: GeniusSearchWaveRingsProps) {
   const [boxSize, setBoxSize] = useState<{ width: number; height: number }>({
     width: 576,
@@ -59,7 +61,7 @@ export function GeniusSearchWaveRings({
     [boxSize.width, boxSize.height]
   );
 
-  const radialScale = boxSize.width < 430 ? 0.5 : 1;
+  const radialScale = boxSize.width < 430 ? 0.5 : compact ? 0.54 : 1;
 
   const initialPaths = useMemo(
     () =>

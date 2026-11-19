@@ -26,7 +26,9 @@ test('resolvePinOrientationMode overrides vertical to horizontal in mobile and t
   );
 });
 
-test('resolvePinOrientationMode preserves desktop mode on large landscape viewports', () => {
+test('resolvePinOrientationMode preserves desktop mode on large landscape viewports including 720p with scrollbar', () => {
+  assert.equal(resolvePinOrientationMode({ width: 1280, height: 720 }), 'desktop');
+  assert.equal(resolvePinOrientationMode({ width: 1265, height: 720 }), 'desktop');
   assert.equal(resolvePinOrientationMode({ width: 1280, height: 800 }), 'desktop');
   assert.equal(resolvePinOrientationMode({ width: 1440, height: 900 }), 'desktop');
   assert.equal(resolvePinOrientationMode({ width: 1920, height: 1080 }), 'desktop');

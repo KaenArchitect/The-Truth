@@ -8,18 +8,29 @@ import {
   X
 } from 'lucide-react';
 import {
-  MACRO_CYCLE_TRAJECTORY,
-  TACTICAL_90D_TRAJECTORY,
+  RELEASE_COHORT_TRAJECTORY,
   buildBasketSyncedCohortRecord,
+  buildFallbackWindowTrajectory,
+  buildNiceYGridTicks,
   computeCohortAggregateSummary,
   formatBasketUsd,
   formatPctSigned,
   formatUsdPrice,
   getCohortSyncSignature,
+  resolveCohortBaselinePrice,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
-  type GainsCohortRecord
+  type GainsBaselineMode,
+  type GainsCohortRecord,
+  type WindowTrajectoriesMap
 } from '../data/gainsCohortData.ts';
+import {
+  DEFAULT_M2_BENCHMARK_DATASET,
+  applyLiveSpotsToM2Dataset,
+  computeM2AssetSummaries,
+  type M2BenchmarkDataset
+} from '../data/m2BenchmarkData.ts';
+import { M2BenchmarkPanel } from './M2BenchmarkPanel.tsx';
 import { formatScore, type AuditData } from '../data/rubricSpec.ts';
 import {
   firebaseAuth,
@@ -27,8 +38,9 @@ import {
   subscribeGainsCohortFromFirestore
 } from '../lib/firebase.ts';
 
-export type GainsHorizon = 'CYCLE' | 'EX_OUTLIER' | 'TACTICAL_90D';
+export type GainsHorizon = 'ALL_TIME' | 'D180' | 'Y1' | 'Y2' | 'Y4';
 export type GainsFeedMode = 'SNAPSHOT' | 'LIVE';
+export type GainsChartView = 'COHORTS' | 'M2_BENCHMARK';
 
 export interface ThermodynamicGainsModalProps {
   onClose: () => void;
@@ -36,6 +48,8 @@ export interface ThermodynamicGainsModalProps {
   onSelectOrAuditTicker: (ticker: string) => void;
   onCopyReport: (text: string, label: string) => void;
   copiedTarget: string | null;
+  initialCohortRecord?: GainsCohortRecord | null;
+  onCohortSynced?: (record: GainsCohortRecord, liveSpots: Record<string, number>) => void;
 }
 
 interface EnrichedCohortAsset extends CohortAssetEntry {
@@ -43,27 +57,78 @@ interface EnrichedCohortAsset extends CohortAssetEntry {
   isLiveTick: boolean;
   cyclePct: number | null;
   multiple: number | null;
+  activeBaselinePrice: number | null;
+  activeBaselineLabel: string;
 }
+
+const HORIZON_META: Record<
+  GainsHorizon,
+  { tabLabel: string; heading: string; banner: string }
+> = {
+  ALL_TIME: {
+    tabLabel: 'All Time',
+    heading: 'ALL TIME (SINCE RELEASE)',
+    banner: 'EMPIRICAL MARKET VERIFICATION // INCEPTION RELEASE → LIVE SPOT'
+  },
+  D180: {
+    tabLabel: '180 Days',
+    heading: '180 DAYS',
+    banner: 'EMPIRICAL MARKET VERIFICATION // 180-DAY ROLLING WINDOW → LIVE SPOT'
+  },
+  Y1: {
+    tabLabel: '1 Year',
+    heading: '1 YEAR',
+    banner: 'EMPIRICAL MARKET VERIFICATION // 1-YEAR ROLLING WINDOW → LIVE SPOT'
+  },
+  Y2: {
+    tabLabel: '2 Years',
+    heading: '2 YEARS',
+    banner: 'EMPIRICAL MARKET VERIFICATION // 2-YEAR ROLLING WINDOW → LIVE SPOT'
+  },
+  Y4: {
+    tabLabel: '4 Years',
+    heading: '4 YEARS',
+    banner: 'EMPIRICAL MARKET VERIFICATION // 4-YEAR CYCLE WINDOW → LIVE SPOT'
+  }
+};
 
 export function ThermodynamicGainsModal({
   onClose,
   auditsMap,
   onSelectOrAuditTicker,
   onCopyReport,
-  copiedTarget
+  copiedTarget,
+  initialCohortRecord,
+  onCohortSynced
 }: ThermodynamicGainsModalProps) {
-  const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(null);
-  const [hasLoadedBackend, setHasLoadedBackend] = useState(false);
-  const [horizon, setHorizon] = useState<GainsHorizon>('CYCLE');
+  const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(
+    initialCohortRecord ?? null
+  );
+  const [hasLoadedBackend, setHasLoadedBackend] = useState(Boolean(initialCohortRecord));
+  const [chartView, setChartView] = useState<GainsChartView>(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search);
+      const v = (sp.get('view') || sp.get('tab') || '').toLowerCase();
+      if (v === 'm2') return 'M2_BENCHMARK';
+    }
+    return 'COHORTS';
+  });
+  const [rawM2Dataset, setRawM2Dataset] = useState<M2BenchmarkDataset>(
+    DEFAULT_M2_BENCHMARK_DATASET
+  );
+  const [horizon, setHorizon] = useState<GainsHorizon>('ALL_TIME');
   const [allocPerAsset, setAllocPerAsset] = useState(1000);
   const [useLogScale, setUseLogScale] = useState(true);
-  const [feedMode, setFeedMode] = useState<GainsFeedMode>('SNAPSHOT');
+  const [feedMode, setFeedMode] = useState<GainsFeedMode>('LIVE');
   const [liveSpots, setLiveSpots] = useState<Record<string, number>>({});
+  const [windowTrajectories, setWindowTrajectories] = useState<WindowTrajectoriesMap>({});
   const [isSyncingLive, setIsSyncingLive] = useState(false);
   const [lastLiveSyncLabel, setLastLiveSyncLabel] = useState<string | null>(null);
   const [backendStatusMsg, setBackendStatusMsg] = useState<string | null>(null);
   const [hoverPointIdx, setHoverPointIdx] = useState<number | null>(null);
   const lastAutoSyncedSigRef = useRef<string | null>(null);
+  const onCohortSyncedRef = useRef(onCohortSynced);
+  onCohortSyncedRef.current = onCohortSynced;
 
   const chartBoxRef = useRef<HTMLDivElement | null>(null);
   const [chartWidth, setChartWidth] = useState(860);
@@ -89,25 +154,53 @@ export function ThermodynamicGainsModal({
     () => buildBasketSyncedCohortRecord(auditsMap, persistedCohortRecord),
     [auditsMap, persistedCohortRecord]
   );
+  const cohortRecordRef = useRef(cohortRecord);
+  cohortRecordRef.current = cohortRecord;
+  const auditsMapRef = useRef(auditsMap);
+  auditsMapRef.current = auditsMap;
+  const isSyncingRef = useRef(false);
 
   // Hydrate saved spot prices from backend API + subscribe to Firestore snapshot
   useEffect(() => {
     let active = true;
     fetch('/api/gains-cohort')
       .then((res) => (res.ok ? res.json() : null))
-      .then((payload: { record?: Partial<GainsCohortRecord> } | null) => {
-        if (!active) return;
-        if (payload?.record) {
-          const hydrated = sanitizeGainsCohortRecord(payload.record);
-          setPersistedCohortRecord((prev) =>
-            !prev || hydrated.updatedAtMs >= prev.updatedAtMs ? hydrated : prev
-          );
+      .then(
+        (
+          payload: {
+            record?: Partial<GainsCohortRecord>;
+            liveSpotMap?: Record<string, number>;
+            windowTrajectories?: WindowTrajectoriesMap;
+          } | null
+        ) => {
+          if (!active) return;
+          if (payload?.record) {
+            const hydrated = sanitizeGainsCohortRecord(payload.record);
+            setPersistedCohortRecord((prev) =>
+              !prev || hydrated.updatedAtMs >= prev.updatedAtMs ? hydrated : prev
+            );
+            if (payload.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
+              setLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
+            }
+            if (payload.windowTrajectories) {
+              setWindowTrajectories(payload.windowTrajectories);
+            }
+            onCohortSyncedRef.current?.(hydrated, payload.liveSpotMap || {});
+          }
+          setHasLoadedBackend(true);
         }
-        setHasLoadedBackend(true);
-      })
+      )
       .catch(() => {
         if (active) setHasLoadedBackend(true);
       });
+
+    fetch('/api/m2-benchmark')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
+        if (!active || !payload?.dataset?.seriesByHorizon) return;
+        setRawM2Dataset(payload.dataset);
+      })
+      .catch(() => {});
 
     const unsub = subscribeGainsCohortFromFirestore('default', (remoteRecord) => {
       if (!active) return;
@@ -163,9 +256,12 @@ export function ThermodynamicGainsModal({
   }, [hasLoadedBackend, cohortRecord, persistedCohortRecord, auditsMap]);
 
   const syncLiveExchangeSpots = useCallback(async () => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
     setIsSyncingLive(true);
-    const nextSpots: Record<string, number> = {};
-    const allItems = [...cohortRecord.passed, ...cohortRecord.failed];
+    const clientSpots: Record<string, number> = {};
+    const snapshotCohort = cohortRecordRef.current;
+    const allItems = [...snapshotCohort.passed, ...snapshotCohort.failed];
 
     try {
       const cbTargets = allItems.filter((item) => Boolean(item.coinbasePair));
@@ -178,72 +274,74 @@ export function ThermodynamicGainsModal({
           const json = (await res.json()) as { data?: { amount?: string } };
           const amt = Number(json?.data?.amount);
           if (Number.isFinite(amt) && amt > 0) {
-            nextSpots[item.ticker] = amt;
+            clientSpots[item.ticker] = amt;
           }
         })
       );
 
-      const geckoTargets = allItems.filter(
-        (item) => item.geckoId && !nextSpots[item.ticker]
-      );
-      if (geckoTargets.length > 0) {
-        const idsParam = geckoTargets.map((i) => i.geckoId).join(',');
-        const gRes = await fetch(
-          `https://api.coingecko.com/api/v3/simple/price?ids=${idsParam}&vs_currencies=usd`
-        );
-        if (gRes.ok) {
-          const gJson = (await gRes.json()) as Record<string, { usd?: number }>;
-          geckoTargets.forEach((item) => {
-            if (!item.geckoId) return;
-            const p = Number(gJson?.[item.geckoId]?.usd);
-            if (Number.isFinite(p) && p > 0) {
-              nextSpots[item.ticker] = p;
-            }
-          });
-        }
-      }
+      // Refresh FRED M2 + Yahoo S&P500 / Gold / BTC / KAS benchmark alongside cohort spots
+      void fetch('/api/m2-benchmark?refresh=1')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
+          if (payload?.dataset?.seriesByHorizon) {
+            setRawM2Dataset(payload.dataset);
+          }
+        })
+        .catch(() => {});
 
-      if (Object.keys(nextSpots).length > 0) {
-        setLiveSpots((prev) => ({ ...prev, ...nextSpots }));
-        setLastLiveSyncLabel(
-          new Date().toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          })
-        );
-      }
-
-      // Persist synced basket lists + live spot prices to backend disk store (+ Firestore if signed in)
+      // Persist synced basket lists + backend CoinGecko & Yahoo Finance spots/release baselines
       const syncRes = await fetch('/api/gains-cohort/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spotOverrides: nextSpots })
+        body: JSON.stringify({ spotOverrides: clientSpots })
       });
       if (syncRes.ok) {
         const syncJson = (await syncRes.json()) as {
           record?: GainsCohortRecord;
           syncedTickers?: string[];
+          liveSpotMap?: Record<string, number>;
+          windowTrajectories?: WindowTrajectoriesMap;
         };
+        const mergedSpots = { ...clientSpots, ...(syncJson.liveSpotMap || {}) };
+        if (syncJson.windowTrajectories) {
+          setWindowTrajectories(syncJson.windowTrajectories);
+        }
+        if (Object.keys(mergedSpots).length > 0) {
+          setLiveSpots((prev) => ({ ...prev, ...mergedSpots }));
+          setLastLiveSyncLabel(
+            new Date().toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            })
+          );
+        }
         if (syncJson?.record) {
           const updatedRecord = sanitizeGainsCohortRecord(syncJson.record);
+          lastAutoSyncedSigRef.current = getCohortSyncSignature(
+            buildBasketSyncedCohortRecord(auditsMapRef.current, updatedRecord)
+          );
           setPersistedCohortRecord(updatedRecord);
+          onCohortSyncedRef.current?.(updatedRecord, mergedSpots);
           if (firebaseAuth?.currentUser?.emailVerified && (syncJson.syncedTickers?.length || 0) > 0) {
             void persistGainsCohortToFirestore(updatedRecord).catch(() => {});
           }
           if ((syncJson.syncedTickers?.length || 0) > 0) {
             setBackendStatusMsg(
-              `Synced & saved ${syncJson.syncedTickers!.length} live spots`
+              `Synced ${syncJson.syncedTickers!.length} live spots`
             );
           }
         }
+      } else if (Object.keys(clientSpots).length > 0) {
+        setLiveSpots((prev) => ({ ...prev, ...clientSpots }));
       }
     } catch {
       // Graceful fallback to verified snapshot prices on any network block
     } finally {
+      isSyncingRef.current = false;
       setIsSyncingLive(false);
     }
-  }, [cohortRecord.passed, cohortRecord.failed]);
+  }, []);
 
   useEffect(() => {
     if (feedMode !== 'LIVE') return undefined;
@@ -251,6 +349,17 @@ export function ThermodynamicGainsModal({
     const timer = setInterval(syncLiveExchangeSpots, 30000);
     return () => clearInterval(timer);
   }, [feedMode, syncLiveExchangeSpots]);
+
+  const m2Dataset = useMemo(
+    () =>
+      feedMode === 'LIVE'
+        ? applyLiveSpotsToM2Dataset(rawM2Dataset, liveSpots)
+        : rawM2Dataset,
+    [rawM2Dataset, feedMode, liveSpots]
+  );
+
+  const baselineMode: GainsBaselineMode =
+    horizon === 'ALL_TIME' ? 'RELEASE' : horizon;
 
   const { passedEnriched, failedEnriched, passedLiquid, failedLiquid } = useMemo(() => {
     const enrichAsset = (item: CohortAssetEntry): EnrichedCohortAsset => {
@@ -261,6 +370,9 @@ export function ThermodynamicGainsModal({
           ? Number(liveAudit.totalScore)
           : item.auditScore;
 
+      const { price: activeBaselinePrice, label: activeBaselineLabel } =
+        resolveCohortBaselinePrice(item, baselineMode);
+
       const liveVal = feedMode === 'LIVE' ? liveSpots[item.ticker] : undefined;
       const hasLive = feedMode === 'LIVE' && Number.isFinite(liveVal);
       const spotPrice = hasLive
@@ -269,20 +381,23 @@ export function ThermodynamicGainsModal({
         ? item.snapshotSpot
         : null;
 
-      if (!item.liquidCycle || !item.basePrice || !spotPrice) {
+      if (!activeBaselinePrice || !spotPrice) {
         return {
           ...item,
           grade: resolvedGrade,
           auditScore: resolvedScore,
           spotPrice,
           isLiveTick: hasLive,
+          liquidCycle: false,
           cyclePct: null,
-          multiple: null
+          multiple: null,
+          activeBaselinePrice,
+          activeBaselineLabel
         };
       }
 
-      const cyclePct = ((spotPrice - item.basePrice) / item.basePrice) * 100;
-      const multiple = spotPrice / item.basePrice;
+      const cyclePct = ((spotPrice - activeBaselinePrice) / activeBaselinePrice) * 100;
+      const multiple = spotPrice / activeBaselinePrice;
 
       return {
         ...item,
@@ -290,8 +405,11 @@ export function ThermodynamicGainsModal({
         auditScore: resolvedScore,
         spotPrice,
         isLiveTick: hasLive,
+        liquidCycle: true,
         cyclePct,
-        multiple
+        multiple,
+        activeBaselinePrice,
+        activeBaselineLabel
       };
     };
 
@@ -303,7 +421,7 @@ export function ThermodynamicGainsModal({
       passedLiquid: pEnriched.filter((i) => i.liquidCycle),
       failedLiquid: fEnriched.filter((i) => i.liquidCycle)
     };
-  }, [cohortRecord.passed, cohortRecord.failed, auditsMap, feedMode, liveSpots]);
+  }, [cohortRecord.passed, cohortRecord.failed, auditsMap, feedMode, liveSpots, baselineMode]);
 
   const summary = useMemo(
     () => computeCohortAggregateSummary(passedLiquid, failedLiquid, allocPerAsset, false),
@@ -311,81 +429,83 @@ export function ThermodynamicGainsModal({
   );
   const {
     passCycleAvg,
-    passExKasAvg,
+    passExOutlierAvg,
+    passExOutlierTicker,
     failCycleAvg,
     failExOutlierAvg,
-    pass90dAvg,
-    fail90dAvg,
-    pass90dMedian,
-    fail90dMedian,
+    failExOutlierTicker,
     passPositiveCount,
     failNegativeCount,
     passEndDollars,
     failEndDollars,
-    passExEndDollars,
-    failExEndDollars,
     portfolioVictoryMultiple
   } = summary;
 
-  const { btcCyclePct, failedLagBtcCount, maxPassMultiple, minFailCyclePct } = useMemo(() => {
-    const btcPct = passedEnriched.find((a) => a.ticker === 'BTC')?.cyclePct ?? null;
+  const passExLabel = passExOutlierTicker ? `Ex-Top ($${passExOutlierTicker})` : 'Ex-Top Gain';
+  const failExLabel = failExOutlierTicker ? `Ex-Top ($${failExOutlierTicker})` : 'Ex-Top Gain';
+
+  const { maxPassMultiple, minFailCyclePct, topPassAsset, worstFailAsset } = useMemo(() => {
+    const topPass =
+      passedLiquid.length > 0
+        ? passedLiquid.reduce((best, cur) =>
+            (cur.cyclePct ?? -Infinity) > (best.cyclePct ?? -Infinity) ? cur : best
+          )
+        : null;
+    const worstFail =
+      failedLiquid.length > 0
+        ? failedLiquid.reduce((worst, cur) =>
+            (cur.cyclePct ?? Infinity) < (worst.cyclePct ?? Infinity) ? cur : worst
+          )
+        : null;
     return {
-      btcCyclePct: btcPct,
-      failedLagBtcCount:
-        btcPct !== null
-          ? failedLiquid.filter((a) => (a.cyclePct ?? 0) < btcPct).length
-          : failNegativeCount,
       maxPassMultiple: passedLiquid.reduce((max, a) => Math.max(max, a.multiple ?? 0), 0),
-      minFailCyclePct: failedLiquid.reduce((min, a) => Math.min(min, a.cyclePct ?? 0), 0)
+      minFailCyclePct: failedLiquid.reduce((min, a) => Math.min(min, a.cyclePct ?? 0), 0),
+      topPassAsset: topPass,
+      worstFailAsset: worstFail
     };
-  }, [passedEnriched, passedLiquid, failedLiquid, failNegativeCount]);
+  }, [passedLiquid, failedLiquid]);
 
   const passInvested = passedLiquid.length * allocPerAsset;
   const failInvested = failedLiquid.length * allocPerAsset;
 
-  const rawSeries = useMemo(
-    () =>
-      horizon === 'TACTICAL_90D'
-        ? TACTICAL_90D_TRAJECTORY.map((pt) => ({
-            label: pt.label,
-            event: pt.event,
-            passPrimary: pt.passAll,
-            passSecondary: pt.passMed as number | null,
-            failPrimary: pt.failAll,
-            failSecondary: pt.failMed as number | null
-          }))
-        : MACRO_CYCLE_TRAJECTORY.map((pt, idx, arr) => {
-            const isLast = idx === arr.length - 1;
-            const livePassMult = isLast ? Math.max(0.2, 1 + passCycleAvg / 100) : pt.passAll;
-            const livePassExMult = isLast ? Math.max(0.2, 1 + passExKasAvg / 100) : pt.passEx;
-            const liveFailMult = isLast ? Math.max(0.2, 1 + failCycleAvg / 100) : pt.failAll;
-            const liveFailExMult = isLast
-              ? Math.max(0.2, 1 + failExOutlierAvg / 100)
-              : pt.failEx;
+  const rawSeries = useMemo(() => {
+    const baseTraj =
+      horizon === 'ALL_TIME'
+        ? RELEASE_COHORT_TRAJECTORY
+        : windowTrajectories[horizon] && windowTrajectories[horizon]!.length >= 2
+        ? windowTrajectories[horizon]!
+        : buildFallbackWindowTrajectory(horizon, summary);
 
-            return horizon === 'EX_OUTLIER'
-              ? {
-                  label: pt.label,
-                  event: pt.event,
-                  passPrimary: livePassExMult,
-                  passSecondary: null as number | null,
-                  failPrimary: liveFailExMult,
-                  failSecondary: liveFailMult as number | null
-                }
-              : {
-                  label: pt.label,
-                  event: pt.event,
-                  passPrimary: livePassMult,
-                  passSecondary: livePassExMult as number | null,
-                  failPrimary: liveFailMult,
-                  failSecondary: liveFailExMult as number | null
-                };
-          }),
-    [horizon, passCycleAvg, passExKasAvg, failCycleAvg, failExOutlierAvg]
-  );
+    return baseTraj.map((pt, idx, arr) => {
+      const isLast = idx === arr.length - 1;
+      const livePassMult = isLast ? Math.max(0.05, 1 + passCycleAvg / 100) : pt.passAll;
+      const livePassExMult = isLast ? Math.max(0.05, 1 + passExOutlierAvg / 100) : pt.passEx;
+      const liveFailMult = isLast ? Math.max(0.05, 1 + failCycleAvg / 100) : pt.failAll;
+      const liveFailExMult = isLast
+        ? Math.max(0.05, 1 + failExOutlierAvg / 100)
+        : pt.failEx;
+
+      return {
+        label: pt.label,
+        event: pt.event,
+        passPrimary: livePassMult,
+        passSecondary: livePassExMult as number | null,
+        failPrimary: liveFailMult,
+        failSecondary: liveFailExMult as number | null
+      };
+    });
+  }, [
+    horizon,
+    windowTrajectories,
+    summary,
+    passCycleAvg,
+    passExOutlierAvg,
+    failCycleAvg,
+    failExOutlierAvg
+  ]);
 
   const svgH = 248;
-  const padL = 58;
+  const padL = horizon === 'ALL_TIME' ? 68 : 60;
   const padR = 22;
   const padT = 20;
   const padB = 34;
@@ -397,16 +517,16 @@ export function ThermodynamicGainsModal({
       (v): v is number => v !== null && Number.isFinite(v)
     )
   );
-  const minVal = Math.min(...allMultValues) * 0.88;
-  const maxVal = Math.max(...allMultValues) * 1.08;
+  const minVal = Math.max(0.03, Math.min(...allMultValues) * 0.88);
+  const maxVal = Math.max(...allMultValues) * 1.12;
 
-  const effectiveLog = horizon === 'CYCLE' ? useLogScale : false;
+  const effectiveLog = useLogScale;
   const mapY = (mult: number) => {
     const safeMult = Number.isFinite(mult) ? mult : 1.0;
-    const clamped = Math.max(0.1, safeMult);
+    const clamped = Math.max(0.03, safeMult);
     if (effectiveLog) {
-      const logMin = Math.log10(Math.max(0.1, minVal));
-      const logMax = Math.log10(Math.max(0.2, maxVal));
+      const logMin = Math.log10(Math.max(0.03, minVal));
+      const logMax = Math.log10(Math.max(0.1, maxVal));
       const ratio = (Math.log10(clamped) - logMin) / Math.max(0.0001, logMax - logMin);
       const yVal = padT + plotH * (1 - ratio);
       return Number.isFinite(yVal) ? yVal : padT + plotH * 0.5;
@@ -442,8 +562,8 @@ export function ThermodynamicGainsModal({
   const activePoint = rawSeries[activePointIdx] || rawSeries[rawSeries.length - 1];
 
   const getMetricForAsset = (item: EnrichedCohortAsset) => {
-    if (!item.liquidCycle) return -99999;
-    return horizon === 'TACTICAL_90D' ? item.tactical90dPct || 0 : item.cyclePct || 0;
+    if (!item.liquidCycle) return -9999999;
+    return item.cyclePct ?? -9999999;
   };
 
   const sortedPassed = [...passedEnriched].sort(
@@ -454,38 +574,57 @@ export function ThermodynamicGainsModal({
   );
 
   const buildShareableGainsReport = () => {
-    const topPassAnchors = passedLiquid
+    if (chartView === 'M2_BENCHMARK') {
+      const pts = m2Dataset.seriesByHorizon[horizon] || m2Dataset.seriesByHorizon.ALL_TIME;
+      const m2Sum = computeM2AssetSummaries(pts);
+      const horizonTitle =
+        horizon === 'ALL_TIME' ? "MAY '22 COMMON LAUNCH" : HORIZON_META[horizon].heading;
+      const assetLines = m2Sum.assets
+        .map(
+          (a) =>
+            `• ${a.name} (${a.ticker}): Nominal ${formatPctSigned(a.nominalPct)} (${a.nominalMult.toFixed(2)}x) | Real vs M2: ${formatPctSigned(a.m2AdjustedPct)} (${a.m2AdjustedMult.toFixed(2)}x)`
+        )
+        .join('\n');
+      return `THE TRUTH — MACRO PURCHASING POWER VS US M2 (${horizonTitle})
+
+US M2 MONEY SUPPLY (FRED M2SL): $${m2Sum.m2StartTrillions.toFixed(2)}T → $${m2Sum.m2EndTrillions.toFixed(2)}T (${formatPctSigned(m2Sum.m2Pct)})
+
+${assetLines}
+
+BENCHMARK: Assets above ${formatPctSigned(m2Sum.m2Pct)} expanded real purchasing power faster than US M2 monetary debasement.`;
+    }
+
+    const topPassAnchors = [...passedLiquid]
+      .sort((a, b) => (b.cyclePct ?? -Infinity) - (a.cyclePct ?? -Infinity))
       .slice(0, 6)
       .map((a) => `$${a.ticker} (${formatPctSigned(a.cyclePct)})`)
       .join(', ');
-    const bleedAssets = failedLiquid
+    const bleedAssets = [...failedLiquid]
       .filter((a) => (a.cyclePct || 0) < 0)
+      .sort((a, b) => (a.cyclePct ?? Infinity) - (b.cyclePct ?? Infinity))
       .slice(0, 6)
       .map((a) => `$${a.ticker} ${formatPctSigned(a.cyclePct)}`)
       .join(', ');
 
-    return `THE TRUTH — THERMODYNAMIC GAINS AUDIT (${cohortRecord.updatedAtLabel.toUpperCase()})
+    const horizonHeading = HORIZON_META[horizon].heading;
+
+    return `THE TRUTH — THERMODYNAMIC GAINS AUDIT (${horizonHeading} • ${cohortRecord.updatedAtLabel.toUpperCase()})
 
 PASSED // E > 0 (${cohortRecord.passed.length} Harmonic — PoW & Physical Commodities):
-• Full-Cycle Equal-Weight Avg: ${formatPctSigned(passCycleAvg)} (${formatPctSigned(passExKasAvg)} Ex-KAS)
-• $${allocPerAsset.toLocaleString()}/Asset Basket (${passedLiquid.length} Liquid): $${passInvested.toLocaleString()} → ~$${passEndDollars.toLocaleString()}
-• Breadth: ${passPositiveCount} of ${passedLiquid.length} Liquid Assets Positive • 90D Median: ${formatPctSigned(pass90dMedian)}
-• Top Anchors: ${topPassAnchors}
+• ${HORIZON_META[horizon].tabLabel} Equal-Weight Avg: ${formatPctSigned(passCycleAvg)} (${formatPctSigned(passExOutlierAvg)} ${passExLabel})
+• $${allocPerAsset.toLocaleString()}/Asset Basket (${passedLiquid.length} Active): $${passInvested.toLocaleString()} → ~${formatBasketUsd(passEndDollars)}
+• Breadth: ${passPositiveCount} of ${passedLiquid.length} Active Assets Positive
+• Top Performers: ${topPassAnchors}
 
 FAILED // E = 0 (${cohortRecord.failed.length} Flatlined — PoS & Premined):
-• Full-Cycle Equal-Weight Avg: ${formatPctSigned(failCycleAvg)} (${formatPctSigned(failExOutlierAvg)} Ex-Outliers)
-• $${allocPerAsset.toLocaleString()}/Asset Basket (${failedLiquid.length} Assets): $${failInvested.toLocaleString()} → ~$${failEndDollars.toLocaleString()}
-• Left-Tail VC Bleed: ${failNegativeCount} of ${failedLiquid.length} Negative${bleedAssets ? ` (${bleedAssets})` : ''}
+• ${HORIZON_META[horizon].tabLabel} Equal-Weight Avg: ${formatPctSigned(failCycleAvg)} (${formatPctSigned(failExOutlierAvg)} ${failExLabel})
+• $${allocPerAsset.toLocaleString()}/Asset Basket (${failedLiquid.length} Active): $${failInvested.toLocaleString()} → ~${formatBasketUsd(failEndDollars)}
+• Drawdown Breadth: ${failNegativeCount} of ${failedLiquid.length} Negative${bleedAssets ? ` (${bleedAssets})` : ''}
 
 VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Physical Costliness (E > 0).`;
   };
 
-  const yGridTicks =
-    horizon === 'CYCLE' && effectiveLog
-      ? [0.5, 1, 2, 5, 10, 22]
-      : horizon === 'EX_OUTLIER'
-      ? [0.6, 1.0, 1.5, 2.0, 2.6]
-      : [0.95, 1.0, 1.15, 1.3, 1.45];
+  const yGridTicks = buildNiceYGridTicks(minVal, maxVal, effectiveLog);
 
   return (
     <div
@@ -505,15 +644,25 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
               <div className="font-mono text-[9.5px] sm:text-[10px] uppercase tracking-widest text-[#49EACB] flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB] shrink-0" />
-                  <span>EMPIRICAL MARKET VERIFICATION // MAY 2022 → NOV 2026</span>
+                  <span>
+                    {chartView === 'M2_BENCHMARK'
+                      ? 'MACRO DEBASEMENT BENCHMARK // ASSETS VS. FRED US M2 MONEY SUPPLY'
+                      : HORIZON_META[horizon].banner}
+                  </span>
                 </span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/10 text-[9px] text-neutral-300 normal-case tracking-normal">
                   <Database className="w-2.5 h-2.5 text-[#49EACB] shrink-0" />
-                  <span>{backendStatusMsg || cohortRecord.sourceLabel}</span>
+                  <span>
+                    {chartView === 'M2_BENCHMARK'
+                      ? m2Dataset.sourceLabel
+                      : backendStatusMsg || cohortRecord.sourceLabel}
+                  </span>
                 </span>
               </div>
               <h2 className="font-display text-base sm:text-xl font-bold text-white mt-0.5 leading-snug">
-                Thermodynamic Gains Divergence: Passed (E &gt; 0) vs. Failed (E = 0)
+                {chartView === 'M2_BENCHMARK'
+                  ? 'Macro Purchasing Power: BTC, KAS, S&P 500 & Gold vs. US M2'
+                  : 'Thermodynamic Gains Divergence: Passed (E > 0) vs. Failed (E = 0)'}
               </h2>
             </div>
 
@@ -527,8 +676,33 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             </button>
           </div>
 
-          <div className="flex items-center justify-between gap-2 w-full">
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 w-full">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 min-w-0">
+              <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] sm:text-[10.5px] shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setChartView('COHORTS')}
+                  className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
+                    chartView === 'COHORTS'
+                      ? 'bg-[#1D212A] text-white border-white/15'
+                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                  }`}
+                >
+                  Cohort Equity
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartView('M2_BENCHMARK')}
+                  className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
+                    chartView === 'M2_BENCHMARK'
+                      ? 'bg-[#49EACB]/15 text-[#49EACB] border-[#49EACB]/40'
+                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                  }`}
+                >
+                  Assets vs. M2
+                </button>
+              </div>
+
               <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] sm:text-[10.5px] shrink-0">
                 <button
                   type="button"
@@ -540,7 +714,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                   }`}
                 >
                   <span className="sm:hidden">Saved</span>
-                  <span className="hidden sm:inline">Nov &apos;26 Benchmark</span>
+                  <span className="hidden sm:inline">Saved Snapshot</span>
                 </button>
                 <button
                   type="button"
@@ -608,9 +782,11 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             <div className="p-1 rounded-2xl sm:rounded-full bg-[#0B0C0E] border border-white/[0.08] flex flex-wrap items-center gap-1 font-mono text-xs">
               {(
                 [
-                  { id: 'CYCLE', label: "1. Full Macro Cycle (May '22 → Nov '26)" },
-                  { id: 'EX_OUTLIER', label: '2. Ex-Outlier Stress Test (Ex-KAS vs Ex-TAO)' },
-                  { id: 'TACTICAL_90D', label: "3. 90-Day Tactical (Aug – Nov '26)" }
+                  { id: 'ALL_TIME', label: 'All Time' },
+                  { id: 'D180', label: '180 Days' },
+                  { id: 'Y1', label: '1 Year' },
+                  { id: 'Y2', label: '2 Years' },
+                  { id: 'Y4', label: '4 Years' }
                 ] as const
               ).map((tab) => {
                 const active = horizon === tab.id;
@@ -621,6 +797,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                     onClick={() => {
                       setHoverPointIdx(null);
                       setHorizon(tab.id);
+                      setUseLogScale(tab.id === 'ALL_TIME');
                     }}
                     className={`px-3 py-1.5 rounded-xl sm:rounded-full border font-semibold transition-colors duration-150 ${
                       active
@@ -658,6 +835,17 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             </div>
           </div>
 
+          {chartView === 'M2_BENCHMARK' ? (
+            <M2BenchmarkPanel
+              horizon={horizon}
+              useLogScale={useLogScale}
+              onChangeLogScale={setUseLogScale}
+              dataset={m2Dataset}
+              allocPerAsset={allocPerAsset}
+              onSelectOrAuditTicker={onSelectOrAuditTicker}
+            />
+          ) : (
+            <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-2xl bg-[#0B0C0E] border border-[#49EACB]/35 p-4 space-y-1 min-w-0 overflow-hidden">
               <div className="font-mono text-[10px] uppercase tracking-wider text-[#49EACB] flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
@@ -672,16 +860,10 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                   WebkitTextFillColor: 'transparent'
                 }}
               >
-                {horizon === 'EX_OUTLIER'
-                  ? formatPctSigned(passExKasAvg)
-                  : horizon === 'TACTICAL_90D'
-                  ? formatPctSigned(pass90dMedian)
-                  : formatPctSigned(passCycleAvg)}
+                {formatPctSigned(passCycleAvg)}
               </div>
               <div className="font-mono text-[11px] text-neutral-300">
-                {horizon === 'TACTICAL_90D'
-                  ? `${formatPctSigned(pass90dAvg)} Equal-Wt • ${passedLiquid.length}/${passedLiquid.length} Active`
-                  : `${formatPctSigned(passExKasAvg)} Ex-KAS • ${passPositiveCount}/${passedLiquid.length} Positive`}
+                {formatPctSigned(passExOutlierAvg)} {passExLabel} • {passPositiveCount}/{passedLiquid.length} Positive
               </div>
             </div>
 
@@ -698,64 +880,66 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                   WebkitTextFillColor: 'transparent'
                 }}
               >
-                {horizon === 'EX_OUTLIER'
-                  ? formatPctSigned(failExOutlierAvg)
-                  : horizon === 'TACTICAL_90D'
-                  ? formatPctSigned(fail90dMedian)
-                  : formatPctSigned(failCycleAvg)}
+                {formatPctSigned(failCycleAvg)}
               </div>
               <div className="font-mono text-[11px] text-neutral-400">
-                {horizon === 'TACTICAL_90D'
-                  ? `${formatPctSigned(fail90dAvg)} Mean • ${failedLagBtcCount}/${failedLiquid.length} Lag BTC`
-                  : `${formatPctSigned(failExOutlierAvg)} Ex-TAO • ${failNegativeCount}/${failedLiquid.length} Negative`}
+                {formatPctSigned(failExOutlierAvg)} {failExLabel} • {failNegativeCount}/{failedLiquid.length} Negative
               </div>
             </div>
 
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1 min-w-0 overflow-hidden">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 truncate">
+              <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 leading-tight">
                 ${allocPerAsset.toLocaleString()}/ASSET BASKET OUTCOME
               </div>
               <div
-                title={`~$${(horizon === 'EX_OUTLIER'
-                  ? passExEndDollars
-                  : passEndDollars
-                ).toLocaleString()} vs ~$${(horizon === 'EX_OUTLIER'
-                  ? failExEndDollars
-                  : failEndDollars
-                ).toLocaleString()}`}
+                title={`~$${passEndDollars.toLocaleString()} vs ~$${failEndDollars.toLocaleString()}`}
                 className="font-display text-lg sm:text-xl xl:text-2xl font-bold text-white flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 leading-tight"
               >
                 <span className="text-[#49EACB] whitespace-nowrap">
-                  ~{formatBasketUsd(horizon === 'EX_OUTLIER' ? passExEndDollars : passEndDollars)}
+                  ~{formatBasketUsd(passEndDollars)}
                 </span>
                 <span className="text-xs font-mono text-neutral-500">vs</span>
                 <span className="text-[#F97316] whitespace-nowrap">
-                  ~{formatBasketUsd(horizon === 'EX_OUTLIER' ? failExEndDollars : failEndDollars)}
+                  ~{formatBasketUsd(failEndDollars)}
                 </span>
               </div>
               <div className="font-mono text-[11px] text-[#34D399] font-semibold">
-                {horizon === 'EX_OUTLIER'
-                  ? 'E > 0 Nearly Triples Capital While E = 0 Loses Principal'
-                  : `${portfolioVictoryMultiple}x Total Portfolio Victory for E > 0`}
+                {passedLiquid.length === failedLiquid.length
+                  ? `${portfolioVictoryMultiple}x Total Portfolio Victory for E > 0`
+                  : `${portfolioVictoryMultiple}x Equal-Cap Victory (${formatBasketUsd(passInvested)} vs ${formatBasketUsd(failInvested)} basis)`}
               </div>
             </div>
 
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1 min-w-0 overflow-hidden">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 truncate">
-                CONVEXITY VS. VC CLIFF BLEED
+              <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 leading-tight">
+                RIGHT-TAIL LEAD VS. WORST FLOOR
               </div>
-              <div className="font-display text-lg sm:text-xl xl:text-2xl font-bold text-white leading-tight">
-                <span className="text-[#49EACB]">
-                  {maxPassMultiple > 0 ? `${maxPassMultiple.toFixed(1)}x` : '—'}
-                </span>{' '}
-                <span className="font-mono text-xs text-neutral-500">Right-Tail</span>{' '}
-                <span className="text-[#EF4444]">
-                  {formatPctSigned(minFailCyclePct)}
-                </span>{' '}
-                <span className="font-mono text-xs text-neutral-500">PoS Floor</span>
+              <div className="font-display text-lg sm:text-xl xl:text-2xl font-bold text-white flex flex-wrap items-baseline gap-x-2 gap-y-0.5 leading-tight">
+                <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+                  <span className="text-[#49EACB]">
+                    {maxPassMultiple >= 1_000_000
+                      ? `${(maxPassMultiple / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}Mx`
+                      : maxPassMultiple >= 1_000
+                      ? `${(maxPassMultiple / 1_000).toFixed(1).replace(/\.0$/, '')}Kx`
+                      : maxPassMultiple > 0
+                      ? `${maxPassMultiple.toFixed(1)}x`
+                      : '—'}
+                  </span>
+                  <span className="font-mono text-xs text-neutral-500">
+                    {topPassAsset ? `$${topPassAsset.ticker}` : 'Top E>0'}
+                  </span>
+                </span>
+                <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+                  <span className="text-[#EF4444]">
+                    {formatPctSigned(minFailCyclePct)}
+                  </span>
+                  <span className="font-mono text-xs text-neutral-500">
+                    {worstFailAsset ? `$${worstFailAsset.ticker}` : 'Low E=0'}
+                  </span>
+                </span>
               </div>
-              <div className="font-mono text-[11px] text-neutral-400">
-                0 VC unlocks on $KAS vs endless 0-Joule dilution
+              <div className="font-mono text-[11px] text-neutral-400 leading-snug">
+                {HORIZON_META[horizon].tabLabel} top gainers trimmed from both lists above
               </div>
             </div>
           </div>
@@ -764,43 +948,35 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3 min-h-[28px]">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 min-w-0 truncate">
-                  {horizon === 'TACTICAL_90D'
-                    ? '90-DAY TACTICAL WINDOW (AUG 15 – NOV 14, 2026) // MEDIAN CONSISTENCY VS SQUEEZE NOISE'
-                    : horizon === 'EX_OUTLIER'
-                    ? `EX-OUTLIER STRUCTURAL CURVE // PASSED EX-KAS (${formatPctSigned(passExKasAvg)}) VS FAILED EX-TAO (${formatPctSigned(failExOutlierAvg)})`
-                    : 'CUMULATIVE COHORT EQUITY MULTIPLIER // SCRUB TIMELINE TO INSPECT'}
+                  {horizon === 'ALL_TIME'
+                    ? 'ALL-TIME EQUITY CURVE (SINCE RELEASE → LIVE) // SCRUB TIMELINE'
+                    : `${HORIZON_META[horizon].heading} EQUITY CURVE // SCRUB TIMELINE TO INSPECT`}
                 </div>
 
-                {horizon === 'CYCLE' ? (
-                  <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setUseLogScale(true)}
-                      className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
-                        useLogScale
-                          ? 'bg-[#1D212A] text-white border-white/15'
-                          : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                      }`}
-                    >
-                      Log Scale
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setUseLogScale(false)}
-                      className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
-                        !useLogScale
-                          ? 'bg-[#1D212A] text-white border-white/15'
-                          : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                      }`}
-                    >
-                      Linear (12x Gap)
-                    </button>
-                  </div>
-                ) : (
-                  <span className="px-2.5 py-1 rounded-full bg-[#121418] border border-white/[0.07] font-mono text-[10px] text-neutral-400 shrink-0">
+                <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setUseLogScale(true)}
+                    className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
+                      useLogScale
+                        ? 'bg-[#1D212A] text-white border-white/15'
+                        : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                    }`}
+                  >
+                    Log Scale
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUseLogScale(false)}
+                    className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
+                      !useLogScale
+                        ? 'bg-[#1D212A] text-white border-white/15'
+                        : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                    }`}
+                  >
                     Linear Scale
-                  </span>
-                )}
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums min-h-[20px]">
@@ -809,12 +985,14 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </span>
                 <span className="text-[#49EACB] font-bold">
                   E &gt; 0: {formatPctSigned((activePoint.passPrimary - 1) * 100)} (
-                  {activePoint.passPrimary.toFixed(2)}x)
+                  {activePoint.passPrimary >= 1000
+                    ? `${(activePoint.passPrimary / 1000).toFixed(1)}Kx`
+                    : `${activePoint.passPrimary.toFixed(2)}x`}
+                  )
                 </span>
                 {activePoint.passSecondary !== null && (
                   <span className="text-[#34D399]">
-                    {horizon === 'TACTICAL_90D' ? 'E>0 Median' : 'E>0 Ex-KAS'}:{' '}
-                    {formatPctSigned((activePoint.passSecondary - 1) * 100)}
+                    {passExLabel}: {formatPctSigned((activePoint.passSecondary - 1) * 100)}
                   </span>
                 )}
                 <span className="text-[#EF4444] font-bold">
@@ -823,12 +1001,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </span>
                 {activePoint.failSecondary !== null && (
                   <span className="text-[#F97316]">
-                    {horizon === 'TACTICAL_90D'
-                      ? 'E=0 Median'
-                      : horizon === 'EX_OUTLIER'
-                      ? 'E=0 All'
-                      : 'E=0 Ex-TAO'}
-                    : {formatPctSigned((activePoint.failSecondary - 1) * 100)}
+                    {failExLabel}: {formatPctSigned((activePoint.failSecondary - 1) * 100)}
                   </span>
                 )}
               </div>
@@ -887,7 +1060,13 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                         fontSize="9.5"
                         fontFamily="JetBrains Mono, monospace"
                       >
-                        {tickVal >= 2 ? `${tickVal}x` : formatPctSigned((tickVal - 1) * 100)}
+                        {tickVal >= 1_000_000
+                          ? `${(tickVal / 1_000_000).toFixed(0)}Mx`
+                          : tickVal >= 1_000
+                          ? `${(tickVal / 1_000).toFixed(0)}Kx`
+                          : tickVal >= 2
+                          ? `${Number(tickVal.toFixed(1)).toString().replace(/\.0$/, '')}x`
+                          : formatPctSigned((tickVal - 1) * 100)}
                       </text>
                     </g>
                   );
@@ -1002,38 +1181,22 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
               <div className="flex flex-wrap items-center gap-4">
                 <span className="inline-flex items-center gap-1.5 text-[#49EACB]">
                   <span className="w-3 h-0.5 bg-[#49EACB] inline-block" />
+                  <span>PASSED E &gt; 0 Equal-Weight</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-[#34D399]">
+                  <span className="w-3 border-t border-dashed border-[#34D399] inline-block" />
                   <span>
-                    {horizon === 'EX_OUTLIER'
-                      ? `PASSED Ex-KAS (${formatPctSigned(passExKasAvg)})`
-                      : 'PASSED E > 0 Equal-Weight'}
+                    PASSED {passExLabel} ({formatPctSigned(passExOutlierAvg)})
                   </span>
                 </span>
-                {horizon !== 'EX_OUTLIER' && (
-                  <span className="inline-flex items-center gap-1.5 text-[#34D399]">
-                    <span className="w-3 border-t border-dashed border-[#34D399] inline-block" />
-                    <span>
-                      {horizon === 'TACTICAL_90D'
-                        ? `PASSED 90D Median (${formatPctSigned(pass90dMedian)})`
-                        : `PASSED Ex-KAS (${formatPctSigned(passExKasAvg)})`}
-                    </span>
-                  </span>
-                )}
                 <span className="inline-flex items-center gap-1.5 text-[#EF4444]">
                   <span className="w-3 h-0.5 bg-[#EF4444] inline-block" />
-                  <span>
-                    {horizon === 'EX_OUTLIER'
-                      ? `FAILED Ex-Outliers (${formatPctSigned(failExOutlierAvg)})`
-                      : 'FAILED E = 0 Equal-Weight'}
-                  </span>
+                  <span>FAILED E = 0 Equal-Weight</span>
                 </span>
                 <span className="inline-flex items-center gap-1.5 text-[#F97316]">
                   <span className="w-3 border-t border-dashed border-[#F97316] inline-block" />
                   <span>
-                    {horizon === 'TACTICAL_90D'
-                      ? `FAILED 90D Median (${formatPctSigned(fail90dMedian)})`
-                      : horizon === 'EX_OUTLIER'
-                      ? `FAILED All (${formatPctSigned(failCycleAvg)})`
-                      : `FAILED Ex-Outliers (${formatPctSigned(failExOutlierAvg)})`}
+                    FAILED {failExLabel} ({formatPctSigned(failExOutlierAvg)})
                   </span>
                 </span>
               </div>
@@ -1057,17 +1220,27 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
 
               <div className="space-y-2">
                 {sortedPassed.map((item) => {
-                  const pct =
-                    horizon === 'TACTICAL_90D' ? item.tactical90dPct : item.cyclePct;
-                  const isDimmedOutlier = horizon === 'EX_OUTLIER' && item.isOutlier;
+                  const pct = item.cyclePct;
+                  const maxWindowPct = Math.max(
+                    120,
+                    ...passedLiquid.map((a) => Math.abs(a.cyclePct || 0)),
+                    ...failedLiquid.map((a) => Math.abs(a.cyclePct || 0))
+                  );
                   const barPct =
                     pct === null
                       ? 0
-                      : horizon === 'TACTICAL_90D'
-                      ? Math.min(100, (Math.abs(pct) / 240) * 100)
+                      : horizon === 'ALL_TIME'
+                      ? pct >= 0
+                        ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
+                        : Math.min(100, (Math.abs(pct) / 100) * 65)
+                      : maxWindowPct > 400 && pct >= 0
+                      ? Math.min(
+                          100,
+                          (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
+                        )
                       : pct >= 0
-                      ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(2260)) * 100)
-                      : Math.min(100, (Math.abs(pct) / 100) * 65);
+                      ? Math.min(100, (pct / maxWindowPct) * 100)
+                      : Math.min(100, (Math.abs(pct) / 100) * 85);
                   const isPositive = pct === null || pct >= 0;
 
                   return (
@@ -1075,9 +1248,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                       key={item.ticker}
                       type="button"
                       onClick={() => onSelectOrAuditTicker(item.ticker)}
-                      className={`w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.06] hover:border-[#49EACB]/40 p-2.5 transition space-y-1.5 ${
-                        isDimmedOutlier ? 'opacity-45' : ''
-                      }`}
+                      className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.06] hover:border-[#49EACB]/40 p-2.5 transition space-y-1.5"
                     >
                       <div className="flex items-center justify-between gap-2 font-mono text-xs">
                         <div className="flex items-center gap-2 min-w-0">
@@ -1091,9 +1262,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {item.spotPrice !== null && item.basePrice !== null ? (
+                          {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
                             <span className="text-[10.5px] text-neutral-400">
-                              {item.baselineLabel} →{' '}
+                              {item.activeBaselineLabel} →{' '}
                               <strong className="text-neutral-200">
                                 {formatUsdPrice(item.spotPrice)}
                               </strong>
@@ -1107,17 +1278,26 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                             </span>
                           ) : (
                             <span className="text-[10px] text-neutral-500">
-                              {item.baselineLabel}
+                              {item.activeBaselineLabel}
                             </span>
                           )}
                           <span
                             className="font-bold min-w-[68px] text-right"
-                            style={{ color: isPositive ? '#49EACB' : '#F97316' }}
+                            style={{
+                              color:
+                                pct === null
+                                  ? '#9CA3AF'
+                                  : isPositive
+                                  ? '#49EACB'
+                                  : '#F97316'
+                            }}
                           >
                             {pct !== null
                               ? formatPctSigned(pct)
                               : item.ticker === 'LN' || item.ticker === 'IGRA'
                               ? 'Carrier'
+                              : item.spotPrice !== null && horizon !== 'ALL_TIME'
+                              ? 'Pre-Launch'
                               : item.spotPrice !== null
                               ? 'Tracked'
                               : 'Audited'}
@@ -1141,9 +1321,11 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
 
                       <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
                         <span className="truncate">{item.note}</span>
-                        {item.multiple !== null && horizon !== 'TACTICAL_90D' && (
+                        {item.multiple !== null && (
                           <span className="shrink-0 text-neutral-300">
-                            {item.multiple >= 10
+                            {item.multiple >= 1000
+                              ? `${Math.round(item.multiple).toLocaleString()}x`
+                              : item.multiple >= 10
                               ? `${item.multiple.toFixed(1)}x`
                               : `${item.multiple.toFixed(2)}x`}
                           </span>
@@ -1168,16 +1350,26 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
 
               <div className="space-y-2">
                 {sortedFailed.map((item) => {
-                  const pct =
-                    horizon === 'TACTICAL_90D' ? item.tactical90dPct : item.cyclePct;
-                  const isDimmedOutlier = horizon === 'EX_OUTLIER' && item.isOutlier;
+                  const pct = item.cyclePct;
+                  const maxWindowPct = Math.max(
+                    120,
+                    ...passedLiquid.map((a) => Math.abs(a.cyclePct || 0)),
+                    ...failedLiquid.map((a) => Math.abs(a.cyclePct || 0))
+                  );
                   const barPct =
                     pct === null
                       ? 0
-                      : horizon === 'TACTICAL_90D'
-                      ? Math.min(100, (Math.abs(pct) / 240) * 100)
+                      : horizon === 'ALL_TIME'
+                      ? pct >= 0
+                        ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
+                        : Math.min(100, (Math.abs(pct) / 100) * 85)
+                      : maxWindowPct > 400 && pct >= 0
+                      ? Math.min(
+                          100,
+                          (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
+                        )
                       : pct >= 0
-                      ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(2260)) * 100)
+                      ? Math.min(100, (pct / maxWindowPct) * 100)
                       : Math.min(100, (Math.abs(pct) / 100) * 85);
                   const isPositive = pct === null || pct >= 0;
 
@@ -1186,9 +1378,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                       key={item.ticker}
                       type="button"
                       onClick={() => onSelectOrAuditTicker(item.ticker)}
-                      className={`w-full text-left rounded-xl bg-[#121418] hover:bg-[#191416] border border-white/[0.06] hover:border-[#EF4444]/40 p-2.5 transition space-y-1.5 ${
-                        isDimmedOutlier ? 'opacity-45' : ''
-                      }`}
+                      className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#191416] border border-white/[0.06] hover:border-[#EF4444]/40 p-2.5 transition space-y-1.5"
                     >
                       <div className="flex items-center justify-between gap-2 font-mono text-xs">
                         <div className="flex items-center gap-2 min-w-0">
@@ -1202,9 +1392,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
-                          {item.spotPrice !== null && item.basePrice !== null ? (
+                          {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
                             <span className="text-[10.5px] text-neutral-400">
-                              {item.baselineLabel} →{' '}
+                              {item.activeBaselineLabel} →{' '}
                               <strong className="text-neutral-200">
                                 {formatUsdPrice(item.spotPrice)}
                               </strong>
@@ -1218,7 +1408,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                             </span>
                           ) : (
                             <span className="text-[10px] text-neutral-500">
-                              {item.baselineLabel}
+                              {item.activeBaselineLabel}
                             </span>
                           )}
                           <span
@@ -1234,6 +1424,8 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                           >
                             {pct !== null
                               ? formatPctSigned(pct)
+                              : item.spotPrice !== null && horizon !== 'ALL_TIME'
+                              ? 'Pre-Launch'
                               : item.spotPrice !== null
                               ? 'Tracked'
                               : 'Audited'}
@@ -1257,9 +1449,13 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
 
                       <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
                         <span className="truncate">{item.note}</span>
-                        {item.multiple !== null && horizon !== 'TACTICAL_90D' && (
+                        {item.multiple !== null && (
                           <span className="shrink-0 text-neutral-400">
-                            {item.multiple.toFixed(2)}x
+                            {item.multiple >= 1000
+                              ? `${Math.round(item.multiple).toLocaleString()}x`
+                              : item.multiple >= 10
+                              ? `${item.multiple.toFixed(1)}x`
+                              : `${item.multiple.toFixed(2)}x`}
                           </span>
                         )}
                       </div>
@@ -1273,13 +1469,12 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1.5">
               <div className="font-mono text-[10.5px] font-bold text-[#49EACB]">
-                01 // ASYMMETRIC RIGHT-TAIL MONSTER ($KAS)
+                01 // ASYMMETRIC RIGHT-TAIL COMPOUNDING
               </div>
               <p className="text-xs text-neutral-300 leading-relaxed">
-                Starting from a $0.00 fair-launch genesis with zero VC overhang, 100% of organic
-                adoption flowed into vertical price discovery (+22,492% / 225.9x) rather than
-                funding Silicon Valley seed-round exit liquidity—turning ${allocPerAsset.toLocaleString()}/asset into
-                ~${passEndDollars.toLocaleString()} vs ~${failEndDollars.toLocaleString()} on E = 0 ({portfolioVictoryMultiple}x portfolio victory).
+                {horizon === 'ALL_TIME'
+                  ? `Measured from initial public release open to live spot, unforgeable Proof-of-Work leaders like $BTC ($0.05) and $KAS ($0.0001859) turn $${allocPerAsset.toLocaleString()}/asset into ~${formatBasketUsd(passEndDollars)} vs ~${formatBasketUsd(failEndDollars)} on E = 0 (${portfolioVictoryMultiple}x portfolio victory).`
+                  : `Over the ${HORIZON_META[horizon].tabLabel.toLowerCase()} horizon, the E > 0 basket turns $${passInvested.toLocaleString()} into ~${formatBasketUsd(passEndDollars)} vs ~${formatBasketUsd(failEndDollars)} on E = 0 (${portfolioVictoryMultiple}x portfolio spread), led by $${topPassAsset?.ticker || 'BTC'} (${formatPctSigned(topPassAsset?.cyclePct ?? 0)}).`}
               </p>
             </div>
 
@@ -1288,25 +1483,28 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 02 // ELIMINATING THE &ldquo;VC BLEED-TO-ZERO&rdquo; LEFT TAIL
               </div>
               <p className="text-xs text-neutral-300 leading-relaxed">
-                Nearly half of the E = 0 cohort suffered catastrophic multi-year liquidation: ALGO
-                (-73.2%), ADA (-70.9%), AVAX (-69.6%), ICP (-43.5% / -99% ATH), SUI (-39.3%), and
-                NEAR (-34.7%). Tokens conjured at 0 Joules bleed endless insider unlocks and staking
-                dilution into every rally.
+                {failNegativeCount} of {failedLiquid.length} active E = 0 tokens remain underwater
+                in the {HORIZON_META[horizon].tabLabel.toLowerCase()} window
+                {worstFailAsset
+                  ? `, led on the downside by $${worstFailAsset.ticker} (${formatPctSigned(worstFailAsset.cyclePct)}) as zero-joule supply dilution weighs on price discovery.`
+                  : ' as zero-joule insider unlocks weigh on price discovery.'}
               </p>
             </div>
 
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1.5">
               <div className="font-mono text-[10.5px] font-bold text-[#34D399]">
-                03 // THERMODYNAMIC FLOOR PROTECTION (EX-OUTLIERS)
+                03 // SYMMETRIC EX-OUTLIER STRESS TEST
               </div>
               <p className="text-xs text-neutral-300 leading-relaxed">
-                Physical commodities (XAU, XAG) and Proof-of-Work ledgers (BTC, KAS, XMR, ZEC)
-                cannot be printed for free. Even stripping KAS out of Passed and TAO out of Failed,
-                the remaining E &gt; 0 basket averages {formatPctSigned(passExKasAvg)} across the cycle versus{' '}
-                {formatPctSigned(failExOutlierAvg)} for E = 0.
+                To keep comparisons symmetric, removing the top percentage gainer from both lists (
+                {passExLabel} on E &gt; 0 and {failExLabel} on E = 0) leaves E &gt; 0 at{' '}
+                {formatPctSigned(passExOutlierAvg)} versus {formatPctSigned(failExOutlierAvg)} for E
+                = 0.
               </p>
             </div>
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>

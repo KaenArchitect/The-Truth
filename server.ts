@@ -46,11 +46,17 @@ import {
 } from './src/data/auditQuotaAndScope.ts';
 import { getMarketCapDirectory } from './src/server/cmcTop150.ts';
 import {
+  ensureFreshLiveGainsCohort,
+  getCachedWindowTrajectories,
   getPersistedGainsCohort,
   resetPersistedGainsCohort,
   savePersistedGainsCohort,
   syncLivePricesAndPersistGainsCohort
 } from './src/server/gainsCohortStore.ts';
+import {
+  getCachedM2BenchmarkDataset,
+  getLiveM2BenchmarkDataset
+} from './src/server/m2BenchmarkStore.ts';
 import { initializeApp as initFirebaseApp, getApps as getFirebaseApps, getApp as getFirebaseApp } from 'firebase/app';
 import {
   getFirestore as getClientFirestore,
@@ -773,9 +779,40 @@ async function createApp(): Promise<express.Express> {
     res.json({ audits: customAudits });
   });
 
-  app.get('/api/gains-cohort', (_req: Request, res: Response) => {
+  app.get('/api/gains-cohort', async (req: Request, res: Response) => {
+    try {
+      const wantsLive = req.query.live !== '0';
+      if (wantsLive) {
+        const result = await Promise.race([
+          ensureFreshLiveGainsCohort(),
+          new Promise<{
+            record: ReturnType<typeof getPersistedGainsCohort>;
+            liveSpotMap: Record<string, number>;
+            windowTrajectories: ReturnType<typeof getCachedWindowTrajectories>;
+          }>((resolve) =>
+            setTimeout(
+              () =>
+                resolve({
+                  record: getPersistedGainsCohort(),
+                  liveSpotMap: {},
+                  windowTrajectories: getCachedWindowTrajectories()
+                }),
+              4500
+            )
+          )
+        ]);
+        res.json({
+          record: result.record,
+          liveSpotMap: result.liveSpotMap,
+          windowTrajectories: result.windowTrajectories
+        });
+        return;
+      }
+    } catch {
+      // Fallback cleanly to persisted record
+    }
     const record = getPersistedGainsCohort();
-    res.json({ record });
+    res.json({ record, windowTrajectories: getCachedWindowTrajectories() });
   });
 
   app.put('/api/gains-cohort', (req: Request, res: Response) => {
@@ -813,6 +850,21 @@ async function createApp(): Promise<express.Express> {
   app.post('/api/gains-cohort/reset', (_req: Request, res: Response) => {
     const record = resetPersistedGainsCohort();
     res.json({ record });
+  });
+
+  app.get('/api/m2-benchmark', async (req: Request, res: Response) => {
+    try {
+      const force = req.query.refresh === '1';
+      const dataset = await Promise.race([
+        getLiveM2BenchmarkDataset(force),
+        new Promise<ReturnType<typeof getCachedM2BenchmarkDataset>>((resolve) =>
+          setTimeout(() => resolve(getCachedM2BenchmarkDataset()), 4500)
+        )
+      ]);
+      res.json({ dataset });
+    } catch {
+      res.json({ dataset: getCachedM2BenchmarkDataset() });
+    }
   });
 
   // POST /api/audit — SSE streaming 6-invariant grounded audit on gemini-4-hydrogen
