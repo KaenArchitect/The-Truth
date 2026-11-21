@@ -548,16 +548,22 @@ function ThermodynamicAuditApp() {
   const [expandedSyncInvId, setExpandedSyncInvId] = useState<string | null>(null);
   const [isScanningPulse, setIsScanningPulse] = useState(false);
 
-  // Modal Sheet State & Wartime Simulator Anchor Refs
+  // Modal Sheet State & Card View Tabs ('INVARIANT' | 'ESSAY' | 'WARTIME_SIM')
   const [modalInvId, setModalInvId] = useState<string | null>(null);
-  const [essayViewMode, setEssayViewMode] = useState(false);
+  const [modalViewMode, setModalViewMode] = useState<'INVARIANT' | 'ESSAY' | 'WARTIME_SIM'>(
+    'INVARIANT'
+  );
   const [showScoreConditions, setShowScoreConditions] = useState(false);
   const isModalOpen = Boolean(modalInvId);
   useEffect(() => {
     setShowScoreConditions(false);
   }, [isModalOpen, activeKey]);
   const modalBodyRef = useRef<HTMLDivElement | null>(null);
-  const simAnchorRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (modalBodyRef.current) {
+      modalBodyRef.current.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }, [modalInvId, modalViewMode]);
   const syncComparisonAnchorRef = useRef<HTMLDivElement | null>(null);
 
   // Clipboard Feedback State
@@ -787,7 +793,6 @@ function ThermodynamicAuditApp() {
     if (typeof window === 'undefined') return undefined;
     const warmTimer = window.setTimeout(() => {
       void import('./components/ThermodynamicGainsModal.tsx');
-      void import('./components/WartimeSpliceSimulator.tsx');
       void import('./components/GenesisThesisModal.tsx');
     }, 1500);
     return () => window.clearTimeout(warmTimer);
@@ -3185,14 +3190,12 @@ function ThermodynamicAuditApp() {
     await performLiveGroundedAudit(rawQuery, null);
   };
 
-  const scrollToWartimeSim = () => {
+  const openWartimeSimTab = useCallback(() => {
+    trackDotDiscovery('hands_on_tool');
     trackDotDiscovery('open_vault_or_charts');
-    setTimeout(() => {
-      if (simAnchorRef.current) {
-        simAnchorRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }, 60);
-  };
+    setModalInvId((prev) => prev || '04');
+    setModalViewMode('WARTIME_SIM');
+  }, [trackDotDiscovery]);
 
   const scrollToSyncComparison = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -3293,14 +3296,12 @@ function ThermodynamicAuditApp() {
         case 'open-wartime-sim': {
           closeTutorial(true);
           if (!activeKey) setActiveKey('KAS');
-          setEssayViewMode(false);
-          setModalInvId('04');
-          scrollToWartimeSim();
+          openWartimeSimTab();
           break;
         }
       }
     },
-    [activeKey, closeTutorial]
+    [activeKey, closeTutorial, openWartimeSimTab]
   );
 
   // =========================================================================
@@ -3535,11 +3536,10 @@ function ThermodynamicAuditApp() {
         setActiveKey(hit.ticker);
         setIsTutorialOpen(false);
         if (dl.openWartimeLab) {
-          setEssayViewMode(false);
           setModalInvId('04');
-          scrollToWartimeSim();
+          setModalViewMode('WARTIME_SIM');
         } else if (dl.invariantId) {
-          setEssayViewMode(false);
+          setModalViewMode('INVARIANT');
           setModalInvId(dl.invariantId);
         }
         pendingDeepLinkRef.current = null;
@@ -3587,9 +3587,8 @@ function ThermodynamicAuditApp() {
       else if (kind === 'WARTIME_LAB') {
         const snap = agentSnapshotRef.current;
         if (!snap.activeKey) setActiveKey('KAS');
-        setEssayViewMode(false);
         setModalInvId('04');
-        scrollToWartimeSim();
+        setModalViewMode('WARTIME_SIM');
       }
       return { ok: true, archiveOnly: true, opened: kind };
     };
@@ -3664,11 +3663,10 @@ function ThermodynamicAuditApp() {
         if (opts.mode === 'NORMIE') setIsGeniusMode(false);
         else setIsGeniusMode(true);
         if (opts.lab === 'wartime') {
-          setEssayViewMode(false);
           setModalInvId('04');
-          scrollToWartimeSim();
+          setModalViewMode('WARTIME_SIM');
         } else if (opts.invId && /^0?[1-6]$/.test(opts.invId)) {
-          setEssayViewMode(false);
+          setModalViewMode('INVARIANT');
           setModalInvId(opts.invId.padStart(2, '0'));
         }
         return {
@@ -5782,7 +5780,7 @@ function ThermodynamicAuditApp() {
                           onOpenInvariantModal={(invId) => {
                             trackDotDiscovery('explore_invariant');
                             setActiveKey(tk);
-                            setEssayViewMode(false);
+                            setModalViewMode('INVARIANT');
                             setHoveredInvId(invId);
                             setExpandedSyncInvId(invId);
                             scrollToSyncComparison();
@@ -6124,9 +6122,7 @@ function ThermodynamicAuditApp() {
                                           type="button"
                                           onClick={() => {
                                             setActiveKey(tk);
-                                            setEssayViewMode(false);
-                                            setModalInvId('04');
-                                            scrollToWartimeSim();
+                                            openWartimeSimTab();
                                           }}
                                           className="px-2.5 py-1 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] text-neutral-300 hover:text-white transition flex items-center gap-1"
                                         >
@@ -6139,7 +6135,7 @@ function ThermodynamicAuditApp() {
                                         type="button"
                                         onClick={() => {
                                           setActiveKey(tk);
-                                          setEssayViewMode(false);
+                                          setModalViewMode('INVARIANT');
                                           setModalInvId(inv.id);
                                         }}
                                         className="px-2.5 py-1 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10.5px] font-semibold transition flex items-center gap-1"
@@ -6277,7 +6273,7 @@ function ThermodynamicAuditApp() {
                     onClick={(e) => {
                       e.stopPropagation();
                       trackDotDiscovery('explore_invariant');
-                      setEssayViewMode(false);
+                      setModalViewMode('INVARIANT');
                       setModalInvId(inv.id);
                     }}
                     aria-label={`${inv.id} ${inv.title}`}
@@ -6769,7 +6765,7 @@ function ThermodynamicAuditApp() {
                       key={`hover-card-${currentAudit.ticker}-${activeHoveredInvariant.id}`}
                       type="button"
                       onClick={() => {
-                        setEssayViewMode(false);
+                        setModalViewMode('INVARIANT');
                         setModalInvId(activeHoveredInvariant.id);
                       }}
                       className={`animate-card-fade color-glide text-left w-full rounded-2xl bg-[#121418]/[0.96] ${
@@ -6813,7 +6809,7 @@ function ThermodynamicAuditApp() {
                           className="color-glide flex items-center gap-1 font-semibold shrink-0"
                           style={{ color: sStyle.color }}
                         >
-                          <span>Click bubble for full paragraph &amp; wartime sim</span>
+                          <span>Click bubble for full paragraph &amp; receipts</span>
                           <ArrowRight className="w-3 h-3" />
                         </span>
                       </div>
@@ -6934,7 +6930,7 @@ function ThermodynamicAuditApp() {
                           type="button"
                           onClick={() => {
                             setConfirmFullReauditKey(null);
-                            setEssayViewMode(false);
+                            setModalViewMode('INVARIANT');
                             setModalInvId('01');
                           }}
                           className="px-2 py-0.5 rounded-full bg-[#0B0C0E] hover:brightness-110 transition"
@@ -6971,11 +6967,7 @@ function ThermodynamicAuditApp() {
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setEssayViewMode(false);
-                        setModalInvId('04');
-                        scrollToWartimeSim();
-                      }}
+                      onClick={openWartimeSimTab}
                       className="px-3.5 py-1.5 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-300 hover:text-white transition flex items-center gap-1.5"
                     >
                       <Scissors className="w-3.5 h-3.5 color-glide" style={{ color: accent.secondary }} />
@@ -7270,48 +7262,107 @@ function ThermodynamicAuditApp() {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    trackDotDiscovery('explore_invariant');
-                    setEssayViewMode((prev) => !prev);
-                  }}
-                  className={`h-7 px-2.5 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
-                    essayViewMode
-                      ? 'font-bold shadow-sm'
-                      : 'bg-[#0B0C0E] text-neutral-300 hover:text-white border border-white/10'
-                  }`}
-                  style={
-                    essayViewMode
-                      ? {
-                          backgroundColor: accent.softBg,
-                          color: accent.primary,
-                          border: `1px solid ${accent.border}`
-                        }
-                      : { border: '1px solid rgba(255,255,255,0.1)' }
-                  }
+                <div
+                  role="tablist"
+                  aria-label="Audit Card View Tabs"
+                  className="flex items-center gap-1.5 shrink-0"
                 >
-                  <Layers className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
-                  <span>6-Paragraph Essay</span>
-                </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    data-testid="card-tab-essay"
+                    aria-selected={modalViewMode === 'ESSAY'}
+                    onClick={() => {
+                      trackDotDiscovery('explore_invariant');
+                      setModalViewMode((prev) => (prev === 'ESSAY' ? 'INVARIANT' : 'ESSAY'));
+                    }}
+                    className={`h-7 px-2 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
+                      modalViewMode === 'ESSAY'
+                        ? 'font-bold shadow-sm'
+                        : 'bg-[#0B0C0E] text-neutral-300 hover:text-white border border-white/10'
+                    }`}
+                    style={
+                      modalViewMode === 'ESSAY'
+                        ? {
+                            backgroundColor: accent.softBg,
+                            color: accent.primary,
+                            border: `1px solid ${accent.border}`
+                          }
+                        : { border: '1px solid rgba(255,255,255,0.1)' }
+                    }
+                  >
+                    <Layers className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0" />
+                    <span className="sm:hidden">Essay</span>
+                    <span className="hidden sm:inline">6-Paragraph Essay</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    role="tab"
+                    data-testid="card-tab-wartime-sim"
+                    aria-selected={modalViewMode === 'WARTIME_SIM'}
+                    onPointerEnter={() => {
+                      void import('./components/WartimeSpliceSimulator.tsx');
+                    }}
+                    onFocus={() => {
+                      void import('./components/WartimeSpliceSimulator.tsx');
+                    }}
+                    onClick={() => {
+                      trackDotDiscovery('hands_on_tool');
+                      trackDotDiscovery('open_vault_or_charts');
+                      setModalViewMode((prev) =>
+                        prev === 'WARTIME_SIM' ? 'INVARIANT' : 'WARTIME_SIM'
+                      );
+                    }}
+                    className={`h-7 px-2 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition inline-flex items-center justify-center gap-1 whitespace-nowrap shrink-0 ${
+                      modalViewMode === 'WARTIME_SIM'
+                        ? 'font-bold shadow-sm'
+                        : 'bg-[#0B0C0E] text-neutral-300 hover:text-white border border-white/10'
+                    }`}
+                    style={
+                      modalViewMode === 'WARTIME_SIM'
+                        ? {
+                            backgroundColor: accent.softBg,
+                            color: accent.primary,
+                            border: `1px solid ${accent.border}`
+                          }
+                        : { border: '1px solid rgba(255,255,255,0.1)' }
+                    }
+                  >
+                    <Scissors
+                      className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0"
+                      style={{
+                        color: modalViewMode === 'WARTIME_SIM' ? accent.primary : accent.secondary
+                      }}
+                    />
+                    <span>Wartime Sim</span>
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="shrink-0 px-3 sm:px-7 py-1.5 sm:py-2.5 bg-[#0E1014] border-b border-white/[0.07] flex flex-nowrap md:flex-wrap items-center justify-between md:justify-start gap-1 overflow-x-auto md:overflow-visible no-scrollbar">
+            <div
+              role="tablist"
+              aria-label="Invariant Breakdown Tabs"
+              className="shrink-0 px-3 sm:px-7 py-1.5 sm:py-2.5 bg-[#0E1014] border-b border-white/[0.07] flex flex-nowrap md:flex-wrap items-center justify-between md:justify-start gap-1 overflow-x-auto md:overflow-visible no-scrollbar"
+            >
               {currentAudit.invariants.map((inv) => {
                 const st = getHarmonizedScoreStyle(inv.score, accent);
-                const isSelectedTab = !essayViewMode && activeModalInvariant.id === inv.id;
+                const isSelectedTab =
+                  modalViewMode === 'INVARIANT' && activeModalInvariant.id === inv.id;
                 return (
                   <button
                     key={inv.id}
                     type="button"
+                    role="tab"
+                    aria-selected={isSelectedTab}
                     aria-label={`${inv.id} ${inv.shortName} ${formatScore(inv.score)}`}
                     onClick={() => {
                       trackDotDiscovery('explore_invariant');
-                      setEssayViewMode(false);
+                      setModalViewMode('INVARIANT');
                       setModalInvId(inv.id);
                     }}
-                    className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-mono text-[10px] sm:text-[11px] transition flex items-center gap-0.5 sm:gap-1 shrink-0 ${
+                    className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-mono text-[10px] sm:text-[11px] transition flex items-center gap-0.5 sm:gap-1 shrink-0 whitespace-nowrap ${
                       isSelectedTab
                         ? 'bg-[#191D25] text-white font-bold border border-white/20 shadow-sm'
                         : 'bg-[#0B0C0E] text-neutral-400 hover:text-neutral-200 border border-white/[0.06]'
@@ -7328,7 +7379,36 @@ function ThermodynamicAuditApp() {
             </div>
 
             <div ref={modalBodyRef} className="flex-1 min-h-0 p-3.5 sm:p-7 overflow-y-auto space-y-5 sm:space-y-6">
-              {!essayViewMode ? (
+              {modalViewMode === 'WARTIME_SIM' ? (
+                <div
+                  key={`modal-wartime-sim-${currentAudit.ticker}`}
+                  data-testid="modal-wartime-sim-panel"
+                  className="animate-card-fade"
+                >
+                  <Suspense
+                    fallback={
+                      <div
+                        data-testid="wartime-sim-loading"
+                        className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-8 sm:p-12 flex flex-col items-center justify-center gap-3 text-center"
+                      >
+                        <RefreshCw
+                          className="w-5 h-5 animate-spin"
+                          style={{ color: accent.primary }}
+                        />
+                        <div className="font-mono text-xs text-neutral-300">
+                          Loading Wartime Partition &amp; Cable Resplice Lab...
+                        </div>
+                      </div>
+                    }
+                  >
+                    <WartimeSpliceSimulator
+                      activeAudit={currentAudit}
+                      kasAudit={PRELOADED_AUDITS.KAS}
+                      accent={accent}
+                    />
+                  </Suspense>
+                </div>
+              ) : modalViewMode === 'INVARIANT' ? (
                 (() => {
                   const sStyle = getHarmonizedScoreStyle(activeModalInvariant.score, accent);
                   const InvIcon = INVARIANT_ICONS[activeModalInvariant.id] || ShieldCheck;
@@ -7459,6 +7539,56 @@ function ThermodynamicAuditApp() {
                             ))}
                           </div>
                         </div>
+                      )}
+
+                      {activeModalInvariant.id === '04' && (
+                        <button
+                          type="button"
+                          data-testid="inv04-wartime-sim-cta"
+                          onPointerEnter={() => {
+                            void import('./components/WartimeSpliceSimulator.tsx');
+                          }}
+                          onFocus={() => {
+                            void import('./components/WartimeSpliceSimulator.tsx');
+                          }}
+                          onClick={openWartimeSimTab}
+                          className="group w-full text-left rounded-2xl bg-[#0B0C0E] hover:bg-[#10131A] p-4 sm:px-5 sm:py-4 transition-colors duration-150 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                          style={{
+                            border: `1px solid ${sStyle.border}`
+                          }}
+                        >
+                          <div className="flex items-start sm:items-center gap-3 min-w-0">
+                            <span
+                              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 sm:mt-0 transition-transform duration-150 group-hover:scale-105"
+                              style={{
+                                backgroundColor: sStyle.bg,
+                                border: `1px solid ${sStyle.border}`
+                              }}
+                            >
+                              <Scissors className="w-4 h-4" style={{ color: sStyle.color }} />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="font-display text-sm sm:text-[15px] font-bold text-white leading-snug">
+                                Stress-Test ${currentAudit.ticker} in the Wartime Partition Lab
+                              </div>
+                              <div className="text-xs text-neutral-400 leading-relaxed mt-0.5">
+                                Cut undersea fiber cables across 50/50 to 82/18 continent splits and
+                                inspect live shard liveness &amp; cable-resplice convergence.
+                              </div>
+                            </div>
+                          </div>
+
+                          <span
+                            className="px-4 py-2 rounded-full font-mono text-xs font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 transition-all duration-150 group-hover:brightness-110"
+                            style={{
+                              backgroundImage: accent.gradientCss,
+                              color: accent.textOnAccent
+                            }}
+                          >
+                            <span>Launch Wartime Sim</span>
+                            <ArrowRight className="w-3.5 h-3.5 shrink-0 transition-transform duration-150 group-hover:translate-x-0.5" />
+                          </span>
+                        </button>
                       )}
 
                       {(() => {
@@ -7720,20 +7850,36 @@ function ThermodynamicAuditApp() {
                         );
                       })()}
 
-                      <div className="pt-1 grid grid-cols-2 sm:flex sm:items-center sm:justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={scrollToWartimeSim}
-                          className="px-2.5 sm:px-0 py-1.5 sm:py-0 rounded-full sm:rounded-none bg-[#121418] sm:bg-transparent border border-white/[0.08] sm:border-0 font-mono text-[10.5px] sm:text-xs text-neutral-300 sm:text-neutral-400 hover:text-white flex items-center justify-center sm:justify-start gap-1.5 transition min-w-0"
-                        >
-                          <Scissors className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" style={{ color: accent.secondary }} />
-                          <span className="truncate sm:hidden">Wartime Sim ↓</span>
-                          <span className="hidden sm:inline">Test ${currentAudit.ticker} in Wartime Partition Sim ↓</span>
-                        </button>
+                      <div
+                        className={`pt-1 ${
+                          activeModalInvariant.id === '04'
+                            ? 'flex items-center justify-end'
+                            : 'grid grid-cols-2 sm:flex sm:items-center sm:justify-between gap-2'
+                        }`}
+                      >
+                        {activeModalInvariant.id !== '04' && (
+                          <button
+                            type="button"
+                            onClick={openWartimeSimTab}
+                            className="px-2.5 sm:px-0 py-1.5 sm:py-0 rounded-full sm:rounded-none bg-[#121418] sm:bg-transparent border border-white/[0.08] sm:border-0 font-mono text-[10.5px] sm:text-xs text-neutral-300 sm:text-neutral-400 hover:text-white flex items-center justify-center sm:justify-start gap-1.5 transition min-w-0"
+                          >
+                            <Scissors
+                              className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0"
+                              style={{ color: accent.secondary }}
+                            />
+                            <span className="truncate sm:hidden">Wartime Sim &rarr;</span>
+                            <span className="hidden sm:inline">
+                              Open ${currentAudit.ticker} in Wartime Sim &rarr;
+                            </span>
+                          </button>
+                        )}
 
                         <button
                           type="button"
-                          onClick={() => setModalInvId(nextInv.id)}
+                          onClick={() => {
+                            setModalViewMode('INVARIANT');
+                            setModalInvId(nextInv.id);
+                          }}
                           className="px-2.5 sm:px-0 py-1.5 sm:py-0 rounded-full sm:rounded-none bg-[#121418] sm:bg-transparent border border-white/[0.08] sm:border-0 font-mono text-[10.5px] sm:text-xs text-neutral-300 sm:text-neutral-400 hover:text-white flex items-center justify-center sm:justify-end gap-1.5 transition min-w-0"
                         >
                           <span className="truncate">
@@ -7815,177 +7961,176 @@ function ThermodynamicAuditApp() {
                 </div>
               )}
 
-              {(() => {
-                const prov = getAuditProvenance(currentAudit, {
-                  preloadedTickers: PRELOADED_TICKER_SET,
-                  isSandbox: sandboxTickerSet.has(currentAudit.ticker)
-                });
-                const revision = getAuditRevisionAnalysis(currentAudit, prov.isDeterministicReference);
-                return (
-                  <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.07] overflow-hidden">
-                    <button
-                      type="button"
-                      data-testid="score-conditions-toggle"
-                      aria-expanded={showScoreConditions}
-                      onClick={() => setShowScoreConditions((prev) => !prev)}
-                      className="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-[#11141B] transition"
-                    >
-                      <div className="flex flex-wrap items-center gap-2 min-w-0">
-                        <Scale className="w-3.5 h-3.5 shrink-0" style={{ color: accent.primary }} />
-                        <span className="font-mono text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider">
-                          Score Conditions &amp; Rubric Brackets
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded-full font-mono text-[9.5px] font-semibold border ${
-                            prov.isDeterministicReference
-                              ? 'bg-[#49EACB]/10 text-[#49EACB] border-[#49EACB]/30'
-                              : 'bg-[#FACC15]/10 text-[#FACC15] border-[#FACC15]/30'
-                          }`}
-                        >
-                          {revision.provenanceMode}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px] text-neutral-400">
-                        <span className="hidden sm:inline">
-                          {showScoreConditions ? 'Hide Details' : 'What Changes This Score'}
-                        </span>
-                        <ChevronDown
-                          className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                            showScoreConditions ? 'rotate-180 text-white' : ''
-                          }`}
-                        />
-                      </div>
-                    </button>
-
-                    {showScoreConditions && (
-                      <div
-                        data-testid="score-conditions-panel"
-                        className="px-4 pb-4 pt-2 border-t border-white/[0.06] space-y-3.5 bg-[#08090B]"
+              {modalViewMode !== 'WARTIME_SIM' &&
+                (() => {
+                  const prov = getAuditProvenance(currentAudit, {
+                    preloadedTickers: PRELOADED_TICKER_SET,
+                    isSandbox: sandboxTickerSet.has(currentAudit.ticker)
+                  });
+                  const revision = getAuditRevisionAnalysis(
+                    currentAudit,
+                    prov.isDeterministicReference
+                  );
+                  return (
+                    <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.07] overflow-hidden">
+                      <button
+                        type="button"
+                        data-testid="score-conditions-toggle"
+                        aria-expanded={showScoreConditions}
+                        onClick={() => setShowScoreConditions((prev) => !prev)}
+                        className="w-full px-4 py-3 flex items-center justify-between gap-2 text-left hover:bg-[#11141B] transition"
                       >
-                        <p className="text-[11.5px] text-neutral-400 leading-relaxed">
-                          {revision.methodologySummary}
-                        </p>
-
-                        <div className="space-y-1.5">
-                          <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
-                            Mainnet Score Revision &amp; Re-Audit Triggers
-                          </div>
-                          <div className="space-y-1.5">
-                            {revision.triggers.map((trig, idx) => {
-                              const badgeColor =
-                                trig.direction === 'UPGRADE'
-                                  ? '#4ADE80'
-                                  : trig.direction === 'DOWNGRADE'
-                                  ? '#F87171'
-                                  : '#FACC15';
-                              return (
-                                <div
-                                  key={`${trig.invariantId}-${idx}`}
-                                  className="rounded-xl bg-[#0D0F13] border border-white/[0.06] px-3 py-2 flex items-start gap-2"
-                                >
-                                  <span
-                                    className="font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5"
-                                    style={{
-                                      color: badgeColor,
-                                      backgroundColor: `${badgeColor}18`,
-                                      border: `1px solid ${badgeColor}40`
-                                    }}
-                                  >
-                                    #{trig.invariantId} {trig.direction}
-                                  </span>
-                                  <p className="text-[11.5px] text-neutral-300 leading-relaxed">
-                                    {trig.condition}
-                                  </p>
-                                </div>
-                              );
-                            })}
-                          </div>
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <Scale
+                            className="w-3.5 h-3.5 shrink-0"
+                            style={{ color: accent.primary }}
+                          />
+                          <span className="font-mono text-[11px] sm:text-xs font-bold text-white uppercase tracking-wider">
+                            Score Conditions &amp; Rubric Brackets
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full font-mono text-[9.5px] font-semibold border ${
+                              prov.isDeterministicReference
+                                ? 'bg-[#49EACB]/10 text-[#49EACB] border-[#49EACB]/30'
+                                : 'bg-[#FACC15]/10 text-[#FACC15] border-[#FACC15]/30'
+                            }`}
+                          >
+                            {revision.provenanceMode}
+                          </span>
                         </div>
+                        <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px] text-neutral-400">
+                          <span className="hidden sm:inline">
+                            {showScoreConditions ? 'Hide Details' : 'What Changes This Score'}
+                          </span>
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                              showScoreConditions ? 'rotate-180 text-white' : ''
+                            }`}
+                          />
+                        </div>
+                      </button>
 
-                        <div className="space-y-1.5">
-                          <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
-                            Matched 6-Invariant Rubric Brackets
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {revision.brackets.map((b) => {
-                              const bStyle = getHarmonizedScoreStyle(b.score, accent);
-                              return (
-                                <div
-                                  key={b.id}
-                                  className="rounded-xl bg-[#0D0F13] border border-white/[0.06] p-2.5 space-y-1"
-                                >
-                                  <div className="flex items-center justify-between gap-1.5 font-mono text-[10px]">
-                                    <span className="font-bold text-white truncate">
-                                      {b.id} {b.shortName}
-                                    </span>
+                      {showScoreConditions && (
+                        <div
+                          data-testid="score-conditions-panel"
+                          className="px-4 pb-4 pt-2 border-t border-white/[0.06] space-y-3.5 bg-[#08090B]"
+                        >
+                          <p className="text-[11.5px] text-neutral-400 leading-relaxed">
+                            {revision.methodologySummary}
+                          </p>
+
+                          <div className="space-y-1.5">
+                            <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
+                              Mainnet Score Revision &amp; Re-Audit Triggers
+                            </div>
+                            <div className="space-y-1.5">
+                              {revision.triggers.map((trig, idx) => {
+                                const badgeColor =
+                                  trig.direction === 'UPGRADE'
+                                    ? '#4ADE80'
+                                    : trig.direction === 'DOWNGRADE'
+                                    ? '#F87171'
+                                    : '#FACC15';
+                                return (
+                                  <div
+                                    key={`${trig.invariantId}-${idx}`}
+                                    className="rounded-xl bg-[#0D0F13] border border-white/[0.06] px-3 py-2 flex items-start gap-2"
+                                  >
                                     <span
-                                      className="px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                                      className="font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 mt-0.5"
                                       style={{
-                                        color: bStyle.color,
-                                        backgroundColor: bStyle.bg,
-                                        border: `1px solid ${bStyle.border}`
+                                        color: badgeColor,
+                                        backgroundColor: `${badgeColor}18`,
+                                        border: `1px solid ${badgeColor}40`
                                       }}
                                     >
-                                      {formatScore(b.score)} [{b.bracketRange}]
+                                      #{trig.invariantId} {trig.direction}
                                     </span>
+                                    <p className="text-[11.5px] text-neutral-300 leading-relaxed">
+                                      {trig.condition}
+                                    </p>
                                   </div>
-                                  <p className="text-[10.5px] text-neutral-400 leading-snug">
-                                    {b.bracketSummary}
-                                  </p>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <div className="font-mono text-[9.5px] uppercase tracking-widest text-neutral-500">
+                              Matched 6-Invariant Rubric Brackets
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                              {revision.brackets.map((b) => {
+                                const bStyle = getHarmonizedScoreStyle(b.score, accent);
+                                return (
+                                  <div
+                                    key={b.id}
+                                    className="rounded-xl bg-[#0D0F13] border border-white/[0.06] p-2.5 space-y-1"
+                                  >
+                                    <div className="flex items-center justify-between gap-1.5 font-mono text-[10px]">
+                                      <span className="font-bold text-white truncate">
+                                        {b.id} {b.shortName}
+                                      </span>
+                                      <span
+                                        className="px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                                        style={{
+                                          color: bStyle.color,
+                                          backgroundColor: bStyle.bg,
+                                          border: `1px solid ${bStyle.border}`
+                                        }}
+                                      >
+                                        {formatScore(b.score)} [{b.bracketRange}]
+                                      </span>
+                                    </div>
+                                    <p className="text-[10.5px] text-neutral-400 leading-snug">
+                                      {b.bracketSummary}
+                                    </p>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
+                      )}
+                    </div>
+                  );
+                })()}
 
-              {currentAudit.freshSources && currentAudit.freshSources.length > 0 && (
-                <div className="p-4 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
-                    <span style={{ color: accent.primary }}>
-                      Live Google Search Grounding Sources ({currentAudit.lastFreshAuditAt})
-                    </span>
-                    <span className="text-neutral-500">
-                      {currentAudit.freshSources.length} Verified Web Links
-                    </span>
+              {modalViewMode !== 'WARTIME_SIM' &&
+                currentAudit.freshSources &&
+                currentAudit.freshSources.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
+                      <span style={{ color: accent.primary }}>
+                        Live Google Search Grounding Sources ({currentAudit.lastFreshAuditAt})
+                      </span>
+                      <span className="text-neutral-500">
+                        {currentAudit.freshSources.length} Verified Web Links
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {currentAudit.freshSources.map((src, idx) => (
+                        <a
+                          key={idx}
+                          href={src.uri}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-200 hover:text-white transition inline-flex items-center gap-1.5 max-w-xs"
+                        >
+                          <span className="truncate">{src.title}</span>
+                          <ExternalLink
+                            className="w-3 h-3 shrink-0"
+                            style={{ color: accent.primary }}
+                          />
+                        </a>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    {currentAudit.freshSources.map((src, idx) => (
-                      <a
-                        key={idx}
-                        href={src.uri}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[11px] text-neutral-200 hover:text-white transition inline-flex items-center gap-1.5 max-w-xs"
-                      >
-                        <span className="truncate">{src.title}</span>
-                        <ExternalLink
-                          className="w-3 h-3 shrink-0"
-                          style={{ color: accent.primary }}
-                        />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div ref={simAnchorRef}>
-                <Suspense fallback={null}>
-                  <WartimeSpliceSimulator
-                    activeAudit={currentAudit}
-                    kasAudit={PRELOADED_AUDITS.KAS}
-                    accent={accent}
-                  />
-                </Suspense>
-              </div>
+                )}
             </div>
 
             <div className="shrink-0 px-3 sm:px-7 py-2 sm:py-3.5 bg-[#0B0C0E]/85 border-t border-white/[0.07] flex items-center justify-between gap-2 sm:gap-3">
-              {!essayViewMode ? (
+              {modalViewMode === 'INVARIANT' ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -8011,6 +8156,16 @@ function ThermodynamicAuditApp() {
                       <span>Copy Single Invariant</span>
                     </>
                   )}
+                </button>
+              ) : modalViewMode === 'WARTIME_SIM' ? (
+                <button
+                  type="button"
+                  onClick={() => setModalViewMode('INVARIANT')}
+                  className="px-2.5 sm:px-4 py-1 sm:py-2 rounded-full bg-[#121418] hover:bg-[#181B22] border border-white/10 font-mono text-[10px] sm:text-xs text-neutral-200 transition flex items-center gap-1 sm:gap-1.5 whitespace-nowrap"
+                >
+                  <span>
+                    &larr; Back to {activeModalInvariant.id} // {activeModalInvariant.shortName}
+                  </span>
                 </button>
               ) : (
                 <span className="font-mono text-[10px] sm:text-xs text-neutral-500 truncate">
