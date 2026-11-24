@@ -15,12 +15,43 @@ export interface GroundingSource {
   title: string;
 }
 
+export type HistoricalInvariantStatus = 'ACTIVE' | 'CAPPED_ARBITRAGE' | 'VOID_UNANCHORED';
+
+export interface HistoricalSnapshotInvariant {
+  id: string;
+  label: string;
+  status: HistoricalInvariantStatus;
+  score: number | null;
+  frontierReference?: string;
+  telemetry: string;
+  normieParagraph?: string;
+  geniusParagraph?: string;
+  receipts?: string[];
+}
+
+export interface HistoricalSnapshot {
+  epochId: string;
+  epochLabel: string;
+  scrubberLabel?: string;
+  dateOrHeight: string;
+  frontierContext: string;
+  foundationalMassValid: boolean;
+  arbitrageCapTriggered: boolean;
+  totalScore: number;
+  terminalGrade: string;
+  verdictSummary: string;
+  normieVerdictSummary?: string;
+  invariants: Record<string, HistoricalSnapshotInvariant>;
+}
+
 export interface InvariantData {
   id: string;
   shortName: string;
   title?: string;
   telemetry: string;
   score: number;
+  status?: HistoricalInvariantStatus;
+  frontierReference?: string;
   quickSummary: string;
   paragraph: string;
   geniusParagraph?: string;
@@ -40,6 +71,7 @@ export interface AuditData {
   certainty: string;
   conclusion: string;
   invariants: InvariantData[];
+  historicalSnapshots?: HistoricalSnapshot[];
   geniusParagraphs?: string[];
   lastFreshAuditAt?: string;
   scoreDelta?: number | null;
@@ -690,6 +722,238 @@ export function formatScore(val: unknown): string {
   return rounded.toFixed(1);
 }
 
+export function formatScoreTwoDecimals(val: unknown): string {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return '0.00';
+  return (Math.round(num * 100) / 100).toFixed(2);
+}
+
+/**
+ * Enforces p = m * v across historical and live protocol snapshots:
+ * 1. Gate 1 (E = 0 Conservation of Energy Floor): Inv 02 <= 0 => Inv 04-06 become VOID_UNANCHORED (score: null), Total = 0.00 (Grade F).
+ * 2. Gate 2 (Sovereignty-Compromise & Energy-Arbitrage Law): Inv 01 === 0 with E > 0 => Inv 02 clamped <= 0.35, Grade capped at D+.
+ */
+export function evaluateThermodynamicGate(snapshot: HistoricalSnapshot): HistoricalSnapshot {
+  const inv01 = snapshot.invariants['01'];
+  const inv02 = snapshot.invariants['02'];
+
+  // Gate 1: Conservation of Energy Floor (E = 0)
+  if (!inv02 || !inv02.score || inv02.score <= 0) {
+    const voided: Record<string, HistoricalSnapshotInvariant> = { ...snapshot.invariants };
+    (['04', '05', '06'] as const).forEach((key) => {
+      if (voided[key]) {
+        voided[key] = {
+          ...voided[key],
+          status: 'VOID_UNANCHORED',
+          score: null
+        };
+      }
+    });
+
+    return {
+      ...snapshot,
+      foundationalMassValid: false,
+      totalScore: 0.0,
+      terminalGrade: 'F',
+      invariants: voided
+    };
+  }
+
+  // Gate 2: Sovereignty-Compromise & Energy-Arbitrage Law
+  const inv01Score = inv01 && typeof inv01.score === 'number' ? inv01.score : 0;
+  const inv02Score = typeof inv02.score === 'number' ? inv02.score : 0;
+  const arbitrageTriggered = inv01Score === 0 && inv02Score > 0;
+  const clampedInv02Score = arbitrageTriggered ? Math.min(inv02Score, 0.35) : inv02Score;
+
+  const updatedInvariants: Record<string, HistoricalSnapshotInvariant> = {
+    ...snapshot.invariants,
+    '02': {
+      ...inv02,
+      score: clampedInv02Score,
+      status: arbitrageTriggered ? 'CAPPED_ARBITRAGE' : inv02.status
+    }
+  };
+
+  const rawSum = Object.values(updatedInvariants).reduce(
+    (acc, inv) => acc + (inv && typeof inv.score === 'number' ? inv.score : 0),
+    0
+  );
+
+  return {
+    ...snapshot,
+    foundationalMassValid: true,
+    arbitrageCapTriggered: arbitrageTriggered,
+    totalScore: Number(rawSum.toFixed(2)),
+    terminalGrade: arbitrageTriggered ? 'D+' : snapshot.terminalGrade,
+    invariants: updatedInvariants
+  };
+}
+
+/**
+ * Multiplicative VOID Gate (p = m * v):
+ * Returns true whenever Invariant 04, 05, or 06 is unanchored because Invariant 02 fails (E = 0).
+ */
+export function isInvariantVoidUnanchored(
+  invId: string,
+  costFloorScore: number | null | undefined,
+  invScore?: number | null,
+  invStatus?: string
+): boolean {
+  if (invId !== '04' && invId !== '05' && invId !== '06') {
+    return false;
+  }
+  if (invStatus === 'VOID_UNANCHORED' || invScore === null) {
+    return true;
+  }
+  const numericFloor =
+    typeof costFloorScore === 'number' && Number.isFinite(costFloorScore) ? costFloorScore : 0;
+  return numericFloor <= 0;
+}
+
+export function formatEpochScrubberLabel(
+  snapshot: HistoricalSnapshot,
+  isFinalLive: boolean
+): string {
+  if (snapshot.scrubberLabel && snapshot.scrubberLabel.trim()) {
+    return snapshot.scrubberLabel.trim();
+  }
+  const cleanedLabel = String(snapshot.epochLabel || '')
+    .replace(/\s*\(Live\)\s*$/i, '')
+    .trim();
+  const idYearMatch = String(snapshot.epochId || '').match(/\b(19\d{2}|20\d{2})\b/);
+  const dateYearMatch = String(snapshot.dateOrHeight || '').match(/\b(19\d{2}|20\d{2})\b/);
+  const yearPrefix = dateYearMatch?.[1] || idYearMatch?.[1] || '';
+  const hasPlus = isFinalLive && /Present/i.test(String(snapshot.dateOrHeight || ''));
+  const prefix =
+    yearPrefix && !cleanedLabel.startsWith(yearPrefix)
+      ? `${yearPrefix}${hasPlus ? '+' : ''} `
+      : '';
+  return `${prefix}${cleanedLabel}${isFinalLive ? ' · LIVE' : ''}`.trim();
+}
+
+export function mergeHistoricalSnapshots(
+  primary: HistoricalSnapshot[] | undefined,
+  reference: HistoricalSnapshot[] | undefined
+): HistoricalSnapshot[] | undefined {
+  if (!primary || primary.length === 0) return reference;
+  if (!reference || reference.length === 0) return primary;
+
+  const refById = new Map(reference.map((s) => [s.epochId, s]));
+  return primary.map((snap) => {
+    const refSnap = refById.get(snap.epochId);
+    if (!refSnap) return snap;
+
+    const mergedInvariants: Record<string, HistoricalSnapshotInvariant> = {
+      ...refSnap.invariants,
+      ...snap.invariants
+    };
+
+    Object.keys(mergedInvariants).forEach((invId) => {
+      const curInv = snap.invariants?.[invId];
+      const refInv = refSnap.invariants?.[invId];
+      if (!curInv && refInv) {
+        mergedInvariants[invId] = refInv;
+        return;
+      }
+      if (curInv && refInv) {
+        mergedInvariants[invId] = {
+          ...refInv,
+          ...curInv,
+          normieParagraph: curInv.normieParagraph || refInv.normieParagraph,
+          geniusParagraph: curInv.geniusParagraph || refInv.geniusParagraph,
+          receipts:
+            curInv.receipts && curInv.receipts.length > 0 ? curInv.receipts : refInv.receipts
+        };
+      }
+    });
+
+    return {
+      ...refSnap,
+      ...snap,
+      scrubberLabel: snap.scrubberLabel || refSnap.scrubberLabel,
+      normieVerdictSummary: snap.normieVerdictSummary || refSnap.normieVerdictSummary,
+      invariants: mergedInvariants
+    };
+  });
+}
+
+export function buildHistoricalEpochInvariantProse(
+  audit: { ticker: string; name: string },
+  snapshot: HistoricalSnapshot,
+  invId: string,
+  isGeniusMode: boolean
+): string {
+  const snapInv = snapshot.invariants[invId];
+  if (!snapInv) {
+    return !isGeniusMode && snapshot.normieVerdictSummary
+      ? snapshot.normieVerdictSummary
+      : snapshot.verdictSummary;
+  }
+
+  if (!isGeniusMode && snapInv.normieParagraph && snapInv.normieParagraph.trim()) {
+    return snapInv.normieParagraph.trim();
+  }
+  if (isGeniusMode && snapInv.geniusParagraph && snapInv.geniusParagraph.trim()) {
+    return snapInv.geniusParagraph.trim();
+  }
+
+  const costFloorScore = snapshot.invariants['02']?.score ?? 0;
+  const isVoid = isInvariantVoidUnanchored(invId, costFloorScore, snapInv.score, snapInv.status);
+  const numericScore =
+    typeof snapInv.score === 'number' && Number.isFinite(snapInv.score) ? snapInv.score : 0;
+  const scoreLabel = isVoid
+    ? 'VOID · E=0 UNANCHORED'
+    : `${formatScoreTwoDecimals(numericScore)} / 1.00${
+        snapInv.status === 'CAPPED_ARBITRAGE' ? ' (Capped Arbitrage)' : ''
+      }`;
+  const frontierText = snapInv.frontierReference || snapshot.frontierContext;
+
+  if (!isGeniusMode) {
+    if (isVoid) {
+      return `In ${snapshot.epochLabel}, ${audit.name} burns zero physical energy (E = 0), so ${snapInv.label} carries zero thermodynamic weight and locks to VOID · E=0 UNANCHORED.`;
+    }
+    if (snapInv.status === 'CAPPED_ARBITRAGE') {
+      return `During ${snapshot.epochLabel}, ${audit.name} scored ${formatScoreTwoDecimals(numericScore)} / 1.00 on ${snapInv.label} because premined zero-joule genesis coins share the same supply pool as mined coins, capping the network at ${snapshot.terminalGrade} (${formatScoreTwoDecimals(snapshot.totalScore)} / 6.00).`;
+    }
+    return `During ${snapshot.epochLabel}, ${audit.name} earned ${formatScoreTwoDecimals(numericScore)} / 1.00 on ${snapInv.label} against the ${frontierText} benchmark toward its ${snapshot.terminalGrade} (${formatScoreTwoDecimals(snapshot.totalScore)} / 6.00) era score.`;
+  }
+
+  const leadByInv: Record<string, string> = {
+    '01': `At the foundational layer of Existential Sovereignty and Entity Decoupling during ${snapshot.epochLabel} (${snapshot.dateOrHeight}, scored ${scoreLabel})`,
+    '02': `At the second physical invariant—the Thermodynamic Cost Floor (E > 0) during ${snapshot.epochLabel} (${snapshot.dateOrHeight}, scored ${scoreLabel})`,
+    '03': `Examining Historical Immutability and the Physical Arrow of Time across ${snapshot.epochLabel} (${snapshot.dateOrHeight}, scored ${scoreLabel}) against Landauer’s Principle (ΔQ ≥ kB·T·ln2)`,
+    '04': `Under a wartime network partition and undersea cable resplice during ${snapshot.epochLabel} (Dynamic Availability, ${snapshot.dateOrHeight}, ${scoreLabel})`,
+    '05': `Examining ${audit.name}’s State Machine Topology during ${snapshot.epochLabel} (${snapshot.dateOrHeight}, ${scoreLabel})`,
+    '06': `On Thermodynamic Velocity during ${snapshot.epochLabel} (${snapshot.dateOrHeight}, ${scoreLabel} against frontier benchmark ${frontierText})`
+  };
+
+  const lead =
+    leadByInv[invId] ||
+    `Evaluating Invariant ${invId} (${snapInv.label}) during ${snapshot.epochLabel} (${snapshot.dateOrHeight}, ${scoreLabel})`;
+
+  const gateClause = isVoid
+    ? `Under the Multiplicative VOID Gate (p = m · v), failing Invariant 02 (E = 0, m = 0) collapses physical settlement momentum identically to zero while preserving unanchored consensus telemetry for forensic inspection.`
+    : snapInv.status === 'CAPPED_ARBITRAGE'
+    ? `Because Invariant 01 equals 0.00 alongside E > 0 Proof-of-Work, the Sovereignty-Compromise & Energy-Arbitrage Law (E_unit = ∑E_mined / (S_mined + S_zero-joule)) clamps Cost Floor credit strictly at ≤ 0.35 and enforces a D+ terminal ceiling (${formatScoreTwoDecimals(snapshot.totalScore)} / 6.00).`
+    : `Normalized strictly against the contemporaneous live Pareto frontier (${frontierText}) under Dynamic Pareto-Frontier Normalization, ${audit.name} posts a ${snapshot.terminalGrade} (${formatScoreTwoDecimals(snapshot.totalScore)} / 6.00) epoch composite.`;
+
+  return `${lead}: ${snapInv.telemetry} ${gateClause} ${snapshot.verdictSummary}`.trim();
+}
+
+export function buildHistoricalEpochGeniusEssayParagraphs(
+  audit: { ticker: string; name: string; certainty?: string },
+  snapshot: HistoricalSnapshot
+): string[] {
+  const certainty = String(audit.certainty || 'HIGH CERTAINTY').toUpperCase();
+  const p1 = `Evaluating ${audit.name} ($${audit.ticker}) across the ${snapshot.epochLabel} hardfork epoch (${snapshot.dateOrHeight}) against the contemporaneous Pareto frontier (${snapshot.frontierContext}): ${buildHistoricalEpochInvariantProse(audit, snapshot, '01', true)}`;
+  const p2 = buildHistoricalEpochInvariantProse(audit, snapshot, '02', true);
+  const p3 = buildHistoricalEpochInvariantProse(audit, snapshot, '03', true);
+  const p4 = buildHistoricalEpochInvariantProse(audit, snapshot, '04', true);
+  const p5 = `${buildHistoricalEpochInvariantProse(audit, snapshot, '05', true)} ${buildHistoricalEpochInvariantProse(audit, snapshot, '06', true)}`;
+  const p6 = `Evaluating these historical epoch telemetry records through the GRADE evidence certainty framework yields a ${certainty} rating: ${snapshot.verdictSummary} Across ${snapshot.epochLabel} (${snapshot.dateOrHeight}), ${audit.name} records a deterministic composite of ${formatScoreTwoDecimals(snapshot.totalScore)} out of 6.00 for a terminal compliance grade of ${snapshot.terminalGrade}.`;
+  return [p1, p2, p3, p4, p5, p6];
+}
+
 export function getGradeAccent(grade: string): GradeAccent {
   const g = String(grade || 'F').toUpperCase();
   if (g.startsWith('A')) {
@@ -1033,6 +1297,20 @@ export function sanitizeAuditData(auditObj: AuditData): AuditData {
         const lastSingleAt = coerceDisplayText(rawInv.lastSingleAuditAt).trim();
         const lastSingleSource = coerceDisplayText(rawInv.lastSingleAuditSource).trim();
         const geniusP = coerceDisplayText(rawInv.geniusParagraph).trim();
+        const frontierRef = coerceDisplayText(rawInv.frontierReference).trim();
+        const rawStatus = coerceDisplayText(rawInv.status).trim().toUpperCase();
+        const validStatus: HistoricalInvariantStatus | undefined =
+          rawStatus === 'ACTIVE' ||
+          rawStatus === 'CAPPED_ARBITRAGE' ||
+          rawStatus === 'VOID_UNANCHORED'
+            ? rawStatus
+            : undefined;
+
+        const rawParagraph = coerceDisplayText(rawInv.paragraph, '').trim();
+        const shouldUnflip =
+          Boolean(rawParagraph && geniusP) && rawParagraph.length > geniusP.length + 140;
+        const finalNormieParagraph = shouldUnflip ? geniusP : rawParagraph;
+        const finalGeniusParagraph = shouldUnflip ? rawParagraph : geniusP;
 
         return {
           id: coerceDisplayText(rawInv.id, fallbackId) || fallbackId,
@@ -1040,9 +1318,11 @@ export function sanitizeAuditData(auditObj: AuditData): AuditData {
           title: coerceDisplayText(rawInv.title, DEFAULT_TITLES[idx] || fallbackId),
           telemetry: coerceDisplayText(rawInv.telemetry, ''),
           score: Number.isFinite(rawScore) ? Math.max(0, Math.min(1, rawScore)) : 0,
+          ...(validStatus ? { status: validStatus } : {}),
+          ...(frontierRef ? { frontierReference: frontierRef } : {}),
           quickSummary: coerceDisplayText(rawInv.quickSummary, ''),
-          paragraph: coerceDisplayText(rawInv.paragraph, ''),
-          ...(geniusP ? { geniusParagraph: geniusP } : {}),
+          paragraph: finalNormieParagraph,
+          ...(finalGeniusParagraph ? { geniusParagraph: finalGeniusParagraph } : {}),
           receipts: Array.isArray(rawInv.receipts)
             ? rawInv.receipts.map((r) => coerceDisplayText(r).trim()).filter(Boolean)
             : [],
@@ -1067,6 +1347,14 @@ export function sanitizeAuditData(auditObj: AuditData): AuditData {
       ? Number(auditObj.scoreDelta)
       : null;
 
+  const cleanHistoricalSnapshots: HistoricalSnapshot[] | undefined = Array.isArray(
+    auditObj.historicalSnapshots
+  )
+    ? auditObj.historicalSnapshots
+        .filter((snap): snap is HistoricalSnapshot => Boolean(snap && typeof snap === 'object' && snap.invariants))
+        .map((snap) => evaluateThermodynamicGate(snap))
+    : undefined;
+
   return {
     ...auditObj,
     ticker: coerceDisplayText(auditObj.ticker, ''),
@@ -1077,6 +1365,9 @@ export function sanitizeAuditData(auditObj: AuditData): AuditData {
     certainty: coerceDisplayText(auditObj.certainty, 'HIGH CERTAINTY'),
     conclusion: coerceDisplayText(auditObj.conclusion, ''),
     invariants: sanitizedInvs,
+    ...(cleanHistoricalSnapshots && cleanHistoricalSnapshots.length > 0
+      ? { historicalSnapshots: cleanHistoricalSnapshots }
+      : {}),
     ...(cleanGeniusParas && cleanGeniusParas.length > 0 ? { geniusParagraphs: cleanGeniusParas } : {}),
     lastFreshAuditAt: cleanFreshAt || undefined,
     archivedAtLabel: cleanArchivedLabel || undefined,
@@ -1284,10 +1575,19 @@ export function canonicalizeAuditsCollection(
         ? normalized
         : existing;
 
+    const runnerUp = winner === normalized ? existing : normalized;
+    const preservedSnapshots = mergeHistoricalSnapshots(
+      winner.historicalSnapshots,
+      runnerUp.historicalSnapshots
+    );
+
     result[canonicalKey] = {
       ...winner,
       ticker: canonicalKey,
-      queryAliases: mergedAliases
+      queryAliases: mergedAliases,
+      ...(preservedSnapshots && preservedSnapshots.length > 0
+        ? { historicalSnapshots: preservedSnapshots }
+        : {})
     };
   });
   return result;

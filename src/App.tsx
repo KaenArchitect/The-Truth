@@ -5,6 +5,7 @@
 
 import {
   Component,
+  Fragment,
   Suspense,
   lazy,
   useCallback,
@@ -65,23 +66,31 @@ import {
   GRADING_RUBRIC_SPEC,
   ORBIT_ANGLES_DEG,
   buildCanonicalSingleInvariantEssayParagraph,
+  buildHistoricalEpochGeniusEssayParagraphs,
+  buildHistoricalEpochInvariantProse,
   canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   computeRunningAuditAccent,
   deriveGradeFromTotal,
   enforceEnergyArbitrageLawOnAudit,
+  evaluateThermodynamicGate,
+  formatEpochScrubberLabel,
   formatScore,
+  formatScoreTwoDecimals,
   getGradeAccent,
   getHarmonizedScoreStyle,
   getScoreStyle,
   inspectStreamedAuditProgress,
+  isInvariantVoidUnanchored,
   isResponseTextTruncated,
+  mergeHistoricalSnapshots,
   resolveCanonicalAssetTicker,
   sanitizeInvLogsMap,
   sortAuditTickersByGrade,
   stripTrailingDash,
   type AuditData,
   type GroundingSource,
+  type HistoricalSnapshot,
   type InvariantData,
   type InvariantLogEntry
 } from './data/rubricSpec.ts';
@@ -247,6 +256,36 @@ function getOrCreateClientQuotaId(): string {
   } catch {
     return 'ephemeral-client';
   }
+}
+
+function VoidUnanchoredBadge({
+  testId,
+  compact = false
+}: {
+  testId?: string;
+  compact?: boolean;
+}) {
+  return (
+    <span
+      data-testid={testId || 'void-unanchored-badge'}
+      className={`${
+        compact ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 sm:px-3 py-1 text-[10.5px] sm:text-xs'
+      } rounded-full font-mono font-bold tracking-wide leading-none inline-flex items-center gap-1 whitespace-nowrap shrink-0 tabular-nums`}
+      style={{
+        background:
+          'linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(245, 158, 11, 0.16) 100%)',
+        color: '#FBBF24',
+        border: '1px solid rgba(245, 158, 11, 0.44)',
+        boxShadow: '0 0 12px rgba(239, 68, 68, 0.12)'
+      }}
+    >
+      <span className="text-[#F87171]">VOID</span>
+      <span className="text-[#F59E0B]/75" aria-hidden="true">
+        &middot;
+      </span>
+      <span className="text-[#FBBF24]">E=0 UNANCHORED</span>
+    </span>
+  );
 }
 
 interface ExitingPinEntry {
@@ -554,10 +593,14 @@ function ThermodynamicAuditApp() {
     'INVARIANT'
   );
   const [showScoreConditions, setShowScoreConditions] = useState(false);
+  const [selectedEpochIdx, setSelectedEpochIdx] = useState<number | null>(null);
   const isModalOpen = Boolean(modalInvId);
   useEffect(() => {
     setShowScoreConditions(false);
   }, [isModalOpen, activeKey]);
+  useEffect(() => {
+    setSelectedEpochIdx(null);
+  }, [activeKey]);
   const modalBodyRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (modalBodyRef.current) {
@@ -1775,6 +1818,89 @@ function ThermodynamicAuditApp() {
   const activeModalInvariant =
     currentAudit.invariants.find((i) => i.id === modalInvId) || currentAudit.invariants[0];
   const currentGeniusParagraphs = getGeniusForensicParagraphs(currentAudit);
+
+  const liveCostFloorScore = Number(currentAudit.invariants?.[1]?.score ?? 0);
+  const rawHistoricalSnapshots = useMemo(
+    () =>
+      mergeHistoricalSnapshots(
+        currentAudit.historicalSnapshots,
+        PRELOADED_AUDITS[currentAudit.ticker]?.historicalSnapshots
+      ),
+    [currentAudit.historicalSnapshots, currentAudit.ticker]
+  );
+
+  const evaluatedSnapshots = useMemo<HistoricalSnapshot[]>(
+    () =>
+      Array.isArray(rawHistoricalSnapshots) && rawHistoricalSnapshots.length > 0
+        ? rawHistoricalSnapshots.map((snap) => evaluateThermodynamicGate(snap))
+        : [],
+    [rawHistoricalSnapshots]
+  );
+
+  const hasEpochTimeMachine = evaluatedSnapshots.length > 0;
+  const effectiveEpochIdx = hasEpochTimeMachine
+    ? selectedEpochIdx !== null &&
+      selectedEpochIdx >= 0 &&
+      selectedEpochIdx < evaluatedSnapshots.length
+      ? selectedEpochIdx
+      : evaluatedSnapshots.length - 1
+    : -1;
+  const activeEpochSnapshot: HistoricalSnapshot | null =
+    hasEpochTimeMachine && effectiveEpochIdx >= 0 ? evaluatedSnapshots[effectiveEpochIdx] : null;
+  const isFinalLiveEpoch =
+    !hasEpochTimeMachine || effectiveEpochIdx === evaluatedSnapshots.length - 1;
+
+  const scorecardGrade =
+    !isFinalLiveEpoch && activeEpochSnapshot
+      ? activeEpochSnapshot.terminalGrade
+      : currentAudit.grade;
+  const scorecardTotalScore =
+    !isFinalLiveEpoch && activeEpochSnapshot
+      ? activeEpochSnapshot.totalScore
+      : currentAudit.totalScore;
+  const scorecardAccent = getGradeAccent(scorecardGrade);
+  const scorecardCostFloorScore =
+    !isFinalLiveEpoch && activeEpochSnapshot
+      ? activeEpochSnapshot.invariants['02']?.score ?? 0
+      : liveCostFloorScore;
+
+  const scorecardRows = currentAudit.invariants.map((baseInv, idx) => {
+    const id = baseInv.id || `0${idx + 1}`;
+    const snapInv = activeEpochSnapshot?.invariants?.[id];
+    const useHistoricalSnap = !isFinalLiveEpoch && Boolean(snapInv);
+    const rawScore = useHistoricalSnap && snapInv ? snapInv.score : baseInv.score;
+    const numericScore =
+      typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : 0;
+    const status = useHistoricalSnap
+      ? snapInv?.status || baseInv.status || 'ACTIVE'
+      : baseInv.status || snapInv?.status || 'ACTIVE';
+    const isVoid = isInvariantVoidUnanchored(id, scorecardCostFloorScore, rawScore, status);
+    return {
+      id,
+      shortName: baseInv.shortName,
+      label:
+        useHistoricalSnap && snapInv?.label
+          ? snapInv.label
+          : baseInv.title || DEFAULT_TITLES[idx] || baseInv.shortName,
+      title: baseInv.title || snapInv?.label || DEFAULT_TITLES[idx] || baseInv.shortName,
+      rawScore,
+      numericScore,
+      status,
+      isVoid,
+      frontierReference: useHistoricalSnap
+        ? snapInv?.frontierReference
+        : baseInv.frontierReference || snapInv?.frontierReference,
+      telemetry:
+        useHistoricalSnap && snapInv
+          ? snapInv.telemetry
+          : baseInv.telemetry || snapInv?.telemetry || '',
+      baseInv
+    };
+  });
+
+  const activeScorecardRow =
+    scorecardRows.find((r) => r.id === activeModalInvariant.id) || scorecardRows[0];
+
   const showFloatingCornerControls = shouldShowFloatingCornerControls({
     isAnyModalOpen,
     isTutorialOpen,
@@ -2124,7 +2250,38 @@ function ThermodynamicAuditApp() {
     }
   };
 
-  const formatXLongPost = (auditObj: AuditData): string => {
+  const formatXLongPost = (auditObj: AuditData, epochOverride?: HistoricalSnapshot | null): string => {
+    if (epochOverride) {
+      if (isGeniusMode) {
+        return buildHistoricalEpochGeniusEssayParagraphs(auditObj, epochOverride).join('\n\n');
+      }
+      const snapFloor = epochOverride.invariants['02']?.score ?? 0;
+      const header = `THE TRUTH — thermodynamic audit // ${auditObj.name.toUpperCase()} ($${
+        auditObj.ticker
+      }) [${epochOverride.epochLabel} • ${epochOverride.dateOrHeight}]\nTerminal Grade: ${
+        epochOverride.terminalGrade
+      } (${formatScoreTwoDecimals(epochOverride.totalScore)} / 6.00) • ${
+        auditObj.certainty
+      }\nFrontier Context: ${epochOverride.frontierContext}\n`;
+
+      const body = auditObj.invariants
+        .map((inv, idx) => {
+          const id = inv.id || `0${idx + 1}`;
+          const snapInv = epochOverride.invariants[id];
+          const isVoid = isInvariantVoidUnanchored(id, snapFloor, snapInv?.score, snapInv?.status);
+          const scoreTxt = isVoid
+            ? 'VOID · E=0 UNANCHORED'
+            : `${formatScoreTwoDecimals(typeof snapInv?.score === 'number' ? snapInv.score : 0)}/1.00`;
+          const prose = buildHistoricalEpochInvariantProse(auditObj, epochOverride, id, false);
+          return `[${id} // ${snapInv?.label || inv.title} — ${scoreTxt}]:\n${prose}`;
+        })
+        .join('\n\n');
+
+      return `${header}\n${body}\n\n${
+        epochOverride.normieVerdictSummary || epochOverride.verdictSummary
+      }`;
+    }
+
     if (isGeniusMode) {
       return getGeniusForensicParagraphs(auditObj).join('\n\n');
     }
@@ -3854,7 +4011,7 @@ function ThermodynamicAuditApp() {
         {
           name: 'truth_get_origin_thesis',
           description:
-            'Pillar 4: Fetch the 17-axiom First-Principles Origin Thesis ("Physics Over Consensus") and equations.',
+            'Pillar 4: Fetch the 23-axiom First-Principles Origin Thesis ("Physics Over Consensus") and equations.',
           inputSchema: {
             type: 'object',
             properties: { mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
@@ -5996,6 +6153,13 @@ function ThermodynamicAuditApp() {
                               if (!item || !inv) return null;
 
                               const itemAcc = getGradeAccent(item.grade);
+                              const itemCostFloor = Number(item.invariants?.[1]?.score ?? 0);
+                              const isItemInvVoid = isInvariantVoidUnanchored(
+                                inv.id,
+                                itemCostFloor,
+                                inv.score,
+                                inv.status
+                              );
                               const sStyle = getScoreStyle(inv.score);
                               const fullParagraph = getActiveInvariantParagraph(inv);
                               const savedLogsCount = (
@@ -6008,7 +6172,11 @@ function ThermodynamicAuditApp() {
                                   className={`color-glide rounded-2xl bg-[#0B0C0E] ${
                                     syncInvariantGrid.columns >= 3 ? 'p-3.5 xl:p-4' : 'p-4 sm:p-5'
                                   } flex flex-col justify-between gap-3.5 min-w-0`}
-                                  style={{ border: `1px solid ${sStyle.border}` }}
+                                  style={{
+                                    border: `1px solid ${
+                                      isItemInvVoid ? 'rgba(245, 158, 11, 0.36)' : sStyle.border
+                                    }`
+                                  }}
                                 >
                                   <div className="space-y-3">
                                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -6040,16 +6208,23 @@ function ThermodynamicAuditApp() {
                                         </div>
                                       </div>
 
-                                      <span
-                                        className="px-2.5 py-1 rounded-full font-mono text-xs font-bold shrink-0"
-                                        style={{
-                                          color: sStyle.color,
-                                          backgroundColor: sStyle.bg,
-                                          border: `1px solid ${sStyle.border}`
-                                        }}
-                                      >
-                                        {formatScore(inv.score)} / 1.0 • {sStyle.status}
-                                      </span>
+                                      {isItemInvVoid ? (
+                                        <VoidUnanchoredBadge
+                                          compact
+                                          testId={`sync-void-badge-${item.ticker}-${inv.id}`}
+                                        />
+                                      ) : (
+                                        <span
+                                          className="px-2.5 py-1 rounded-full font-mono text-xs font-bold shrink-0 tabular-nums"
+                                          style={{
+                                            color: sStyle.color,
+                                            backgroundColor: sStyle.bg,
+                                            border: `1px solid ${sStyle.border}`
+                                          }}
+                                        >
+                                          {formatScoreTwoDecimals(inv.score)} / 1.00 • {sStyle.status}
+                                        </span>
+                                      )}
                                     </div>
 
                                     <div className="w-full h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
@@ -6060,7 +6235,7 @@ function ThermodynamicAuditApp() {
                                             2,
                                             Math.round((Number(inv.score) || 0) * 100)
                                           )}%`,
-                                          backgroundColor: sStyle.color,
+                                          backgroundColor: isItemInvVoid ? '#F59E0B' : sStyle.color,
                                           boxShadow:
                                             Number(inv.score) > 0
                                               ? `0 0 10px ${sStyle.color}`
@@ -6069,8 +6244,13 @@ function ThermodynamicAuditApp() {
                                       />
                                     </div>
 
-                                    <div className="font-mono text-[11px] text-neutral-400 bg-[#121418] border border-white/[0.06] rounded-xl px-3 py-1.5">
-                                      {inv.telemetry}
+                                    <div className="font-mono text-[11px] text-neutral-400 bg-[#121418] border border-white/[0.06] rounded-xl px-3 py-1.5 space-y-0.5">
+                                      {inv.frontierReference && (
+                                        <div className="text-[10px] text-[#49EACB]/90">
+                                          Frontier: {inv.frontierReference}
+                                        </div>
+                                      )}
+                                      <div>{inv.telemetry}</div>
                                     </div>
 
                                     <div
@@ -6366,15 +6546,34 @@ function ThermodynamicAuditApp() {
                       <span className="text-[11px] font-medium text-neutral-100 leading-tight line-clamp-1 mt-0.5">
                         {inv.shortName}
                       </span>
-                      <span
-                        className="color-glide font-mono text-[11px] font-bold mt-1 px-1.5 py-0.2 rounded-full"
-                        style={{
-                          color: invStyle.color,
-                          backgroundColor: invStyle.bg
-                        }}
-                      >
-                        {formatScore(inv.score)}/1.0
-                      </span>
+                      {isInvariantVoidUnanchored(
+                        inv.id,
+                        liveCostFloorScore,
+                        inv.score,
+                        inv.status
+                      ) ? (
+                        <span
+                          className="color-glide font-mono text-[10px] font-bold mt-1 px-1.5 py-0.2 rounded-full tracking-wider"
+                          style={{
+                            color: '#FBBF24',
+                            background:
+                              'linear-gradient(135deg, rgba(239, 68, 68, 0.16) 0%, rgba(245, 158, 11, 0.16) 100%)',
+                            border: '1px solid rgba(245, 158, 11, 0.4)'
+                          }}
+                        >
+                          VOID
+                        </span>
+                      ) : (
+                        <span
+                          className="color-glide font-mono text-[11px] font-bold mt-1 px-1.5 py-0.2 rounded-full tabular-nums"
+                          style={{
+                            color: invStyle.color,
+                            backgroundColor: invStyle.bg
+                          }}
+                        >
+                          {formatScore(inv.score)}/1.0
+                        </span>
+                      )}
                     </div>
                   </button>
                 );
@@ -6759,6 +6958,12 @@ function ThermodynamicAuditApp() {
               ) : activeHoveredInvariant ? (
                 (() => {
                   const sStyle = getHarmonizedScoreStyle(activeHoveredInvariant.score, accent);
+                  const isHoveredVoid = isInvariantVoidUnanchored(
+                    activeHoveredInvariant.id,
+                    liveCostFloorScore,
+                    activeHoveredInvariant.score,
+                    activeHoveredInvariant.status
+                  );
                   const InvIcon = INVARIANT_ICONS[activeHoveredInvariant.id] || ShieldCheck;
                   return (
                     <button
@@ -6772,42 +6977,49 @@ function ThermodynamicAuditApp() {
                         isCompactHeight ? 'p-3' : 'p-4'
                       } cursor-pointer shadow-[0_16px_40px_rgba(0,0,0,0.65)] hover:brightness-105`}
                       style={{
-                        border: `1px solid ${sStyle.border}`
+                        border: `1px solid ${
+                          isHoveredVoid ? 'rgba(245, 158, 11, 0.4)' : sStyle.border
+                        }`
                       }}
                     >
                       <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
                           <InvIcon
                             className="w-4 h-4 shrink-0 color-glide"
-                            style={{ color: sStyle.color }}
+                            style={{ color: isHoveredVoid ? '#FBBF24' : sStyle.color }}
                           />
-                          <span className="font-mono text-xs font-bold text-white">
+                          <span className="font-mono text-xs font-bold text-white truncate">
                             {activeHoveredInvariant.id} // {activeHoveredInvariant.title}
                           </span>
                         </div>
-                        <span
-                          className="color-glide font-mono text-xs font-bold px-2 py-0.5 rounded-full shrink-0"
-                          style={{
-                            color: sStyle.color,
-                            backgroundColor: sStyle.bg,
-                            border: `1px solid ${sStyle.border}`
-                          }}
-                        >
-                          {formatScore(activeHoveredInvariant.score)} / 1.0 • {sStyle.status}
-                        </span>
+                        {isHoveredVoid ? (
+                          <VoidUnanchoredBadge compact testId="hover-card-void-badge" />
+                        ) : (
+                          <span
+                            className="color-glide font-mono text-xs font-bold px-2 py-0.5 rounded-full shrink-0 tabular-nums"
+                            style={{
+                              color: sStyle.color,
+                              backgroundColor: sStyle.bg,
+                              border: `1px solid ${sStyle.border}`
+                            }}
+                          >
+                            {formatScoreTwoDecimals(activeHoveredInvariant.score)} / 1.00 •{' '}
+                            {sStyle.status}
+                          </span>
+                        )}
                       </div>
 
                       <p className="text-xs sm:text-[13.5px] text-neutral-300 leading-relaxed">
                         {activeHoveredInvariant.quickSummary}
                       </p>
 
-                      <div className="mt-2.5 flex items-center justify-between font-mono text-[11px]">
-                        <span className="text-neutral-500 truncate pr-2">
+                      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                        <span className="text-neutral-400 leading-snug">
                           {activeHoveredInvariant.telemetry}
                         </span>
                         <span
-                          className="color-glide flex items-center gap-1 font-semibold shrink-0"
-                          style={{ color: sStyle.color }}
+                          className="color-glide flex items-center gap-1 font-semibold shrink-0 ml-auto"
+                          style={{ color: isHoveredVoid ? '#FBBF24' : sStyle.color }}
                         >
                           <span>Click bubble for full paragraph &amp; receipts</span>
                           <ArrowRight className="w-3 h-3" />
@@ -7199,20 +7411,26 @@ function ThermodynamicAuditApp() {
                     {currentAudit.name}
                   </div>
                   <div className="font-mono text-[10px] sm:text-[11px] text-neutral-400 truncate">
-                    {currentAudit.architecture}
+                    {!isFinalLiveEpoch && activeEpochSnapshot
+                      ? `${activeEpochSnapshot.epochLabel} • ${activeEpochSnapshot.dateOrHeight}`
+                      : currentAudit.architecture}
                   </div>
                 </div>
 
                 <span
-                  className="px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full font-mono text-[11px] sm:text-xs font-bold shrink-0"
+                  data-testid="scorecard-grade-pill"
+                  className="px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full font-mono text-[11px] sm:text-xs font-bold shrink-0 tabular-nums transition-colors duration-150"
                   style={{
-                    backgroundColor: accent.softBg,
-                    color: accent.primary,
-                    border: `1px solid ${accent.border}`
+                    backgroundColor: scorecardAccent.softBg,
+                    color: scorecardAccent.primary,
+                    border: `1px solid ${scorecardAccent.border}`
                   }}
                 >
-                  ${currentAudit.ticker} • {currentAudit.grade} (
-                  {formatScore(currentAudit.totalScore)}/6.0)
+                  ${currentAudit.ticker} • {scorecardGrade} (
+                  {!isFinalLiveEpoch && activeEpochSnapshot
+                    ? `${formatScoreTwoDecimals(scorecardTotalScore)}/6.00`
+                    : `${formatScore(scorecardTotalScore)}/6.0`}
+                  )
                 </span>
 
                 <ProvenanceBadgesStrip
@@ -7221,6 +7439,60 @@ function ThermodynamicAuditApp() {
                   compact
                 />
               </div>
+
+              {hasEpochTimeMachine && (
+                <div
+                  role="tablist"
+                  aria-label="Thermodynamic Time Machine Epoch Scrubber"
+                  data-testid="epoch-time-machine-bar"
+                  className="w-full flex items-center justify-start sm:justify-center gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar py-0.5"
+                >
+                  {evaluatedSnapshots.map((snap, idx) => {
+                    const isSelectedEpoch = idx === effectiveEpochIdx;
+                    const isFinal = idx === evaluatedSnapshots.length - 1;
+                    const snapAccent = getGradeAccent(snap.terminalGrade);
+                    const pillText = formatEpochScrubberLabel(snap, isFinal);
+                    return (
+                      <Fragment key={snap.epochId}>
+                        {idx > 0 && (
+                          <span
+                            aria-hidden="true"
+                            className="font-mono text-[10px] text-neutral-500 shrink-0 select-none"
+                          >
+                            &rarr;
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          role="tab"
+                          data-testid={`epoch-pill-${snap.epochId}`}
+                          aria-selected={isSelectedEpoch}
+                          onClick={() => {
+                            trackDotDiscovery('hands_on_tool');
+                            setSelectedEpochIdx(idx);
+                          }}
+                          className={`h-6 sm:h-7 px-2.5 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition-colors duration-150 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 tabular-nums cursor-pointer ${
+                            isSelectedEpoch
+                              ? 'font-bold shadow-sm'
+                              : 'bg-[#121418] text-neutral-400 hover:text-neutral-100 border border-white/10'
+                          }`}
+                          style={
+                            isSelectedEpoch
+                              ? {
+                                  backgroundColor: snapAccent.softBg,
+                                  color: snapAccent.primary,
+                                  border: `1px solid ${snapAccent.border}`
+                                }
+                              : undefined
+                          }
+                        >
+                          <span>{pillText}</span>
+                        </button>
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="w-full flex flex-nowrap items-center justify-between gap-2">
                 <div className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
@@ -7250,9 +7522,9 @@ function ThermodynamicAuditApp() {
                     style={
                       isGeniusMode
                         ? {
-                            backgroundColor: accent.softBg,
-                            color: accent.primary,
-                            border: `1px solid ${accent.border}`
+                            backgroundColor: scorecardAccent.softBg,
+                            color: scorecardAccent.primary,
+                            border: `1px solid ${scorecardAccent.border}`
                           }
                         : { border: '1px solid transparent' }
                     }
@@ -7284,9 +7556,9 @@ function ThermodynamicAuditApp() {
                     style={
                       modalViewMode === 'ESSAY'
                         ? {
-                            backgroundColor: accent.softBg,
-                            color: accent.primary,
-                            border: `1px solid ${accent.border}`
+                            backgroundColor: scorecardAccent.softBg,
+                            color: scorecardAccent.primary,
+                            border: `1px solid ${scorecardAccent.border}`
                           }
                         : { border: '1px solid rgba(255,255,255,0.1)' }
                     }
@@ -7322,9 +7594,9 @@ function ThermodynamicAuditApp() {
                     style={
                       modalViewMode === 'WARTIME_SIM'
                         ? {
-                            backgroundColor: accent.softBg,
-                            color: accent.primary,
-                            border: `1px solid ${accent.border}`
+                            backgroundColor: scorecardAccent.softBg,
+                            color: scorecardAccent.primary,
+                            border: `1px solid ${scorecardAccent.border}`
                           }
                         : { border: '1px solid rgba(255,255,255,0.1)' }
                     }
@@ -7332,7 +7604,10 @@ function ThermodynamicAuditApp() {
                     <Scissors
                       className="w-2.5 h-2.5 sm:w-3 sm:h-3 shrink-0"
                       style={{
-                        color: modalViewMode === 'WARTIME_SIM' ? accent.primary : accent.secondary
+                        color:
+                          modalViewMode === 'WARTIME_SIM'
+                            ? scorecardAccent.primary
+                            : scorecardAccent.secondary
                       }}
                     />
                     <span>Wartime Sim</span>
@@ -7346,32 +7621,38 @@ function ThermodynamicAuditApp() {
               aria-label="Invariant Breakdown Tabs"
               className="shrink-0 px-3 sm:px-7 py-1.5 sm:py-2.5 bg-[#0E1014] border-b border-white/[0.07] flex flex-nowrap md:flex-wrap items-center justify-between md:justify-start gap-1 overflow-x-auto md:overflow-visible no-scrollbar"
             >
-              {currentAudit.invariants.map((inv) => {
-                const st = getHarmonizedScoreStyle(inv.score, accent);
+              {scorecardRows.map((row) => {
+                const st = getHarmonizedScoreStyle(row.numericScore, scorecardAccent);
+                const tabColor = row.isVoid ? '#FBBF24' : st.color;
                 const isSelectedTab =
-                  modalViewMode === 'INVARIANT' && activeModalInvariant.id === inv.id;
+                  modalViewMode === 'INVARIANT' && activeModalInvariant.id === row.id;
                 return (
                   <button
-                    key={inv.id}
+                    key={row.id}
                     type="button"
                     role="tab"
                     aria-selected={isSelectedTab}
-                    aria-label={`${inv.id} ${inv.shortName} ${formatScore(inv.score)}`}
+                    aria-label={`${row.id} ${row.shortName} ${
+                      row.isVoid ? 'VOID E=0 UNANCHORED' : formatScoreTwoDecimals(row.numericScore)
+                    }`}
                     onClick={() => {
                       trackDotDiscovery('explore_invariant');
                       setModalViewMode('INVARIANT');
-                      setModalInvId(inv.id);
+                      setModalInvId(row.id);
                     }}
-                    className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-mono text-[10px] sm:text-[11px] transition flex items-center gap-0.5 sm:gap-1 shrink-0 whitespace-nowrap ${
+                    className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-mono text-[10px] sm:text-[11px] transition flex items-center gap-0.5 sm:gap-1 shrink-0 whitespace-nowrap tabular-nums ${
                       isSelectedTab
                         ? 'bg-[#191D25] text-white font-bold border border-white/20 shadow-sm'
                         : 'bg-[#0B0C0E] text-neutral-400 hover:text-neutral-200 border border-white/[0.06]'
                     }`}
                   >
-                    <span style={{ color: st.color }}>{inv.id}</span>
-                    <span className="hidden md:inline">{inv.shortName}</span>
-                    <span className="text-[9.5px] sm:text-[10px] opacity-80" style={{ color: st.color }}>
-                      {formatScore(inv.score)}
+                    <span style={{ color: tabColor }}>{row.id}</span>
+                    <span className="hidden md:inline">{row.shortName}</span>
+                    <span
+                      className="text-[9.5px] sm:text-[10px] opacity-90"
+                      style={{ color: row.isVoid ? '#F87171' : tabColor }}
+                    >
+                      {row.isVoid ? 'VOID' : formatScore(row.numericScore)}
                     </span>
                   </button>
                 );
@@ -7393,7 +7674,7 @@ function ThermodynamicAuditApp() {
                       >
                         <RefreshCw
                           className="w-5 h-5 animate-spin"
-                          style={{ color: accent.primary }}
+                          style={{ color: scorecardAccent.primary }}
                         />
                         <div className="font-mono text-xs text-neutral-300">
                           Loading Wartime Partition &amp; Cable Resplice Lab...
@@ -7404,13 +7685,16 @@ function ThermodynamicAuditApp() {
                     <WartimeSpliceSimulator
                       activeAudit={currentAudit}
                       kasAudit={PRELOADED_AUDITS.KAS}
-                      accent={accent}
+                      accent={scorecardAccent}
                     />
                   </Suspense>
                 </div>
               ) : modalViewMode === 'INVARIANT' ? (
                 (() => {
-                  const sStyle = getHarmonizedScoreStyle(activeModalInvariant.score, accent);
+                  const sStyle = getHarmonizedScoreStyle(
+                    activeScorecardRow.numericScore,
+                    scorecardAccent
+                  );
                   const InvIcon = INVARIANT_ICONS[activeModalInvariant.id] || ShieldCheck;
                   const currentIdx = Math.max(
                     0,
@@ -7422,11 +7706,11 @@ function ThermodynamicAuditApp() {
                   const isThisInvPulling =
                     singleInvBusy?.key === `${currentAudit.ticker}:${activeModalInvariant.id}` &&
                     singleInvBusy?.mode === 'REAUDIT';
-                  const isPullDisabled = isAuditing || Boolean(singleInvBusy);
+                  const isPullDisabled = isAuditing || Boolean(singleInvBusy) || !isFinalLiveEpoch;
 
                   return (
                     <div
-                      key={`modal-inv-${currentAudit.ticker}-${activeModalInvariant.id}-${isGeniusMode}`}
+                      key={`modal-inv-${currentAudit.ticker}-${activeModalInvariant.id}-${isGeniusMode}-${effectiveEpochIdx}`}
                       className="animate-card-fade space-y-4"
                     >
                       <div className="border-b border-white/[0.07] pb-3.5">
@@ -7438,14 +7722,22 @@ function ThermodynamicAuditApp() {
                             onClick={() => handleSingleInvariantReaudit(activeModalInvariant.id)}
                             aria-label={`Fresh 1-Inv Pull (#${activeModalInvariant.id})`}
                             title={
-                              isThisInvPulling
+                              !isFinalLiveEpoch
+                                ? 'Switch to the LIVE epoch pill to run a fresh 1-Invariant pull'
+                                : isThisInvPulling
                                 ? `Pulling fresh 1-Inv intel for #${activeModalInvariant.id}...`
                                 : `Fresh 1-Inv Pull (#${activeModalInvariant.id}) — pull fresh Google Search & GitHub intel ONLY for Invariant ${activeModalInvariant.id} (~85% fewer tokens)`
                             }
                             className="group relative w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 cursor-pointer transition-all hover:brightness-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-55 disabled:cursor-not-allowed"
                             style={{
-                              backgroundColor: sStyle.bg,
-                              border: `1px solid ${sStyle.border}`
+                              backgroundColor: activeScorecardRow.isVoid
+                                ? 'rgba(245, 158, 11, 0.12)'
+                                : sStyle.bg,
+                              border: `1px solid ${
+                                activeScorecardRow.isVoid
+                                  ? 'rgba(245, 158, 11, 0.4)'
+                                  : sStyle.border
+                              }`
                             }}
                           >
                             <InvIcon
@@ -7456,7 +7748,9 @@ function ThermodynamicAuditApp() {
                                   ? 'opacity-100 scale-100'
                                   : 'opacity-100 scale-100 group-hover:opacity-0 group-hover:scale-75 group-focus-visible:opacity-0 group-focus-visible:scale-75'
                               }`}
-                              style={{ color: sStyle.color }}
+                              style={{
+                                color: activeScorecardRow.isVoid ? '#FBBF24' : sStyle.color
+                              }}
                             />
                             <RefreshCw
                               className={`w-4 h-4 absolute transition-all duration-150 ${
@@ -7466,58 +7760,89 @@ function ThermodynamicAuditApp() {
                                   ? 'opacity-0 scale-75'
                                   : 'opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100'
                               }`}
-                              style={{ color: sStyle.color }}
+                              style={{
+                                color: activeScorecardRow.isVoid ? '#FBBF24' : sStyle.color
+                              }}
                             />
                           </button>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-start justify-between gap-2.5 sm:gap-3">
-                              <h2 className="font-display text-lg sm:text-xl font-bold text-white leading-snug min-w-0">
-                                {activeModalInvariant.id} // {activeModalInvariant.title}
-                              </h2>
-                              <span
-                                data-testid="invariant-modal-score-badge"
-                                className="px-2 sm:px-3 py-1 rounded-full font-mono text-[10.5px] sm:text-xs font-bold leading-none inline-flex items-center justify-center whitespace-nowrap shrink-0 mt-0.5"
-                                style={{
-                                  backgroundColor: sStyle.bg,
-                                  color: sStyle.color,
-                                  border: `1px solid ${sStyle.border}`
-                                }}
-                              >
-                                {formatScore(activeModalInvariant.score)} / 1.0 {sStyle.status}
-                              </span>
+                              <div className="min-w-0">
+                                <h2 className="font-display text-lg sm:text-xl font-bold text-white leading-snug min-w-0">
+                                  {activeScorecardRow.id} // {activeScorecardRow.title}
+                                </h2>
+                                {activeScorecardRow.frontierReference && (
+                                  <div
+                                    data-testid="invariant-frontier-reference"
+                                    className="font-mono text-[11px] text-[#49EACB]/90 mt-0.5"
+                                  >
+                                    Frontier Benchmark: {activeScorecardRow.frontierReference}
+                                  </div>
+                                )}
+                              </div>
+                              {activeScorecardRow.isVoid ? (
+                                <VoidUnanchoredBadge testId="invariant-modal-score-badge" />
+                              ) : (
+                                <span
+                                  data-testid="invariant-modal-score-badge"
+                                  className="px-2 sm:px-3 py-1 rounded-full font-mono text-[10.5px] sm:text-xs font-bold leading-none inline-flex items-center justify-center whitespace-nowrap shrink-0 mt-0.5 tabular-nums"
+                                  style={{
+                                    backgroundColor: sStyle.bg,
+                                    color: sStyle.color,
+                                    border: `1px solid ${sStyle.border}`
+                                  }}
+                                >
+                                  {!isFinalLiveEpoch
+                                    ? `${formatScoreTwoDecimals(
+                                        activeScorecardRow.numericScore
+                                      )} / 1.00 ${
+                                        activeScorecardRow.status === 'CAPPED_ARBITRAGE'
+                                          ? 'CAPPED'
+                                          : sStyle.status
+                                      }`
+                                    : `${formatScore(activeScorecardRow.numericScore)} / 1.0 ${
+                                        sStyle.status
+                                      }`}
+                                </span>
+                              )}
                             </div>
-                            <div className="font-mono text-xs text-neutral-400 mt-0.5">
-                              {activeModalInvariant.telemetry}
+                            <div
+                              data-testid="invariant-modal-telemetry"
+                              className="font-mono text-xs text-neutral-400 mt-1 leading-relaxed"
+                            >
+                              {activeScorecardRow.telemetry}
                             </div>
                           </div>
                         </div>
                       </div>
 
-                      <div className="p-5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-2.5">
-                        {activeModalInvariant.lastSingleAuditAt && (
-                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/[0.06] font-mono text-[10px]">
-                            <span style={{ color: sStyle.color }}>
-                              {activeModalInvariant.lastSingleAuditSource ||
-                                'Single-Invariant Update'}{' '}
-                              • {activeModalInvariant.lastSingleAuditAt}
-                            </span>
-                            {activeModalInvariant.singleScoreDelta !== undefined && (
-                              <span className="text-neutral-400">
-                                {activeModalInvariant.singleScoreDelta === 0
-                                  ? 'Score Confirmed (Δ 0.0)'
-                                  : `Score Delta: ${
-                                      activeModalInvariant.singleScoreDelta > 0
-                                        ? `+${formatScore(activeModalInvariant.singleScoreDelta)}`
-                                        : formatScore(activeModalInvariant.singleScoreDelta)
-                                    }`}
-                              </span>
+                      {isFinalLiveEpoch ? (
+                        <>
+                          <div className="p-5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-2.5">
+                            {activeModalInvariant.lastSingleAuditAt && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-white/[0.06] font-mono text-[10px]">
+                                <span style={{ color: sStyle.color }}>
+                                  {activeModalInvariant.lastSingleAuditSource ||
+                                    'Single-Invariant Update'}{' '}
+                                  • {activeModalInvariant.lastSingleAuditAt}
+                                </span>
+                                {activeModalInvariant.singleScoreDelta !== undefined && (
+                                  <span className="text-neutral-400">
+                                    {activeModalInvariant.singleScoreDelta === 0
+                                      ? 'Score Confirmed (Δ 0.0)'
+                                      : `Score Delta: ${
+                                          activeModalInvariant.singleScoreDelta > 0
+                                            ? `+${formatScore(activeModalInvariant.singleScoreDelta)}`
+                                            : formatScore(activeModalInvariant.singleScoreDelta)
+                                        }`}
+                                  </span>
+                                )}
+                              </div>
                             )}
+                            <p className="text-sm sm:text-[15.5px] text-neutral-200 leading-[1.78]">
+                              {getActiveInvariantParagraph(activeModalInvariant)}
+                            </p>
                           </div>
-                        )}
-                        <p className="text-sm sm:text-[15.5px] text-neutral-200 leading-[1.78]">
-                          {getActiveInvariantParagraph(activeModalInvariant)}
-                        </p>
-                      </div>
 
                       {activeModalInvariant.receipts?.length > 0 && (
                         <div className="space-y-2">
@@ -7849,15 +8174,83 @@ function ThermodynamicAuditApp() {
                           </div>
                         );
                       })()}
+                        </>
+                      ) : activeEpochSnapshot ? (
+                        <>
+                          <div className="p-5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07] space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-white/[0.06] font-mono text-[10.5px]">
+                              <span className="text-neutral-400">
+                                Historical Hardfork Epoch &middot;{' '}
+                                <strong className="text-white">
+                                  {activeEpochSnapshot.epochLabel}
+                                </strong>{' '}
+                                &middot; Frontier:{' '}
+                                <span style={{ color: scorecardAccent.primary }}>
+                                  {activeEpochSnapshot.frontierContext}
+                                </span>
+                              </span>
+                              <button
+                                type="button"
+                                data-testid="return-to-live-epoch-btn"
+                                onClick={() => setSelectedEpochIdx(evaluatedSnapshots.length - 1)}
+                                className="font-semibold hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                                style={{ color: scorecardAccent.primary }}
+                              >
+                                Return to Live &rarr;
+                              </button>
+                            </div>
+                            <p
+                              data-testid="historical-invariant-longform-prose"
+                              className="text-sm sm:text-[15.5px] text-neutral-200 leading-[1.78]"
+                            >
+                              {buildHistoricalEpochInvariantProse(
+                                currentAudit,
+                                activeEpochSnapshot,
+                                activeModalInvariant.id,
+                                isGeniusMode
+                              )}
+                            </p>
+                          </div>
+
+                          {(activeEpochSnapshot.invariants[activeModalInvariant.id]?.receipts
+                            ?.length ?? 0) > 0 && (
+                            <div className="space-y-2">
+                              <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500">
+                                Verified Historical Codebase &amp; Mainnet Receipts
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {activeEpochSnapshot.invariants[
+                                  activeModalInvariant.id
+                                ]?.receipts?.map((rcpt, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-3 py-1 rounded-full bg-[#0B0C0E] font-mono text-xs"
+                                    style={{
+                                      color: activeScorecardRow.isVoid ? '#FBBF24' : sStyle.color,
+                                      border: `1px solid ${
+                                        activeScorecardRow.isVoid
+                                          ? 'rgba(245, 158, 11, 0.35)'
+                                          : sStyle.border
+                                      }`
+                                    }}
+                                  >
+                                    {rcpt}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      ) : null}
 
                       <div
                         className={`pt-1 ${
-                          activeModalInvariant.id === '04'
+                          activeModalInvariant.id === '04' && isFinalLiveEpoch
                             ? 'flex items-center justify-end'
                             : 'grid grid-cols-2 sm:flex sm:items-center sm:justify-between gap-2'
                         }`}
                       >
-                        {activeModalInvariant.id !== '04' && (
+                        {(activeModalInvariant.id !== '04' || !isFinalLiveEpoch) && (
                           <button
                             type="button"
                             onClick={openWartimeSimTab}
@@ -7865,7 +8258,7 @@ function ThermodynamicAuditApp() {
                           >
                             <Scissors
                               className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0"
-                              style={{ color: accent.secondary }}
+                              style={{ color: scorecardAccent.secondary }}
                             />
                             <span className="truncate sm:hidden">Wartime Sim &rarr;</span>
                             <span className="hidden sm:inline">
@@ -7893,26 +8286,37 @@ function ThermodynamicAuditApp() {
                 })()
               ) : (
                 <div
-                  key={`modal-essay-${currentAudit.ticker}-${isGeniusMode}`}
+                  key={`modal-essay-${currentAudit.ticker}-${isGeniusMode}-${effectiveEpochIdx}`}
                   className="animate-card-fade space-y-5"
                 >
                   <div className="border-b border-white/[0.07] pb-3 flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <div className="font-mono text-xs uppercase tracking-wider text-neutral-400">
                         THE TRUTH — {isGeniusMode ? 'GENIUS FORENSIC AUDIT' : 'NORMIE AUDIT'} //{' '}
-                        {currentAudit.architecture}
+                        {!isFinalLiveEpoch && activeEpochSnapshot
+                          ? `${activeEpochSnapshot.epochLabel} (${activeEpochSnapshot.dateOrHeight})`
+                          : currentAudit.architecture}
                       </div>
-                      <h2 className="font-display text-xl font-bold text-white mt-1">
+                      <h2 className="font-display text-xl font-bold text-white mt-1 tabular-nums">
                         {currentAudit.name} (${currentAudit.ticker}) — Terminal Grade{' '}
-                        <span style={{ color: accent.primary }}>{currentAudit.grade}</span> (
-                        {formatScore(currentAudit.totalScore)} / 6.0)
+                        <span style={{ color: scorecardAccent.primary }}>{scorecardGrade}</span> (
+                        {!isFinalLiveEpoch && activeEpochSnapshot
+                          ? `${formatScoreTwoDecimals(scorecardTotalScore)} / 6.00`
+                          : `${formatScore(scorecardTotalScore)} / 6.0`}
+                        )
                       </h2>
                     </div>
                   </div>
 
                   {isGeniusMode ? (
                     <div className="p-5 sm:p-6 rounded-2xl bg-[#0B0C0E] border border-white/[0.08] space-y-5">
-                      {currentGeniusParagraphs.map((para, idx) => (
+                      {(!isFinalLiveEpoch && activeEpochSnapshot
+                        ? buildHistoricalEpochGeniusEssayParagraphs(
+                            currentAudit,
+                            activeEpochSnapshot
+                          )
+                        : currentGeniusParagraphs
+                      ).map((para, idx) => (
                         <p
                           key={idx}
                           className="text-sm sm:text-[15px] text-neutral-200 leading-[1.82] text-justify"
@@ -7923,20 +8327,51 @@ function ThermodynamicAuditApp() {
                     </div>
                   ) : (
                     <>
-                      {currentAudit.invariants.map((inv) => {
-                        const st = getHarmonizedScoreStyle(inv.score, accent);
+                      {scorecardRows.map((row) => {
+                        const st = getHarmonizedScoreStyle(row.numericScore, scorecardAccent);
                         return (
-                          <div key={inv.id} className="space-y-1.5">
-                            <div className="flex items-center justify-between font-mono text-xs">
-                              <span className="text-neutral-300 font-semibold">
-                                {inv.id} // {inv.title}
-                              </span>
-                              <span style={{ color: st.color }} className="font-bold">
-                                {formatScore(inv.score)} / 1.0 {st.status}
-                              </span>
+                          <div key={row.id} className="space-y-1.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-neutral-200 font-semibold">
+                                  {row.id} // {row.title}
+                                </span>
+                                {row.frontierReference && (
+                                  <span className="text-[10.5px] text-[#49EACB]/90">
+                                    &middot; Frontier: {row.frontierReference}
+                                  </span>
+                                )}
+                              </div>
+                              {row.isVoid ? (
+                                <VoidUnanchoredBadge
+                                  compact
+                                  testId={`essay-void-badge-${row.id}`}
+                                />
+                              ) : (
+                                <span
+                                  style={{ color: st.color }}
+                                  className="font-bold tabular-nums"
+                                >
+                                  {!isFinalLiveEpoch
+                                    ? `${formatScoreTwoDecimals(row.numericScore)} / 1.00 ${
+                                        row.status === 'CAPPED_ARBITRAGE' ? 'CAPPED' : st.status
+                                      }`
+                                    : `${formatScore(row.numericScore)} / 1.0 ${st.status}`}
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[11px] text-neutral-400 leading-relaxed">
+                              {row.telemetry}
                             </div>
                             <p className="text-sm sm:text-[15px] text-neutral-200 leading-[1.78]">
-                              {inv.paragraph}
+                              {!isFinalLiveEpoch && activeEpochSnapshot
+                                ? buildHistoricalEpochInvariantProse(
+                                    currentAudit,
+                                    activeEpochSnapshot,
+                                    row.id,
+                                    false
+                                  )
+                                : row.baseInv.paragraph}
                             </p>
                           </div>
                         );
@@ -7944,16 +8379,19 @@ function ThermodynamicAuditApp() {
 
                       <div
                         className="p-4 sm:p-5 rounded-2xl bg-[#0B0C0E]"
-                        style={{ border: `1px solid ${accent.border}` }}
+                        style={{ border: `1px solid ${scorecardAccent.border}` }}
                       >
                         <div
                           className="font-mono text-xs font-bold uppercase tracking-wider mb-1.5"
-                          style={{ color: accent.primary }}
+                          style={{ color: scorecardAccent.primary }}
                         >
                           GRADE Evidence Certainty Synthesis // {currentAudit.certainty}
                         </div>
                         <p className="text-sm sm:text-[15px] text-neutral-200 leading-[1.75]">
-                          {currentAudit.conclusion}
+                          {!isFinalLiveEpoch && activeEpochSnapshot
+                            ? activeEpochSnapshot.normieVerdictSummary ||
+                              activeEpochSnapshot.verdictSummary
+                            : currentAudit.conclusion}
                         </p>
                       </div>
                     </>
@@ -8061,7 +8499,12 @@ function ThermodynamicAuditApp() {
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                               {revision.brackets.map((b) => {
-                                const bStyle = getHarmonizedScoreStyle(b.score, accent);
+                                const bStyle = getHarmonizedScoreStyle(b.score, scorecardAccent);
+                                const isBracketVoid = isInvariantVoidUnanchored(
+                                  b.id,
+                                  liveCostFloorScore,
+                                  b.score
+                                );
                                 return (
                                   <div
                                     key={b.id}
@@ -8071,16 +8514,23 @@ function ThermodynamicAuditApp() {
                                       <span className="font-bold text-white truncate">
                                         {b.id} {b.shortName}
                                       </span>
-                                      <span
-                                        className="px-1.5 py-0.5 rounded-full font-bold shrink-0"
-                                        style={{
-                                          color: bStyle.color,
-                                          backgroundColor: bStyle.bg,
-                                          border: `1px solid ${bStyle.border}`
-                                        }}
-                                      >
-                                        {formatScore(b.score)} [{b.bracketRange}]
-                                      </span>
+                                      {isBracketVoid ? (
+                                        <VoidUnanchoredBadge
+                                          compact
+                                          testId={`bracket-void-badge-${b.id}`}
+                                        />
+                                      ) : (
+                                        <span
+                                          className="px-1.5 py-0.5 rounded-full font-bold shrink-0 tabular-nums"
+                                          style={{
+                                            color: bStyle.color,
+                                            backgroundColor: bStyle.bg,
+                                            border: `1px solid ${bStyle.border}`
+                                          }}
+                                        >
+                                          {formatScoreTwoDecimals(b.score)} [{b.bracketRange}]
+                                        </span>
+                                      )}
                                     </div>
                                     <p className="text-[10.5px] text-neutral-400 leading-snug">
                                       {b.bracketSummary}
@@ -8135,11 +8585,22 @@ function ThermodynamicAuditApp() {
                   type="button"
                   onClick={() =>
                     copyTextToClipboard(
-                      `THE TRUTH — thermodynamic audit // $${currentAudit.ticker} [${
-                        currentAudit.grade
-                      }]\n${activeModalInvariant.id} // ${activeModalInvariant.title} [${formatScore(
-                        activeModalInvariant.score
-                      )}/1.0]:\n\n${getActiveInvariantParagraph(activeModalInvariant)}`,
+                      `THE TRUTH — thermodynamic audit // $${currentAudit.ticker} [${scorecardGrade}]\n${
+                        activeScorecardRow.id
+                      } // ${activeScorecardRow.title} [${
+                        activeScorecardRow.isVoid
+                          ? 'VOID · E=0 UNANCHORED'
+                          : `${formatScore(activeScorecardRow.numericScore)}/1.0`
+                      }]:\n\n${
+                        !isFinalLiveEpoch && activeEpochSnapshot
+                          ? buildHistoricalEpochInvariantProse(
+                              currentAudit,
+                              activeEpochSnapshot,
+                              activeModalInvariant.id,
+                              isGeniusMode
+                            )
+                          : getActiveInvariantParagraph(activeModalInvariant)
+                      }`,
                       'modal-single'
                     )
                   }
@@ -8169,17 +8630,26 @@ function ThermodynamicAuditApp() {
                 </button>
               ) : (
                 <span className="font-mono text-[10px] sm:text-xs text-neutral-500 truncate">
-                  {formatXLongPost(currentAudit).length.toLocaleString()} chars • X Ready
+                  {formatXLongPost(
+                    currentAudit,
+                    !isFinalLiveEpoch ? activeEpochSnapshot : null
+                  ).length.toLocaleString()}{' '}
+                  chars • X Ready
                 </span>
               )}
 
               <button
                 type="button"
-                onClick={() => copyTextToClipboard(formatXLongPost(currentAudit), 'modal-full')}
+                onClick={() =>
+                  copyTextToClipboard(
+                    formatXLongPost(currentAudit, !isFinalLiveEpoch ? activeEpochSnapshot : null),
+                    'modal-full'
+                  )
+                }
                 className="px-2.5 sm:px-4 py-1 sm:py-2 rounded-full font-mono text-[10px] sm:text-xs font-semibold transition flex items-center gap-1 sm:gap-1.5 hover:brightness-110 whitespace-nowrap"
                 style={{
-                  backgroundColor: accent.primary,
-                  color: accent.textOnAccent
+                  backgroundColor: scorecardAccent.primary,
+                  color: scorecardAccent.textOnAccent
                 }}
               >
                 {copiedTarget === 'modal-full' ? (
@@ -8274,6 +8744,23 @@ function ThermodynamicAuditApp() {
                     ≥2.30 = D+ • 1.75–2.29 = D • 1.01–1.74 = D-
                   </span>
                   ).
+                </div>
+                <div className="pt-2 border-t border-white/[0.06] text-[11.5px] leading-relaxed text-neutral-300">
+                  <span className="font-mono font-bold text-[#FBBF24] mr-1.5">
+                    [MULTIPLICATIVE VOID GATE — p = m &middot; v (E = 0 UNANCHORED)]:
+                  </span>
+                  Whenever an asset or epoch fails Invariant{' '}
+                  <span className="font-mono text-white">02 Cost Floor = 0.00</span> (
+                  <span className="font-mono text-white">E = 0</span>), foundational thermodynamic
+                  mass drops to zero (<span className="font-mono text-white">m = 0</span>):
+                  Invariants <span className="font-mono text-white">04–06</span> lock to{' '}
+                  <span className="font-mono text-[#F87171] font-bold">VOID</span>{' '}
+                  <span className="font-mono text-[#FBBF24] font-bold">
+                    &middot; E=0 UNANCHORED
+                  </span>{' '}
+                  and Terminal Grade locks to{' '}
+                  <span className="font-mono text-[#EF4444] font-bold">F (0.00 / 6.00)</span> while
+                  retaining forensic operational telemetry below each row.
                 </div>
               </div>
 

@@ -1,7 +1,719 @@
 import {
   type AuditData,
-  buildCanonicalGeniusParagraphs
+  type HistoricalSnapshot,
+  buildCanonicalGeniusParagraphs,
+  evaluateThermodynamicGate
 } from './rubricSpec.ts';
+
+const ETH_HISTORICAL_SNAPSHOTS: HistoricalSnapshot[] = ([
+  {
+    epochId: 'eth-2015-frontier-pow',
+    epochLabel: 'Pre-DAO Ethash PoW',
+    scrubberLabel: '2015 Pre-DAO PoW',
+    dateOrHeight: 'Jul 30, 2015 — Block 1,919,999',
+    frontierContext: 'Sequential PoW Era (DGB 15s / LTC 150s / BTC 600s)',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: true,
+    totalScore: 2.3,
+    terminalGrade: 'D+',
+    normieVerdictSummary:
+      'Even when Ethereum ran real GPU Proof-of-Work in 2015 before the DAO bailout, its 72 million premined genesis coins capped its maximum possible grade at D+ (2.30 / 6.00).',
+    verdictSummary:
+      'Even under pure Ethash GPU Proof-of-Work prior to the DAO rollback, Ethereum never qualified above D+. Its 72,009,990 ETH zero-joule genesis premine triggered the Sovereignty-Compromise & Energy-Arbitrage Law from Block 0.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.0,
+        telemetry:
+          '72M ETH minted at zero joules in Genesis JSON (60M ICO + 12M Ethereum Foundation/insider endowment) alongside Stiftung Ethereum corporate stewardship.',
+        normieParagraph:
+          'Ethereum launched in July 2015 by creating 72 million ETH out of thin air for ICO buyers, founders, and the Swiss Ethereum Foundation before a single GPU mined a block—permanently failing fair-launch independence.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling during the Frontier/Homestead Pre-DAO era (Blocks 0–1,919,999, scored 0.00 / 1.00), Ethereum failed irrevocably inside its Block 0 configuration (`params/genesis.go` / `genesis_block.json`). Prior to hashing a single Ethash nonce on July 30, 2015, the founders instantiated 72,009,990 ETH at strictly 0.00 Joules—allocating 60,102,216 ETH to pre-sale crowdfunding buyers and gifting 11,907,774 ETH directly to early insiders and the Swiss-registered Stiftung Ethereum (Ethereum Foundation), which retained trademark control, core client funding, and upgrade coordination (`∂G / ∂E_admin ≠ 0`). Under the Sovereignty-Compromise Law, breaching Invariant 01 at Genesis permanently hard-caps Ethereum at Grade D+ across every subsequent epoch.',
+        receipts: ['72,009,990 ETH Genesis JSON Premine', '11.9M ETH Insider/Foundation Pool', 'Stiftung Ethereum Trademark Control']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.35,
+        telemetry:
+          'Genuine Ethash GPU PoW (E > 0), but unit energy floor is permanently diluted by 72M zero-joule genesis coins sharing the same fungible supply pool (clamped at 0.35).',
+        normieParagraph:
+          'Unlike today, 2015 Ethereum did burn real GPU electricity to mine new blocks, avoiding a Grade F. However, mixing those mined coins with 72 million free genesis coins diluted its energy backing and capped this score at 0.35.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0) during Pre-DAO Ethash PoW (scored 0.35 / 1.00 Capped)—Ethereum avoided an automatic Grade F because Frontier and Homestead blocks (`consensus/ethash`) required genuine irreversible electrical work across global GPU VRAM arrays (5 ETH base block reward + Uncle inclusion subsidies). However, under the Energy-Arbitrage Law (`E_unit = ∑E_mined / (S_mined + S_zero-joule)`), mixing ~10M newly mined PoW ETH into the exact same fungible ERC/native supply pool as 72,009,990 zero-joule genesis coins (>85% of circulating 2015–2016 supply) meant premined insiders arbitraged physical miners’ electricity at zero energetic cost—clamping Invariant 02 strictly at ≤ 0.35.',
+        receipts: ['5 ETH Ethash GPU PoW Block Subsidy', '>85% Supply Minted at 0 Joules', 'Energy-Arbitrage Clamp (≤ 0.35)']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 0.75,
+        telemetry:
+          'Cumulative Ethash PoW ledger intact prior to July 2016; rising state-trie growth already straining consumer HDD sync.',
+        normieParagraph:
+          'Before July 2016, Ethereum had never rolled back its ledger, and every block was sealed by cumulative GPU Proof-of-Work. It lost 0.25 only because its complex smart-contract state tree was already bloating consumer hard drives.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time prior to Block 1,920,000 (scored 0.75 / 1.00) confirms that Frontier/Homestead Ethereum still obeyed cumulative Proof-of-Work finality (`totalDifficulty`) without social checkpoints or irregular state bailouts. Rewriting settled 2015 history required physically re-expending cumulative Ethash DAG memory-bandwidth work under Landauer’s Principle (`ΔQ ≥ kB·T·ln2`). Nevertheless, Ethereum forfeited 0.25 relative to stateless UTXO chains because full `go-ethereum` / `Parity` archive verification required re-executing every historical EVM opcode against an unpruned, rapidly mutating Merkle Patricia State Trie that quickly choked spinning consumer HDDs on random I/O.',
+        receipts: ['Unbroken Pre-DAO Cumulative PoW', 'No Weak Subjectivity Checkpoints', 'Early Merkle Patricia Trie I/O Bloat']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 0.65,
+        telemetry:
+          'Per-block Ethash DAA recovers under partition without BFT halts, though GHOST uncle rate spikes under transoceanic latency.',
+        normieParagraph:
+          'Because 2015 Ethereum used per-block Proof-of-Work difficulty adjustments instead of Proof-of-Stake quorums, severed continents kept mining blocks without freezing—losing points only to elevated orphan/uncle rates and the hardcoded Difficulty Bomb.',
+        geniusParagraph:
+          'Under a wartime network partition and undersea cable cut during the Pre-DAO PoW epoch, Ethereum achieved 0.65 / 1.00 on Dynamic Availability. Unlike Gasper Proof-of-Stake (which halts finality below 66.7% stake), Frontier (`±1/2048` per-block difficulty bound) and Homestead (`EIP-2`) recalibrated Ethash difficulty on every single ~14.5-second block, allowing an isolated 15% hashrate continent to recover target cadence rapidly without BFT quorum stalls. However, ~14.5s single-chain targeting generated ~7–9% stale/uncle rates (`max 2 uncles/block`, depth ≤ 7) across transoceanic latency, reorged minority-branch state at cable resplice, and introduced the hardcoded `Difficulty Bomb` (`Ice Age`) requiring recurring developer hardforks.',
+        receipts: ['Per-Block Ethash Difficulty Retarget', 'Zero BFT Supermajority Halt Wall', '~7–9% Uncle Rate + Difficulty Bomb']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.2,
+        telemetry:
+          'Sequential global mutable account tree (EVM) introduces shared-state write contention, reentrancy attack surfaces, and unbounded state bloat.',
+        normieParagraph:
+          'From day one, Ethereum forced every smart contract to share one sequential global account database instead of parallel UTXOs—creating the exact reentrancy bug surface that caused the 2016 DAO hack.',
+        geniusParagraph:
+          'Examining Ethereum’s State Machine Topology during 2015–2016 (scored 0.20 / 1.00) exposes the original architectural flaw that precipitated The DAO catastrophe. Rather than extending Satoshi’s stateless, contention-free parallel UTXO model with deterministic covenants, Ethereum introduced a Turing-complete sequential EVM mutating a single shared global `stateRoot` Merkle Patricia Trie. Ambient authority (`CALL` forwarding all remaining gas by default), mutable cross-contract storage callbacks, and unbounded external call stacks created systemic reentrancy vulnerabilities (culminating in the June 17, 2016 recursive split drain of 3.64M ETH from `TheDAO`) alongside sequential execution bottlenecks and underpriced `EXTCODESIZE`/`SUICIDE` DoS vectors.',
+        receipts: ['Shared Sequential Global EVM Trie', 'Recursive CALL Reentrancy Surface', 'Unbounded State-Trie Storage Growth']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 0.35,
+        frontierReference: '13–15s Sequential PoW Frontier',
+        telemetry:
+          '~14.5s block interval with uncle rewards; single-chain sequential execution limits throughput and leaks orphan/uncle hashpower.',
+        normieParagraph:
+          'In 2015, ~14.5-second blocks made Ethereum much faster than 10-minute Bitcoin, but single-chain congestion and uncle blocks still capped base-layer throughput around ~12–15 transactions per second.',
+        geniusParagraph:
+          'On Thermodynamic Velocity during Pre-DAO Ethash PoW (scored 0.35 / 1.00 against the 2015 13–15s Sequential PoW Frontier led by 15s DigiByte), Ethereum’s ~14.5-second target spacing improved confirmation latency ~40x over Bitcoin’s 600-second chain and partially mitigated selfish-mining security loss by rewarding stale `ommer`/`uncle` headers (`7/8` to `1/8` subsidy). Crucially, however, Ethereum’s modified GHOST variant discarded all transactions inside uncle blocks rather than merging concurrent blocks into a parallel BlockDAG—leaking concurrent global GPU work (`M < 1.0`) and bottlenecking Layer-1 execution behind a `3,141,592` to `4,712,388` block gas limit (~12–15 TPS).',
+        receipts: ['~14.5s Ethash Block Interval', 'Uncle Transactions Discarded (M < 1.0)', '3.14M–4.71M Gas Limit (~12–15 TPS)']
+      }
+    }
+  },
+  {
+    epochId: 'eth-2016-post-dao-pow',
+    epochLabel: 'Post-DAO Rollback PoW',
+    scrubberLabel: '2016 Post-DAO PoW',
+    dateOrHeight: 'Jul 20, 2016 (Block 1,920,000) — Sep 15, 2022 (Block 15,537,393)',
+    frontierContext: 'Late Sequential PoW / Early 1-BPS BlockDAG Transition',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: true,
+    totalScore: 1.65,
+    terminalGrade: 'D+',
+    normieVerdictSummary:
+      'Reversing The DAO hack at Block 1,920,000 proved human insiders could override Ethereum’s Proof-of-Work history, dropping its score from 2.30 down to 1.65 (D+) even while GPU mining continued.',
+    verdictSummary:
+      'At Block 1,920,000, Foundation-led social coordination overrode cumulative Proof-of-Work to bail out The DAO contract—proving social subjectivity supersedes Landauer heat on Ethereum even before PoS.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.0,
+        telemetry:
+          '72M ETH premine intact; Foundation trademark capture forced non-bailed-out immutable chain onto minority ticker (ETC).',
+        normieParagraph:
+          'When insiders lost 3.6M ETH in The DAO contract in 2016, the Ethereum Foundation coordinated an emergency bailout fork and kept the ETH brand—proving human leadership stood above the protocol.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling across the Post-DAO PoW epoch (Blocks 1,920,000–15,537,393, scored 0.00 / 1.00), Ethereum empirically falsified its own "Code is Law" premise. Because Ethereum Foundation insiders and prominent genesis whales held massive exposure inside `TheDAO`, core leadership rushed out `go-ethereum v1.4.10` with a brief Carbonvote (<6% of ETH supply participating), hardcoded an irregular confiscation transfer at Block 1,920,000, and leveraged Foundation trademark ownership over "Ethereum" and `ETH` to relegate the unaltered original Proof-of-Work ledger to `ETC`—cementing discretionary human governance atop the 72M genesis premine.',
+        receipts: ['Block 1,920,000 Insider Bailout Fork', '<6% Supply Carbonvote Coordination', 'EF Trademark & Ticker Capture']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.35,
+        telemetry:
+          'Ethash GPU/ASIC PoW active, capped at 0.35 under the Energy-Arbitrage Law due to genesis premine overhang and EIP-1559 fee burn dynamics benefiting premined holders.',
+        normieParagraph:
+          'Miners still burned real electricity on GPUs and Ethash ASICs through September 2022, but developers repeatedly cut miner block rewards (from 5 ETH to 3 ETH to 2 ETH) and burned fees to enrich premined holders—keeping Cost Floor capped at 0.35.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0) from July 2016 to September 15, 2022 (scored 0.35 / 1.00 Capped)—industrial GPU farms and Bitmain/Innosilicon Ethash ASICs continued dissipating gigawatts of real electrical power, preserving `m > 0` foundational mass. However, core developers unilaterally rewrote monetary issuance three times without miner sovereignty—slashing block subsidies from `5 ETH` to `3 ETH` (`EIP-649` Byzantium, Oct 2017), then to `2 ETH` (`EIP-1234` Constantinople, Feb 2019), and incinerating base transaction fees via `EIP-1559` (London, Aug 2021)—structurally funneling deflationary accrual to the 72M zero-joule genesis premine under the Energy-Arbitrage clamp (`≤ 0.35`).',
+        receipts: ['EIP-649 & EIP-1234 Subsidy Cuts (5→3→2 ETH)', 'EIP-1559 Base-Fee Burn Accrual', '72M Zero-Joule Premine Overhang']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 0.3,
+        telemetry:
+          'Irreversibility breached at Block 1,920,000 via irregular state-transition bailout; archive state swells into multi-terabyte territory.',
+        normieParagraph:
+          'Hardcoding a manual balance seizure at Block 1,920,000 broke Ethereum’s historical immutability precedent, while multi-terabyte archive bloat pushed most users onto centralized RPC providers like Infura.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time across 2016–2022 (plunging from 0.75 down to 0.30 / 1.00) records a landmark violation of Landauer’s irreversibility boundary (`ΔQ ≥ kB·T·ln2`). Inside `consensus/misc/dao.go` (`ApplyDAOHardFork`), client developers hardcoded an explicit irregular state transition sweeping ~12M ETH out of DAO child contracts into `WithdrawDAO` (`0xbf4ed7b27f1d666546e30d74d50d173d20bca754`) without valid ECDSA signatures—proving social coordination could manually edit settled balances. Simultaneously, Shanghai/Spurious Dragon state-bloat attacks (`EIP-150`/`EIP-161`) and DeFi storage growth expanded full archive state past `10+ TB`, centralizing verification behind Infura and Alchemy RPC endpoints.',
+        receipts: ['consensus/misc/dao.go Irregular Sweep', 'Signature-Free State Confiscation', 'Multi-Terabyte Archive Node Bloat']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 0.65,
+        telemetry:
+          "Nakamoto/Ethash partition liveness preserved, though Difficulty Bomb ('Ice Age') hardcode repeatedly threatens manual developer-timed freezes.",
+        normieParagraph:
+          'Ethash Proof-of-Work still allowed isolated regions to keep producing blocks during network splits, though Ethereum’s hardcoded Difficulty Bomb repeatedly risked freezing block times unless developers shipped manual delays.',
+        geniusParagraph:
+          'Under wartime network partition dynamics between 2016 and The Merge, Ethereum maintained 0.65 / 1.00 on Dynamic Availability thanks to `EIP-100` (Byzantium uncle-aware per-block difficulty adjustment), which dynamically stabilized block intervals across hashpower drops without BFT supermajority halts. Yet protocol liveness remained hostage to Ethereum’s synthetic `Difficulty Bomb` (`calcDifficulty` exponential `2^(periodCount - 2)` term), which noticeably stretched mainnet block intervals during pre-Byzantium (2017), pre-Muir Glacier (Jan 2020), and Arrow Glacier/Gray Glacier episodes—forcing five separate developer-coordinated emergency defusal hardforks just to keep mainnet moving.',
+        receipts: ['EIP-100 Uncle-Aware Per-Block DAA', '5x Difficulty Bomb Defusal Forks', 'Pre-Merge PoW Partition Liveness']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.1,
+        telemetry:
+          'Global EVM gas auctions, Flashbots/MEV sandwich extraction, and severe state-trie bloat price out sovereign retail cash use.',
+        normieParagraph:
+          'As DeFi and NFTs exploded in 2020–2021, Ethereum’s single-lane EVM turned into $50–$200 gas fee wars and rampant MEV sandwich bots that priced everyday users off Layer 1.',
+        geniusParagraph:
+          'Examining Ethereum’s State Machine Topology across 2016–2022 (dropping to 0.10 / 1.00) demonstrates how sequential shared-state EVM execution collapses under real global demand. From the November 2017 Parity multi-sig library `selfdestruct` freeze (`513,774 ETH` permanently bricked) to 2020–2021 DeFi Summer, mutating shared AMM storage slots sequentially spawned systemic Priority Gas Auctions (PGAs) and institutionalized `Flashbots` (`mev-geth`) sealed-bid block auctions—extracting over `$600M+` in predatory front-running and sandwich MEV from retail users while `$50–$200` L1 gas spikes forced commerce onto centralized `USDC`/`USDT` blacklist contracts and multisig rollups.',
+        receipts: ['513,774 ETH Parity Library Freeze', 'Flashbots mev-geth Sandwich Extraction', '$50–$200 Sequential Gas Auctions']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 0.25,
+        frontierReference: 'KAS 1 BPS GHOSTDAG (Nov 2021+)',
+        telemetry:
+          '~13.3s sequential blocks (~15 TPS ceiling) fall an order of magnitude behind live 1-BPS parallel BlockDAG settlement.',
+        normieParagraph:
+          'Once Kaspa launched 1-second parallel Proof-of-Work blocks in late 2021, Ethereum’s ~13.3-second sequential chain (~15 TPS) fell more than ten times behind the live Proof-of-Work speed frontier.',
+        geniusParagraph:
+          'On Thermodynamic Velocity across the late PoW era (scored 0.25 / 1.00 under Dynamic Pareto-Frontier Normalization against live November 2021+ `KAS 1 BPS GHOSTDAG`), Ethereum’s ~13.3-second sequential chain (`15M–30M` gas limit, ~15 TPS base-layer throughput) became structurally obsolete prior to The Merge. Whereas Ethereum’s single-parent chain discarded all transactions inside concurrent `ommer` blocks (`M < 1.0`), live mainnet GHOSTDAG proved a fair-launched Proof-of-Work ledger could weave concurrent 1.0-second blocks in parallel with zero orphan waste—compressing Ethereum’s normalized velocity score before EIP-3675 reduced its physical work mass to zero.',
+        receipts: ['~13.3s Sequential Blocks (~15 TPS)', 'Outpaced 13x by Nov 2021 1-BPS GHOSTDAG', 'Discarded Uncle Block Throughput']
+      }
+    }
+  },
+  {
+    epochId: 'eth-2022-post-merge-pos',
+    epochLabel: 'Post-Merge PoS (Live)',
+    scrubberLabel: '2022+ Post-Merge PoS · LIVE',
+    dateOrHeight: 'Sep 15, 2022 (Block 15,537,394) — Present (2026)',
+    frontierContext: 'Live 10-BPS Crescendo + Toccata Frontier',
+    foundationalMassValid: false,
+    arbitrageCapTriggered: true,
+    totalScore: 0.0,
+    terminalGrade: 'F',
+    normieVerdictSummary:
+      'In September 2022 (The Merge), Ethereum shut off Proof-of-Work completely. Burning zero physical energy (E = 0) locks Invariants 04–06 to VOID and results in an automatic 0.00 / 6.00 (Grade F).',
+    verdictSummary:
+      'Paris (Block 15,537,394) severed Ethereum from physical energy expenditure (~99.95% PoW deletion). With m = 0, operational metrics lose all thermodynamic weight and lock to VOID.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.0,
+        telemetry:
+          '72M premine compounded by perpetuating zero-joule staking yield, liquid-staking (Lido) concentration, and OFAC-compliant MEV-Boost relay filtering.',
+        normieParagraph:
+          'Ethereum’s 72M genesis premine now earns perpetual zero-energy staking yield, while liquid-staking giants and two MEV-Boost builders control the vast majority of mainnet block production.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling (0.00 / 1.00), Post-Merge Ethereum compounds its 72,009,990 ETH zero-joule genesis premine and 2016 DAO rollback precedent with entrenched Proof-of-Stake plutocracy: liquid-staking and custodial giants (Lido, Coinbase, Binance) dominate validator keys while >80% of mainnet execution payloads funnel through a two-builder `MEV-Boost` oligopoly (Beaverbuild/Titan) and OFAC-filtering relays.'
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'VOID_UNANCHORED',
+        score: 0.0,
+        telemetry:
+          'FATAL BREACH (E = 0): Gasper Proof-of-Stake signs blocks at ~0 marginal joules. Triggers Conservation of Energy Floor override.',
+        normieParagraph:
+          'With The Merge in September 2022, Ethereum deleted Proof-of-Work and began minting ETH via zero-energy validator signatures—triggering an automatic Grade F.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E = 0, scored 0.00 / 1.00)—`EIP-3675` (Paris, Block 15,537,394) hardcoded `TerminalTotalDifficulty = 58750000000000000000000` and permanently severed Ethereum from irreversible electrical work, replacing bare-metal hashing with zero-joule BLS signatures gated behind `32 ETH` capital locks and triggering the Multiplicative VOID Gate (`m = 0 ⇒ p = 0.00`).'
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'VOID_UNANCHORED',
+        score: 0.0,
+        telemetry:
+          'Requires social Weak Subjectivity checkpoints to block zero-cost long-range attacks; no Landauer heat wall protects canonical history.',
+        normieParagraph:
+          'Because validator signatures cost zero electricity to forge, Ethereum nodes require trusted social Weak Subjectivity checkpoints to sync safely and delete L2 blob data after ~18 days.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time (0.00 / 1.00) confirms zero Landauer heat protection (`ΔQ = 0`): weightless historical validator keys force syncing nodes to rely on out-of-band social Weak Subjectivity checkpoints (`--checkpoint-sync-url`) against costless long-range attacks, while `EIP-4844` purges L2 blobs after 4,096 epochs (~18 days).'
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: Strong multi-client diversity (Geth/Nethermind/Reth + Prysm/Lighthouse), but Gasper finality halts if >33.3% stake partitions and triggers inactivity-leak slashing.',
+        normieParagraph:
+          'Because E = 0, Availability locks to VOID. Forensically, Casper finality halts whenever >33.3% of staked ETH goes offline (already seen twice in May 2023) and slashes isolated validators.',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Forensically, despite execution/consensus client diversity, Gasper (`Casper FFG` + `LMD-GHOST`) halts epoch finality whenever ≥33.4% of stake partitions—empirically triggered twice on mainnet on May 11–12, 2023—and activates a quadratic `inactivity_penalty_quotient` leak that bleeds isolated hemispheres into irreconcilable split finality.'
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: Sequential EVM + centralized single-sequencer L2 rollups (EIP-4844/PeerDAS blobs) bound by M_overlay < M_L1 and PBS builder MEV monopolies.',
+        normieParagraph:
+          'Locked to VOID because E = 0. Forensically, sequential EVM state locks and MEV extraction push everyday users onto fragmented Layer-2 rollups run by centralized single sequencers.',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Forensically, single-threaded global Merkle Patricia Trie execution breeds institutional MEV-Boost sandwiching and forces retail scaling onto fragmented, multisig-governed single-sequencer L2 rollups (`EIP-4844`/PeerDAS blobs) strictly subordinated to `M_overlay < M_L1`.'
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: 12s slot cadence / ~12.8m (2-epoch) Casper FFG finality carries zero physical mass (M = 0.00).',
+        normieParagraph:
+          'Locked to VOID because E = 0. Electing one zero-energy proposer every 12 seconds (~12.8 minutes for finality) carries zero physical settlement momentum (M = 0).',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Electing a single RANDAO proposer every 12 seconds (~15–20 L1 TPS, ~12.8-minute 2-epoch Casper FFG finality) at strictly 0.00 Joules yields zero physical settlement momentum (`M = 0.00`) against Kaspa’s 10-BPS parallel PoW BlockDAG (`M = 1.0`).'
+      }
+    }
+  }
+] satisfies HistoricalSnapshot[]).map(evaluateThermodynamicGate);
+
+const BTC_HISTORICAL_SNAPSHOTS: HistoricalSnapshot[] = ([
+  {
+    epochId: 'btc-2010-satoshi-frontier',
+    epochLabel: 'Satoshi Cash Frontier',
+    scrubberLabel: '2009 Satoshi Cash PoW',
+    dateOrHeight: 'Jan 3, 2009 — Dec 2010 (Blocks 0 — 100,000)',
+    frontierContext: 'Sole E > 0 Sovereign Monetary Protocol in Existence',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 6.0,
+    terminalGrade: 'A+',
+    normieVerdictSummary:
+      'In 2009–2010, before mining pools, Wall Street ETFs, or faster parallel BlockDAGs existed, Satoshi’s original peer-to-peer Bitcoin cash network defined the 6.00 / A+ standard across all six invariants.',
+    verdictSummary:
+      'In the Genesis era prior to faster PoW topologies, pool centralization, or Wall Street ETF custody, Bitcoin defined the 1.00 Pareto frontier across all six physical axes.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Public Jan 3, 2009 launch with Times headline timestamp; zero premine, zero tax, Satoshi coins never spent.',
+        normieParagraph:
+          'Satoshi launched Bitcoin publicly on January 3, 2009 with zero premine, zero VC coins, zero dev tax, and never spent a single early-mined coin—setting the gold standard for fair-launch sovereignty.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling during the 2009–2010 Satoshi Cash Frontier (Blocks 0–100,000, scored 1.00 / 1.00), Bitcoin established the immaculate Genesis standard: timestamped irreversibly via *The Times 03/Jan/2009 Chancellor on brink of second bailout for banks* inside `main.cpp`, with Block 0’s 50 BTC output cryptographically unspendable, zero premine, zero venture allocation, zero coinbase tax, solo CPU nodes (`setgenerate true`), and zero Wall Street ETF or KYC mining-pool concentration.',
+        receipts: ['Jan 3, 2009 Times Headline Timestamp', 'Unspendable Block 0 Genesis Output', 'Zero Premine • Solo CPU Mining']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry: '100% pure SHA-256 Proof-of-Work issuance; zero energy arbitrage.',
+        normieParagraph:
+          'Every single bitcoin in existence was forged by burning real electrical power through SHA-256 Proof-of-Work under a hard 21-million cap, with zero free insider coins.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 1.00 / 1.00)—100% of circulating satoshis entered existence exclusively via double-`SHA-256` (`SHA256(SHA256(BlockHeader))`) Proof-of-Work under the deterministic 210,000-block halving schedule (`50 BTC` subsidy converging to `20,999,999.9769 BTC`), establishing pure 24-karat thermodynamic issuance with zero zero-joule supply dilution.',
+        receipts: ['100% Double-SHA-256 PoW Issuance', '21,000,000 BTC Deterministic Cap', 'Zero Energy-Arbitrage Dilution']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Full Genesis-to-tip verification on any standard consumer desktop CPU and laptop drive.',
+        normieParagraph:
+          'Any ordinary home laptop in 2009–2010 could download and verify every Bitcoin transaction from Block 0 in minutes, protected purely by cumulative Proof-of-Work.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time across Blocks 0–100,000 (scored 1.00 / 1.00) demonstrates bare-metal consumer verification at its purest: the entire blockchain weighed under `150 MB`, enabling any home laptop CPU to validate every ECDSA signature and cumulative `nChainWork` header from Genesis in minutes under Landauer’s Principle (`ΔQ ≥ kB·T·ln2`).',
+        receipts: ['<150 MB Full Ledger Footprint', '100% Consumer Laptop Verification', 'Cumulative nChainWork Finality']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'BTC 2016-Block DAA (Sole PoW Standard)',
+        telemetry:
+          'Only permissionless partition-tolerant consensus engine on Earth; BFT alternatives required fixed quorums.',
+        normieParagraph:
+          'In 2009, every prior distributed database halted if a fixed server committee went offline; Bitcoin was the only permissionless network on Earth that kept running across global splits.',
+        geniusParagraph:
+          'Under Dynamic Pareto-Frontier Normalization during 2009–2010 (scored 1.00 / 1.00 against the sole live `E > 0` monetary protocol in existence), Satoshi’s `2,016-block` difficulty retarget (`GetNextWorkRequired` in `main.cpp`) represented a historic breakthrough over classical classical PBFT/Paxos quorums—allowing asynchronous nodes to join, leave, and survive network partitions without coordinator permission before per-block DAA algorithms were invented.',
+        receipts: ['First Asynchronous Partition-Tolerant Ledger', 'Zero BFT Quorum Halts', '2009–2010 Sole PoW DAA Frontier']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'BTC Stateless UTXO',
+        telemetry: 'Pioneered parallel, stateless UTXO verification without global account locks.',
+        normieParagraph:
+          'Satoshi invented the stateless UTXO model for peer-to-peer electronic cash, verifying independent coins cleanly without global account locks, MEV bots, or custodial L2 hubs.',
+        geniusParagraph:
+          'Examining Bitcoin’s State Machine Topology in 2009–2010 (scored 1.00 / 1.00 as the pioneering `BTC Stateless UTXO` frontier) highlights Satoshi’s discrete Unspent Transaction Output graph (`CTxIn` / `CTxOut`) with native stack-based locking scripts, tiny sub-cent on-chain fees, zero `1 MB` congestion wall (`MAX_BLOCK_SIZE` had zero binding pressure at <10 KB blocks), and zero dependence on hub-and-spoke Lightning channels.',
+        receipts: ['Pioneering Stateless UTXO Graph', 'Sub-Cent On-Chain Cash Transfers', 'Zero L2 Custodial Channel Dependence']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'BTC 600s PoW (Sole E > 0 Benchmark)',
+        telemetry:
+          '10-minute PoW settlement beat multi-day correspondent banking wires with zero trusted third party.',
+        normieParagraph:
+          'Settling global bearer cash in 10 minutes with zero bank intermediaries beat 3-to-5-day wire transfers and stood as the fastest Proof-of-Work network on Earth in 2009–2010.',
+        geniusParagraph:
+          'On Thermodynamic Velocity during 2009–2010 (scored 1.00 / 1.00 under Dynamic Pareto-Frontier Normalization as the sole live `E > 0` protocol on Earth), Bitcoin’s `nPowTargetSpacing = 600s` compressed cross-border final settlement from multi-day SWIFT/correspondent clearing into ~10-minute cryptographic Proof-of-Work blocks—prior to faster sequential PoW chains or parallel BlockDAG consensus (`k > 0`) advancing the live physical frontier.',
+        receipts: ['Sole Live E > 0 Settlement Rail (2009)', '600s Bearer PoW vs 5-Day Bank Wires', 'Zero Orphan Pressure at Genesis Scale']
+      }
+    }
+  },
+  {
+    epochId: 'btc-2026-live',
+    epochLabel: 'Live Institutional Era',
+    scrubberLabel: '2026+ Institutional Era · LIVE',
+    dateOrHeight: 'Nov 2026 (~991 EH/s, Post-ETF & Post-Crescendo/Toccata)',
+    frontierContext: 'Normalized Against Live 10-BPS Parallel BlockDAG + L1 Covenant Frontier',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 4.25,
+    terminalGrade: 'B+',
+    verdictSummary:
+      "Bitcoin's thermodynamic purity (01–03) remains untouched, but L1 ossification pushed custody to Wall Street ETFs (84% Coinbase Custody), concentrated >60% of hashrate in 3 pools, and left its 600s k=0 chain two orders of magnitude behind the live PoW frontier.",
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 0.95,
+        telemetry:
+          'Immaculate L1 rules, tempered operationally by ~84% US ETF custody concentration at Coinbase and >60% block-template control across Foundry USA (KYC), AntPool, and F2Pool.'
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          '100% pure SHA-256 energy assay (~991 EH/s); zero premine or coinbase tax dilution.'
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Deepest cumulative Landauer heat wall in human history, fully verifiable on commodity consumer hardware.'
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 0.45,
+        frontierReference: 'KAS Per-Block Sampled DAA (~44m window)',
+        telemetry:
+          '2,016-block (~14-day) retarget epoch stretches a severed 10% hemisphere to 100-minute blocks for ~20 weeks before adjusting.'
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.65,
+        frontierReference: 'KAS Toccata UTXO Covenants (DAA 474,165,565)',
+        telemetry:
+          'Clean UTXO base, but crippled L1 scripting forces users onto custodial/hub-and-spoke Lightning overlays (Gini ~0.97, top 10 nodes ~62% capacity).'
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 0.2,
+        frontierReference: 'KAS 10 BPS / 100ms GHOSTDAG (M = 1.0)',
+        telemetry:
+          '600,000ms sequential k=0 chain (~7 TPS, <1% fee-to-reward ratio) vs. 100ms orphan-free parallel BlockDAG settlement.'
+      }
+    }
+  }
+] satisfies HistoricalSnapshot[]).map(evaluateThermodynamicGate);
+
+const KAS_HISTORICAL_SNAPSHOTS: HistoricalSnapshot[] = ([
+  {
+    epochId: 'kas-2024-1bps',
+    epochLabel: '1 BPS Pre-Covenant Era',
+    scrubberLabel: '2023 1 BPS Pre-Covenant',
+    dateOrHeight: 'May 2023 — May 5, 2025 (Pre-DAA 110,165,000)',
+    frontierContext: '1-BPS GHOSTDAG Velocity Apex / BCH CashTokens Covenant Apex',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 5.75,
+    terminalGrade: 'A',
+    normieVerdictSummary:
+      'At 1 block per second, Kaspa already led all fair-launch Proof-of-Work networks in speed and uptime—losing 0.25 only on State Topology because Bitcoin Cash had already shipped live Layer-1 covenants (5.75 / 6.00, Grade A).',
+    verdictSummary:
+      'Even at 1 BPS, Kaspa held the undisputed 1.00 Velocity apex among pure fair-launch PoW networks—dropping 0.25 points strictly on State Topology because Bitcoin Cash (Block 792,772 CashTokens) already shipped live L1 UTXO covenants.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Fair public launch Nov 7, 2021; zero premine, zero VC allocation, zero mandatory coinbase dev tax.',
+        normieParagraph:
+          'Kaspa launched fairly on November 7, 2021 with zero premine, zero venture capital coins, zero developer tax, and no corporate kill-switches.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling during the 1-BPS era (scored 1.00 / 1.00), Kaspa operated from its immaculate November 7, 2021 fair-launch Genesis with zero premine, zero ICO, zero venture-capital cliff unlocks, zero mandatory coinbase developer tax, and complete `rusty-kaspa` entity decoupling (`∂G / ∂E_admin = 0`).',
+        receipts: ['Nov 7, 2021 Fair-Launch Genesis', '0% Premine / VC / Dev Tax', 'Zero Admin Multisig Keys']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          '100% pure optical-ready kHeavyHash PoW; every sompi forged via irreversible electrical work.',
+        normieParagraph:
+          '100% of circulating KAS was mined by burning real electrical power on kHeavyHash hardware under a strict 28.7-billion supply cap.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 1.00 / 1.00)—every atomic sompi across Kaspa’s deterministic 28.7-billion Chromatic emission curve (`(1/2)^(1/12)` monthly geometric decay) was forged strictly via irreversible `kHeavyHash` Proof-of-Work with zero energy-arbitrage dilution.',
+        receipts: ['100% kHeavyHash PoW Issuance', '28.7B Chromatic Cap', 'Zero Zero-Joule Supply Dilution']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Trustless PoPoW header verification from Genesis with rolling ~30-hour pruning on consumer hardware.',
+        normieParagraph:
+          'Home computers verified cumulative Proof-of-Work all the way back to Genesis using cryptographic pruning proofs without trusting cloud snapshots.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time at 1 BPS (scored 1.00 / 1.00) confirms full Landauer finality (`ΔQ ≥ kB·T·ln2`) paired with trustless `PoPoW` / Pruning Point header verification from Genesis inside a lightweight ~30-hour rolling pruning horizon on consumer SSDs.',
+        receipts: ['Trustless PoPoW Genesis Proofs', 'Rolling ~30h Consumer Pruning', 'Zero Trusted Cloud Snapshots']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS 2,641-Window Per-Block DAA',
+        telemetry:
+          'Per-block difficulty recalibration keeps isolated partitions live and merges parallel sub-DAGs cleanly upon cable resplice.',
+        normieParagraph:
+          'Adjusting mining difficulty every single 1-second block allowed severed continents to keep settling transactions and merge parallel blocks cleanly when reconnected.',
+        geniusParagraph:
+          'Under wartime network partition stress during the 1-BPS era (scored 1.00 / 1.00), Kaspa’s 2,641-block (~44-minute) per-block DAA window recalibrated difficulty on every 1,000ms block so isolated hash shards recovered cadence rapidly and merged non-conflicting UTXOs cleanly within `merge_depth` upon fiber resplice.',
+        receipts: ['2,641-Block Per-Block DAA Window', 'Zero Quorum Halt Threshold', 'Deterministic Blue-Work Merge']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.75,
+        frontierReference: 'BCH CashTokens L1 UTXO Covenants (Block 792,772)',
+        telemetry:
+          'Contention-free parallel UTXO base, but lacked native L1 transaction introspection and covenant opcodes already live on Bitcoin Cash.',
+        normieParagraph:
+          'Kaspa’s parallel UTXO design prevented shared-state gas wars, but it lost 0.25 because Bitcoin Cash had already activated native Layer-1 smart-contract covenants in May 2023.',
+        geniusParagraph:
+          'Examining State Machine Topology in 2023–early 2025 (scored 0.75 / 1.00 under Dynamic Pareto-Frontier Normalization against live `BCH CashTokens` activated May 15, 2023 at Block 792,772) reflects exact rubric neutrality: while Kaspa’s stateless UTXO graph eliminated EVM shared-trie contention, `rusty-kaspa` had not yet shipped native L1 transaction introspection, covenants, or ZK opcodes on mainnet.',
+        receipts: ['Stateless Parallel UTXO Base', 'Benchmarked vs BCH Block 792,772 CashTokens', 'Pre-Toccata Covenant Gap (-0.25)']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS 1,000ms GHOSTDAG (Fastest Pure PoW)',
+        telemetry:
+          '1.0s parallel BlockDAG confirmation with zero orphan waste—13x faster than ETC (13s), 15x faster than DGB (15s), and 600x faster than BTC.',
+        normieParagraph:
+          'Settling parallel Proof-of-Work blocks every 1 second with zero wasted orphan blocks made Kaspa 600x faster than Bitcoin and the fastest pure PoW network on Earth.',
+        geniusParagraph:
+          'On Thermodynamic Velocity during the 1-BPS epoch (scored 1.00 / 1.00 as the fastest live pure PoW protocol on Earth), `GHOSTDAG` (`k = 18`, 1,000ms block interval) folded 100% of honest concurrent global blocks into canonical consensus ordering (`M = 1.0`), running 15x faster than 15s DigiByte and 600x faster than 600s Bitcoin.',
+        receipts: ['1,000ms Parallel GHOSTDAG (k = 18)', 'Zero Orphan Hashpower Waste (M = 1.0)', '600x Faster Cadence Than BTC']
+      }
+    }
+  },
+  {
+    epochId: 'kas-2025-crescendo',
+    epochLabel: 'Crescendo 10 BPS Fork',
+    scrubberLabel: '2025 Crescendo 10 BPS',
+    dateOrHeight: 'May 5, 2025 (DAA 110,165,000) — Jun 29, 2026',
+    frontierContext: '10-BPS Parallel PoW Frontier (158.4M Tx/24h Mainnet Proof)',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 5.8,
+    terminalGrade: 'A+',
+    normieVerdictSummary:
+      'On May 5, 2025, Crescendo scaled Kaspa 10x from 1 block per second to 10 blocks per second (100ms) with zero downtime, lifting its score to 5.80 / 6.00 (A+) ahead of Toccata covenants.',
+    verdictSummary:
+      "KIP-14 Crescendo scaled PoW block cadence 10x in mid-flight (1,000ms to 100ms) with zero downtime, dragging sequential PoW chains' relative Velocity scores lower while awaiting Toccata covenants.",
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Decentralized hardfork executed cleanly with exact sompi-for-sompi preservation of the Chromatic emission curve.',
+        normieParagraph:
+          'Independent miners and node operators activated the 10-BPS Crescendo upgrade cleanly without altering a single coin of Kaspa’s fair-launch supply schedule.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling across Crescendo (`DAA 110,165,000`, scored 1.00 / 1.00), global miners and node operators executed a 10x consensus cadence hardfork with exact sompi-for-sompi preservation of the Chromatic emission curve, zero dev tax, and zero foundation admin keys.',
+        receipts: ['DAA 110,165,000 Clean Activation', 'Unaltered Chromatic Supply Schedule', 'Zero Premine / Zero Dev Tax']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry: '100% pure kHeavyHash PoW across 864,000 blocks/day.',
+        normieParagraph:
+          'All 864,000 daily blocks continued to require real kHeavyHash ASIC electricity with zero premined or zero-energy coins.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 1.00 / 1.00)—scaling block cadence to `864,000` PoW blocks per day preserved 100% pure `kHeavyHash` ASIC electrical expenditure across every issued sompi while strengthening sub-second fee-market density.',
+        receipts: ['864,000 kHeavyHash PoW Blocks/Day', '100% E > 0 Marginal Issuance', 'Zero Insider Arbitrage']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry:
+          'Full validating rusty-kaspa node sustained on 8 cores / 16 GB RAM / 256 GB SSD (`pruning_depth = 1,080,000`).',
+        normieParagraph:
+          'Even at 10 blocks per second, ordinary home hardware (8 cores, 16 GB RAM, 256 GB SSD) verified the entire chain from Genesis without trusted snapshots.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time under 10-BPS Crescendo (scored 1.00 / 1.00) demonstrates engineered bare-metal accessibility: `rusty-kaspa` sustained full PoPoW Genesis-to-tip verification within an 8-core / 16 GB RAM / 256 GB NVMe consumer envelope (`pruning_depth = 1,080,000`, ~30 hours).',
+        receipts: ['8-Core / 16 GB Consumer Node Baseline', 'pruning_depth = 1,080,000 (~30h)', 'PoPoW Genesis Verification']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS KIP-14 Sampled DAA',
+        telemetry:
+          '100ms per-block sampled DAA (~44m window) + `merge_depth = 36,000` guarantees wartime partition continuity.',
+        normieParagraph:
+          'KIP-14 sampled difficulty adjustment recalibrated every 100 milliseconds, keeping isolated shards live during cable cuts and merging sub-1-hour splits without losing transactions.',
+        geniusParagraph:
+          'Under wartime partition stress across 2025–2026 (scored 1.00 / 1.00), `KIP-14` Sampled DAA (`2,641` sampled checkpoints across `26,410` blocks, ~44m window) recalibrated difficulty every 100ms while `merge_depth = 36,000` (<1 hour, `k = 124`) wove partitioned sub-DAGs seamlessly back together upon cable resplice.',
+        receipts: ['KIP-14 100ms Sampled DAA', 'merge_depth = 36,000 (<1h Merge)', 'k = 124 Parallel Anticone Bound']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.8,
+        frontierReference: 'BCH CashTokens / Layla UTXO Covenants',
+        telemetry:
+          'KIP-9 storage mass active and randomized 10-BPS parallel block production suppresses leader MEV, pending native L1 covenant opcodes.',
+        normieParagraph:
+          'KIP-9 storage mass protected state size and 10-BPS parallel mining neutralized MEV bots, leaving only a 0.20 gap until native Toccata covenants launched in June 2026.',
+        geniusParagraph:
+          'Examining State Machine Topology post-Crescendo (scored 0.80 / 1.00 against live `BCH CashTokens / Layla` covenants) credits `KIP-9` harmonic storage-mass UTXO bloat protection and randomized 10-BPS parallel leaderless block creation eliminating single-proposer MEV slots, while deducting 0.20 prior to `Toccata` L1 covenant activation.',
+        receipts: ['KIP-9 Storage Mass Protection', 'Parallel Leaderless MEV Suppression', 'Pre-Toccata Covenant Deduction (-0.20)']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS 100ms GHOSTDAG (5,584 Peak TPS)',
+        telemetry:
+          'Settled 158.4M mainnet transactions on Oct 5, 2025 at sub-cent fees—establishing the 10-BPS PoW standard.',
+        normieParagraph:
+          '100-millisecond Proof-of-Work blocks settled 158.4 million real mainnet transactions in a single day on October 5, 2025 at sub-cent fees.',
+        geniusParagraph:
+          'On Thermodynamic Velocity under KIP-14 Crescendo (scored 1.00 / 1.00), live `10 BPS` (`100ms`) GHOSTDAG settled `158.4 million` mainnet UTXO transactions in 24 hours on October 5, 2025 (`5,584 TPS` peak) at sub-cent fees with zero orphan hash waste (`M = 1.0`)—compressing every sequential PoW chain’s normalized velocity score.',
+        receipts: ['158.4M Mainnet TXs in 24h (Oct 5, 2025)', '100ms Parallel PoW Cadence (5,584 Peak TPS)', 'M = 1.0 Zero Orphan Waste']
+      }
+    }
+  },
+  {
+    epochId: 'kas-2026-toccata',
+    epochLabel: 'Toccata Covenants (Live)',
+    scrubberLabel: '2026+ Toccata Covenants · LIVE',
+    dateOrHeight: 'Jun 30, 2026 (DAA 474,165,565) — Present',
+    frontierContext: 'Live 6.00 Pareto Frontier (DAGKnight & 100 BPS Excluded)',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 6.0,
+    terminalGrade: 'A+',
+    verdictSummary:
+      'Toccata (KIP-16, KIP-17, KIP-20, KIP-21) activated native L1 UTXO Covenants, SilverScript, inline ZK verification, and partitioned sequencing—closing the final 0.20 State Topology gap on live mainnet.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry: 'Zero premine, zero coinbase dev tax, zero corporate admin keys.'
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry: '100% pure E > 0 Proof-of-Work monetary base.'
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 1.0,
+        telemetry: 'Consumer bare-metal verification from Genesis via PoPoW without trusted snapshots.'
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS KIP-14 Sampled DAA',
+        telemetry:
+          'Continuous block production across arbitrary network splits with deterministic Blue-Work reconciliation.'
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS Toccata Stateful UTXO + ZK Opcodes',
+        telemetry:
+          'Stateless parallel UTXO covenants + inline ZK verification + KIP-21 sequencing lanes eliminate shared-account locks and leader MEV.'
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 1.0,
+        frontierReference: 'KAS 100ms GHOSTDAG (M = 1.0)',
+        telemetry:
+          '864,000 PoW blocks/day live on mainnet (roadmap 100 BPS & DAGKnight strictly excluded from score).'
+      }
+    }
+  }
+] satisfies HistoricalSnapshot[]).map(evaluateThermodynamicGate);
 
 export const PRELOADED_AUDITS: Record<string, AuditData> = {
   KAS: {
@@ -63,6 +775,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'Dynamic Availability (Wartime Partition)',
         telemetry: 'GHOSTDAG 10-BPS • KIP-14 Per-Block DAA • [DAGKnight Roadmap / KIP-2]',
         score: 1.0,
+        frontierReference: 'KAS KIP-14 Sampled DAA',
         quickSummary:
           'Recalculates difficulty every 100ms block (KIP-14) so even a 10% partition returns to 10.0 BPS within hours, merging sub-DAGs inside merge_depth = 36,000 (~1h) via live GHOSTDAG while honoring bounded finality walls.',
         paragraph:
@@ -77,6 +790,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'State Machine Topology',
         telemetry: 'Parallel UTXO + Toccata SilverScript',
         score: 1.0,
+        frontierReference: 'KAS Toccata Stateful UTXO + ZK Opcodes',
         quickSummary:
           'Stateless parallel Extended UTXO graph upgraded with Toccata native L1 Covenants, SilverScript & KIP-21 partitioned sequencing commitments (June 30, 2026 • DAA 474,165,565).',
         paragraph:
@@ -91,6 +805,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'Thermodynamic Velocity (M = 1.0)',
         telemetry: '10 BPS Crescendo • M = 1.0 Zero Orphans',
         score: 1.0,
+        frontierReference: 'KAS 100ms GHOSTDAG (M = 1.0)',
         quickSummary:
           'Incorporates 100% of honest parallel PoW blocks at 10 BPS (100ms intervals) on consumer hardware (8c / 16GB / ~40–50 Mbps) with zero orphan energy waste (M = 1.0).',
         paragraph:
@@ -99,7 +814,8 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
           'On the sixth physical invariant—Thermodynamic Velocity (M = 1.0, scored 1.00 / 1.00)—Kaspa solves the fundamental physical bottleneck that crippled Satoshi Nakamoto’s 2009 sequential chain. In a single-file blockchain, block creation must be artificially throttled (e.g., 600 seconds on Bitcoin or 120 seconds on Monero) because any concurrent blocks solved across global fiber-optic propagation latency collide and get discarded as wasted stale orphans (M < 1.0). By generalizing Nakamoto consensus into a parallel GHOSTDAG BlockDAG running live at 10 blocks per second (100ms block intervals) on the Crescendo rusty-kaspa architecture—sustainable on a modest `8 CPU core / 16 GB RAM / 256 GB SSD / ~5 MB/s (~40–50 Mbps)` node footprint—Kaspa weaves 100% of honest concurrent global kHeavyHash work into consensus simultaneously, achieving unity Thermodynamic Velocity (M = 1.0), ~2.5+ billion settled mainnet transactions, and seconds-level pure Proof-of-Work finality natively on Layer 1 without validator vote-padding or off-chain batcher servers.',
         receipts: ['10 BPS (100ms Block Intervals)', 'M = 1.0 Work Utilization', '8c / 16GB / ~45 Mbps Sustain', '~2.5B+ Mainnet TXs Settled']
       }
-    ]
+    ],
+    historicalSnapshots: KAS_HISTORICAL_SNAPSHOTS
   },
 
   BTC: {
@@ -161,6 +877,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'Dynamic Availability (Wartime Partition)',
         telemetry: '2,016-Block DAA Freeze • nChainWork Minority Amputation',
         score: 0.65,
+        frontierReference: 'KAS Per-Block Sampled DAA (~44m window)',
         quickSummary:
           'Pre-cut UTXOs survive across severed continents without halting, yet a rigid 2,016-block epoch freezes a 10% shard at ~100-min blocks for ~10 weeks before ActivateBestChain orphans 100% of lower-nChainWork blocks & triggers 4-layer minority commerce loss.',
         paragraph:
@@ -175,6 +892,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'State Machine Topology',
         telemetry: 'Linear UTXO • Stripped L1 Opcodes',
         score: 0.6,
+        frontierReference: 'KAS Toccata UTXO Covenants (DAA 474,165,565)',
         quickSummary:
           'Clean stateless UTXO base model, but stripped L1 covenants force everyday users onto Lightning channel friction, federated sidechains, and custodial ETFs.',
         paragraph:
@@ -189,6 +907,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         title: 'Thermodynamic Velocity (M = 1.0)',
         telemetry: '0.00167 BPS (600s) • ~7 TPS Ceiling • Orphans Discarded',
         score: 0.2,
+        frontierReference: 'KAS 10 BPS / 100ms GHOSTDAG (M = 1.0)',
         quickSummary:
           'Hardcodes a 600-second block delay and a 4MWU (~7 TPS) block cap to suppress linear orphan collisions, trailing faster/wider linear PoW chains and BlockDAGs (M < 1.0).',
         paragraph:
@@ -197,7 +916,8 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
           'On Thermodynamic Velocity (M = 1.0, scored 0.20 / 1.00 under the deterministic velocity rubric), Bitcoin’s 2009 single-file linear chain topology imposes the tightest artificial speed limit among major Proof-of-Work networks. Because a linear blockchain only permits a single parent block per height and discards simultaneously discovered blocks across transoceanic fiber-optic propagation latency as wasted stale orphans (M < 1.0), Bitcoin hardcodes nPowTargetSpacing = 600 seconds (0.00167 blocks per second) alongside a rigid 4,000,000 weight-unit (~7 TPS) ceiling. Requiring 60 full minutes for routine 6-block probabilistic settlement leaves Bitcoin trailing both elastic-block linear chains like Bitcoin Cash (0.38) and faster-cadence Scrypt chains like Litecoin (0.35)—and standing orders of magnitude behind Kaspa’s 10-BPS parallel Proof-of-Work BlockDAG settling concurrent UTXOs at 100ms intervals (M = 1.0).',
         receipts: ['600-Second Block Delay', 'Concurrent Blocks Orphaned', '~7 TPS L1 Settlement Cap']
       }
-    ]
+    ],
+    historicalSnapshots: BTC_HISTORICAL_SNAPSHOTS
   },
 
   XAU: {
@@ -1556,7 +2276,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'Ethereum conjured 72 million ETH at Genesis for ICO buyers, insiders, and the Swiss Ethereum Foundation, proved mutable via the 2016 DAO bailout hardfork, and today concentrates consensus across liquid-staking/custodial giants while two MEV-Boost builders construct >80% of blocks.',
         geniusParagraph:
-          'At the foundational layer of Existential Sovereignty and Entity Decoupling (0.00 / 1.00), Ethereum conjured 72,000,000 ETH (~60% of initial supply) at Genesis for ICO buyers, insiders, and the Swiss Ethereum Foundation, proved discretionary mutability via the July 2016 DAO bailout irregular state transition hardfork, and concentrates block construction inside a two-builder MEV-Boost cartel (>80% of mainnet blocks) alongside regulated liquid-staking giants and centralized L2 sequencer multisigs.',
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling (0.00 / 1.00), Ethereum failed inside its July 30, 2015 Block 0 configuration (`params/genesis.go` / `genesis_block.json`), instantiating 72,009,990 ETH (~60% of initial supply) at strictly 0.00 Joules across pre-sale buyers (60.1M ETH) and early insiders/Stiftung Ethereum (11.9M ETH). Core leadership empirically proved administrative mutability on July 20, 2016 at Block 1,920,000 (`consensus/misc/dao.go`) by executing a signature-free irregular state-transition bailout for `TheDAO` and leveraging Foundation trademark ownership to relegate the unaltered chain to `ETC`. Today under Proof-of-Stake, capital-weighted governance compounds that genesis overhang across regulated liquid-staking/custodial pools (Lido, Coinbase, Binance), >80% mainnet block-construction concentration inside a two-builder `MEV-Boost` oligopoly (Beaverbuild/Titan) with OFAC-filtering relays, and upgradeable multisig Layer-2 sequencers.',
         receipts: ['72,000,000 ETH Genesis Premine', '2016 DAO Bailout Rollback', '>80% Duo MEV-Boost Builder Cartel', 'Centralized L2 Sequencer Multisigs']
       },
       {
@@ -1570,7 +2290,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'With EIP-3675 (The Merge) in September 2022, Ethereum voluntarily destroyed its Proof-of-Work cost floor (E = 0 Joules), enshrining a Cantillon Proof-of-Stake regime with no hard supply cap and six monetary-policy changes in ten years.',
         geniusParagraph:
-          'With EIP-3675 (The Merge) in September 2022, Ethereum voluntarily severed its ledger from the Thermodynamic Cost Floor (E = 0 Joules, scored 0.00 / 1.00), replacing bare-metal Ethash Proof-of-Work with 0-Joule Proof-of-Stake issuance gated behind a `32 ETH` capital wall with no hard supply cap and six discretionary monetary-policy rewrites in ten years.',
+          'At the second physical invariant—the Thermodynamic Cost Floor (E = 0 Joules, scored 0.00 / 1.00)—`EIP-3675` (Paris, Block 15,537,394 on September 15, 2022 at `TTD = 58750000000000000000000`) permanently severed Ethereum from the First Law of Thermodynamics, deleting ~99.95% of real-world electrical hash expenditure and replacing bare-metal Ethash Proof-of-Work with zero-joule BLS validator signatures gated behind a `32 ETH` (`EIP-7251` `2,048 ETH` MaxEB) capital wall. Operating with zero hard maximum supply cap and at least six discretionary monetary-policy rewrites in ten years (`5→3→2 ETH` cuts, `EIP-1559` burn, Merge issuance rewrite, blob fee tweaks), Post-Merge Ethereum institutionalizes perpetual zero-joule Cantillon yield for premined stake—triggering the Multiplicative VOID Gate (`m = 0 ⇒ p = 0.00`) across Invariants 04–06.',
         receipts: ['E = 0 Joules Post-Merge PoS', 'No Hard Maximum Supply Cap', '32-ETH Capital Gatekeeping']
       },
       {
@@ -1584,7 +2304,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'Zero-joule validator signatures force Ethereum to rely on social Weak Subjectivity checkpoints against long-range attacks while EIP-4844 deletes L2 blobs after ~18 days and EIP-4444 offloads historical pre-Merge history to third-party portals.',
         geniusParagraph:
-          'Ethereum fails Historical Immutability and the Physical Arrow of Time (0.00 / 1.00): zero-joule BLS validator signatures force newly syncing nodes to rely on trusted social Weak Subjectivity checkpoints to defeat long-range stake attacks, while EIP-4844 deletes L2 blobs after ~18 days and EIP-4444 prunes historical pre-Merge block bodies onto third-party portals.',
+          'Examining Historical Immutability and the Physical Arrow of Time (0.00 / 1.00) demonstrates why zero-joule Proof-of-Stake lacks Landauer’s irreversible heat wall (`ΔQ ≥ kB·T·ln2`). Because historical validator private keys can re-sign alternate multi-year chain histories from Genesis at strictly 0.00 Joules of physical cost ("nothing-at-stake" / long-range posterior corruption), `consensus-specs` explicitly mandates out-of-band social **Weak Subjectivity checkpoints** (`--checkpoint-sync-url`) from trusted HTTP servers rather than trustless Genesis-to-tip physical work verification. Simultaneously, `EIP-4844` (`MIN_EPOCHS_FOR_BLOB_SIDECARS_REQUESTS = 4096`) permanently deletes Layer-2 rollup calldata blobs from consensus nodes after ~18 days, while `EIP-4444` prunes historical block bodies/receipts onto external third-party archives.',
         receipts: ['Weak Subjectivity Checkpoints', '18-Day EIP-4844 Blob Deletion', 'EIP-4444 History Expiry']
       },
       {
@@ -1598,7 +2318,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'Isolating 33.4% of staked ETH immediately freezes Casper FFG finality—already triggered on mainnet in May 2023—activating a quadratic Inactivity Leak that slashes offline partitioned validators until irreconcilable forks split.',
         geniusParagraph:
-          'Under a wartime network partition, Ethereum’s Casper FFG consensus destroys Dynamic Availability (0.00 / 1.00): isolating 33.4% of staked ETH immediately freezes epoch finality (already triggered twice on mainnet in May 2023) and activates a punitive quadratic Inactivity Leak that bleeds isolated validators until permanent irreconcilable forks diverge.',
+          'Under a wartime network partition and undersea fiber cut (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), Ethereum’s Gasper (`Casper FFG` + `LMD-GHOST`) consensus sacrifices partition resilience by mathematical design. Although Ethereum maintains strong execution/consensus client diversity (`Geth`, `Nethermind`, `Reth`, `Prysm`, `Lighthouse`), `Casper FFG` requires a strict `≥ 2/3` (`66.7%`) supermajority of active staked ETH to justify and finalize checkpoints—a fragility empirically triggered twice on peacetime mainnet on May 11–12, 2023 when attestation churn froze finality across multiple epochs. Across a severed transoceanic cable (`50/50` or `60/40` split), finality halts immediately on both sides until `FINALITY_DELAY > 4` epochs activates the quadratic `inactivity_penalty_quotient` leak, bleeding each hemisphere’s view of offline stake until two permanently incompatible finalized chains diverge.',
         receipts: ['May 2023 Mainnet Finality Stalls', '66.7% Casper FFG Quorum Wall', 'Punitive Quadratic Inactivity Leak']
       },
       {
@@ -1612,7 +2332,7 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'Every EVM transaction mutates a shared global Merkle Patricia Trie sequentially, creating billions in MEV sandwich extraction and forcing scaling off Layer 1 onto fragmented, multisig-governed single-sequencer L2s.',
         geniusParagraph:
-          'Examining Ethereum’s State Machine Topology (0.00 / 1.00) exposes a single-threaded shared global Merkle Patricia Trie that forces concurrent DeFi transactions into sequential execution, billions in toxic MEV sandwich extraction, ERC-20 admin `blacklist`/`freeze` switches, and fragmented single-sequencer Layer-2 rollups.',
+          'Examining Ethereum’s State Machine Topology (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`) exposes a single-threaded shared global Merkle Patricia State Trie (`stateRoot`) that forces concurrent DeFi swaps and token transfers into sequential write locks, reentrancy attack surfaces, ERC-20 admin `blacklist`/`freeze` switches, and institutionalized `MEV-Boost` Proposer-Builder Separation (PBS) sandwich extraction. Rather than scaling stateless execution natively on Layer 1, Ethereum’s rollup-centric roadmap (`EIP-4844` / PeerDAS) fractures liquidity across dozens of incompatible Layer-2 chains (Base, Arbitrum, Optimism) operated by centralized single-sequencer corporate servers and upgradeable Security Council multisigs strictly bound by Carrier Subordination (`M_overlay < M_L1`).',
         receipts: ['Sequential Global EVM State Locks', 'Billions in Toxic MEV Sandwiching', 'Centralized Single-Sequencer L2s']
       },
       {
@@ -1626,10 +2346,11 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         paragraph:
           'Electing one validator every 12 seconds at zero energetic expenditure throttles Layer 1 to ~15 TPS and yields a thermodynamic velocity ratio of M = 0.',
         geniusParagraph:
-          'On Thermodynamic Velocity (M = 1.0, scored 0.00 / 1.00), Ethereum elects a single block proposer every 12 seconds via RANDAO at strictly 0 Joules of Proof-of-Work—throttling Layer 1 to ~15–20 TPS, requiring ~13 minutes (2 epochs) for Casper FFG finality, and yielding a thermodynamic work-efficiency ratio of M = 0 compared to Kaspa’s 10-BPS parallel BlockDAG (M = 1.0).',
+          'On Thermodynamic Velocity (`M = 1.0`, locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), Ethereum elects a single RANDAO block proposer every `12 seconds` (`SECONDS_PER_SLOT = 12`, `32 slots/epoch`) at strictly `0.00 Joules` of Proof-of-Work—throttling base-layer execution to ~15–20 TPS, delaying economic `Casper FFG` finality to `2 epochs` (~12.8 minutes), and yielding zero physical settlement momentum (`M = 0.00`). An unanchored 12-second Proof-of-Stake slot schedule carrying `m = 0` physical mass stands as the thermodynamic opposite of Kaspa’s stateless, contention-free Proof-of-Work BlockDAG, where 100% of concurrent global ASIC hashpower settles parallel UTXO covenants natively on Layer 1 in `100ms` blocks (`10 BPS`, `M = 1.0`).',
         receipts: ['M = 0 Thermodynamic Work', '12-Second Single-Proposer Slots', '~15 TPS Base Layer Bottleneck']
       }
-    ]
+    ],
+    historicalSnapshots: ETH_HISTORICAL_SNAPSHOTS
   },
 
   SOL: {
@@ -2420,6 +3141,15 @@ export const GENIUS_FORENSIC_ESSAYS: Record<string, string[]> = {
     'Under the stress of a wartime network partition, Zcash scores just 0.30 / 1.00 on Dynamic Availability. While `ZIP-208` (`Blossom`) 17-block `Digishield v3` difficulty averaging keeps isolated Equihash continents mining locally during brief cuts before Nakamoto reorg wipes out the minority branch, `CONSENSUS_MAX_REORG_DEPTH = 99` (~2 hours at 75-second blocks) turns any transoceanic fiber cut lasting over two hours into an irreconcilable permanent global chain split! Worse still, `Crosslink` adds a synchronous `>66.7%` BFT Proof-of-Stake finality halt wall, and `ZODL`’s `NEAR Intents` bridge rail already froze `$589,000+` in peacetime user swaps behind centralized market-maker solver intervention.',
     'Examining Zcash’s State Machine Topology (0.20 / 1.00) and Thermodynamic Velocity (0.20 / 1.00, M < 1.0) exposes four fragmented value pools (`Transparent`, `Sprout`, `Sapling`, `Orchard`), monotonically growing unpruneable global `nullifier` sets (bloated by 2022 shielded sandblasting spam prior to `ZIP-317`), zero native Layer-1 covenants, and public `NEAR` ledger correlation leaks on `ZODL` swaps. Although `ZIP-208` Blossom shortened Zcash’s sequential block interval to `75 seconds` (`2 MB` cap, 8x faster cadence than 600-second chains on transparent transfers), single-parent orphan waste (`M < 1.0`), heavy `Halo 2` proving and wallet trial-decryption scanning delays, and `ZIP-317` logical-action limits cap shielded velocity at ~6–25 TPS (0.20)—standing worlds apart from Kaspa’s stateless 10-BPS parallel Proof-of-Work BlockDAG (`100ms` blocks, `M = 1.0`, zero dev tax).',
     'Evaluating these findings through the GRADE evidence certainty framework yields a High Certainty rating, empirically verified across `zcash/zcash`, `ZcashFoundation/zebra`, `zcash/orchard`, `ZIP-1014`/`ZIP-1015`/`ZIP-2001` 20% coinbase tax rules, `CVE-2019-7167` (BCTV-14), the May 2026 Orchard Halo 2 circuit flaw & July 2026 `NU6.3` Ironwood quarantine, `CONSENSUS_MAX_REORG_DEPTH = 99`, Shielded Labs’ `Crosslink` & `NSM` specifications, and `intents.near`’s 3-of-5 multisig freeze records. Zcash scores 1.40 out of 6.00 (23.3%) across the six thermodynamic invariants (01: 0.00, 02: 0.30, 03: 0.40, 04: 0.30, 05: 0.20, 06: 0.20), resulting in a terminal compliance grade of D-.'
+  ],
+
+  ETH: [
+    'Evaluating Ethereum (ETH) against the six physical invariants of a sovereign ledger exposes the cautionary arc of a network that began with a compromised 72-million genesis premine (`D+` ceiling under Ethash Proof-of-Work), overrode its own ledger at Block 1,920,000, and ultimately amputated its physical mass completely at The Merge (`E = 0`, Grade F). At the foundational layer of Existential Sovereignty and Entity Decoupling (0.00 / 1.00), Ethereum failed inside its July 30, 2015 Block 0 configuration (`params/genesis.go` / `genesis_block.json`), instantiating 72,009,990 ETH (~60% of initial supply) at strictly 0.00 Joules across pre-sale buyers (60.1M ETH) and early insiders/Stiftung Ethereum (11.9M ETH). Core leadership empirically proved administrative mutability on July 20, 2016 at Block 1,920,000 (`consensus/misc/dao.go`) by executing a signature-free irregular state-transition bailout for `TheDAO` and leveraging Foundation trademark ownership to relegate the unaltered chain to `ETC`—while today capital-weighted Proof-of-Stake concentrates governance across regulated staking giants (Lido, Coinbase, Binance) and a two-builder `MEV-Boost` oligopoly (>80% of blocks) with OFAC-filtering relays.',
+    'At the second physical invariant—the Thermodynamic Cost Floor (E = 0 Joules, scored 0.00 / 1.00)—`EIP-3675` (Paris, Block 15,537,394 on September 15, 2022 at `TTD = 58750000000000000000000`) permanently severed Ethereum from the First Law of Thermodynamics, deleting ~99.95% of real-world electrical hash expenditure and replacing bare-metal Ethash Proof-of-Work with zero-joule BLS validator signatures gated behind a `32 ETH` (`EIP-7251` `2,048 ETH` MaxEB) capital wall. Operating with zero hard maximum supply cap and six discretionary monetary-policy rewrites in ten years, Post-Merge Ethereum institutionalizes perpetual zero-joule Cantillon yield for premined stake—triggering the Multiplicative VOID Gate (`m = 0 ⇒ p = 0.00`) across Invariants 04–06.',
+    'Examining Historical Immutability and the Physical Arrow of Time (0.00 / 1.00) demonstrates why zero-joule Proof-of-Stake lacks Landauer’s irreversible heat wall (`ΔQ ≥ kB·T·ln2`). Because historical validator private keys can re-sign alternate multi-year chain histories from Genesis at strictly 0.00 Joules of physical cost, `consensus-specs` explicitly mandates out-of-band social **Weak Subjectivity checkpoints** (`--checkpoint-sync-url`) from trusted HTTP servers rather than trustless Genesis-to-tip physical work verification—while `EIP-4844` (`MIN_EPOCHS_FOR_BLOB_SIDECARS_REQUESTS = 4096`) deletes Layer-2 rollup calldata blobs after ~18 days and `EIP-4444` prunes historical block bodies onto third-party portals.',
+    'Under a wartime network partition and undersea fiber cut (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), Ethereum’s Gasper (`Casper FFG` + `LMD-GHOST`) consensus sacrifices partition resilience by mathematical design. Despite execution/consensus client diversity, `Casper FFG` requires a strict `≥ 2/3` (`66.7%`) supermajority of active staked ETH to justify and finalize checkpoints—triggered twice on peacetime mainnet on May 11–12, 2023 when attestation churn stalled finality across multiple epochs. Across a severed transoceanic cable (`50/50` split), finality freezes immediately on both hemispheres until `FINALITY_DELAY > 4` epochs activates the quadratic `inactivity_penalty_quotient` leak, bleeding isolated stake until two permanently irreconcilable finalized chains diverge.',
+    'Examining Ethereum’s State Machine Topology and Thermodynamic Velocity (both locked to `VOID · E=0 UNANCHORED` because `m = 0`) exposes a single-threaded shared global Merkle Patricia State Trie (`stateRoot`) that forces concurrent swaps into sequential write locks, ERC-20 admin `blacklist`/`freeze` switches, institutionalized `MEV-Boost` sandwich extraction, and fragmented single-sequencer Layer-2 rollups bound by Carrier Subordination (`M_overlay < M_L1`). Electing a single RANDAO proposer every `12 seconds` (~15–20 L1 TPS, ~12.8-minute 2-epoch Casper FFG finality) at strictly `0.00 Joules` yields zero physical settlement momentum (`M = 0.00`)—standing as the thermodynamic opposite of Kaspa’s stateless, contention-free Proof-of-Work BlockDAG (`100ms` blocks, `10 BPS`, `M = 1.0`).',
+    'Evaluating these findings through the GRADE evidence certainty framework yields a High Certainty rating across `ethereum/go-ethereum` (`params/genesis.go`, `consensus/misc/dao.go`), `ethereum/consensus-specs` (`EIP-3675`, `Casper FFG`, `inactivity_penalty_quotient`, Weak Subjectivity, `EIP-4844`), May 2023 mainnet finality stall postmortems, and `MEV-Boost` relay telemetry. Ethereum scores 0.00 out of 6.00 across all thermodynamic invariants (01–03: 0.00; 04–06: VOID · E=0 UNANCHORED), resulting in a terminal compliance grade of F.'
   ]
 };
 

@@ -11,7 +11,10 @@ import {
 } from './gainsCohortData.ts';
 import {
   GENESIS_THESIS_GENIUS_PARAGRAPHS,
+  GENESIS_THESIS_GENIUS_RAW_MARKDOWN,
   GENESIS_THESIS_PARAGRAPHS,
+  GENESIS_THESIS_SUBTITLE,
+  type ThesisChapterId,
   type ThesisDepthMode,
   type ThesisParagraph
 } from './genesisThesisData.ts';
@@ -711,7 +714,11 @@ export function answerArchiveResearchQuestion(
       };
     }
 
-    if (/origin|thesis|easter egg|100\s*mj|weimar|grand canyon|first principle/i.test(qLower)) {
+    if (
+      /origin|thesis|easter egg|100\s*mj|weimar|grand canyon|first principle|quantum darwinism|maxwell|paleontolog|satoshi.?s betrayal|observer/i.test(
+        qLower
+      )
+    ) {
       const thesisRef = buildAgentOriginThesisReference(resolvedMode);
       return {
         ok: true,
@@ -722,7 +729,7 @@ export function answerArchiveResearchQuestion(
         unarchivedMentions: [],
         comparison: null,
         audits: [],
-        answer: `First-Principles Origin Thesis (${thesisRef.axiomCount} Axioms across Invariants 01–06, Inflation as 100 MJ Human Work Theft 07–12, and Cosmic Proof-of-Work 13–17): ${thesisRef.axioms[0]?.text || ''} Full 17-axiom treatise available at /?genesis=1 or /api/agent/origin-thesis.`,
+        answer: `First-Principles Origin Thesis (${thesisRef.axiomCount} Axioms across 5 Parts — Six Invariants 01–06, 100 MJ Human Work Ledger 07–12, Cosmic & Observer Physics 13–19, Satoshi’s Betrayal & BlockDAG Completion 20–22, and Unified Audit Functional 23): ${thesisRef.axioms[0]?.text || ''} Full 23-axiom treatise available at /?genesis=1 or /api/agent/origin-thesis.`,
         deepLinkUrl: '/?genesis=1'
       };
     }
@@ -1391,7 +1398,7 @@ export function buildAgentGainsReference(
 }
 
 // ============================================================================
-// PILLAR 4: FIRST-PRINCIPLES ORIGIN THESIS (17 AXIOMS: PHYSICS OVER CONSENSUS)
+// PILLAR 4: FIRST-PRINCIPLES ORIGIN THESIS (23 AXIOMS ACROSS 5 PARTS)
 // ============================================================================
 export interface AgentOriginThesisReference {
   ok: true;
@@ -1402,7 +1409,12 @@ export interface AgentOriginThesisReference {
   subtitle: string;
   mode: ThesisDepthMode;
   axiomCount: number;
-  chapters: Array<{ id: 'INVARIANTS' | 'INFLATION' | 'COSMOS'; title: string; axiomIds: number[] }>;
+  rawMarkdown: string;
+  chapters: Array<{
+    id: Exclude<ThesisChapterId, 'ALL'>;
+    title: string;
+    axiomIds: number[];
+  }>;
   axioms: Array<
     ThesisParagraph & {
       normieText: string;
@@ -1434,25 +1446,35 @@ export function buildAgentOriginThesisReference(
     creditsUsed: 0,
     deepLinkUrl: '/?genesis=1',
     title: 'First Principles: Physics Over Consensus',
-    subtitle:
-      'Why sovereign money is a physical machine bounded by thermodynamics, 100 MJ weekly human biological labor, and the irreversible arrow of time.',
+    subtitle: GENESIS_THESIS_SUBTITLE,
     mode: resolvedMode,
     axiomCount: axioms.length,
+    rawMarkdown: GENESIS_THESIS_GENIUS_RAW_MARKDOWN,
     chapters: [
       {
         id: 'INVARIANTS',
-        title: 'Chapter I — The Six Thermodynamic Invariants of Sovereign Money',
+        title: 'PART I — The Six Physical Invariants of Sovereign Money',
         axiomIds: [1, 2, 3, 4, 5, 6]
       },
       {
         id: 'INFLATION',
-        title: 'Chapter II — Inflation as the Expropriation of 100 MJ Human Biological Work',
+        title: 'PART II — The 100 MJ Human Work Ledger & Fiat Thermodynamic Expropriation',
         axiomIds: [7, 8, 9, 10, 11, 12]
       },
       {
         id: 'COSMOS',
-        title: 'Chapter III — Cosmic Proof-of-Work & Why Zero-Joule Ledgers Collapse',
-        axiomIds: [13, 14, 15, 16, 17]
+        title: 'PART III — Cosmic, Biological & Observer Physics of Record Creation',
+        axiomIds: [13, 14, 15, 16, 17, 18, 19]
+      },
+      {
+        id: 'BETRAYAL',
+        title: 'PART IV — Satoshi’s Betrayal & The Completion of Nakamoto Consensus',
+        axiomIds: [20, 21, 22]
+      },
+      {
+        id: 'UNIFIED',
+        title: 'PART V — The Unified Audit Functional',
+        axiomIds: [23]
       }
     ],
     axioms
@@ -1528,7 +1550,7 @@ export const MCP_ARCHIVE_TOOL_SCHEMAS = [
   {
     name: 'get_origin_thesis',
     description:
-      'Pillar 4 (Origin Theory Easter Egg): Fetch all 17 First-Principles Axioms ("Physics Over Consensus"), conservation equations, the 100 MJ human biological workweek ledger, and cosmic Proof-of-Work proofs.',
+      'Pillar 4 (Origin Theory Easter Egg): Fetch all 23 First-Principles Axioms across 5 Parts ("Physics Over Consensus"), including Observer Physics, Quantum Darwinism, State Persistence Theorem, Paleontological Blind Spot, Satoshi’s Betrayal, and the Unified Audit Functional.',
     inputSchema: {
       type: 'object',
       properties: {

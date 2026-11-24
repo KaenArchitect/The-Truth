@@ -1695,7 +1695,7 @@ ${
           m2AllTimeSummary: gains.m2Benchmark.horizons.ALL_TIME
         },
         originThesis: {
-          title: 'Pillar 4 — First Principles: Physics Over Consensus (17 Axioms)',
+          title: 'Pillar 4 — First Principles: Physics Over Consensus (23 Axioms)',
           uiUrl: `${origin}/?genesis=1`,
           apiUrl: `${origin}/api/agent/origin-thesis`,
           axiomCount: thesis.axiomCount,
@@ -2107,11 +2107,11 @@ ${
           get: {
             operationId: 'getOriginThesis',
             summary:
-              'Pillar 4: Fetch the 17-axiom First-Principles Origin Thesis ("Physics Over Consensus"), conservation equations, and 100 MJ human biological workweek ledger.',
+              'Pillar 4: Fetch the 23-axiom First-Principles Origin Thesis ("Physics Over Consensus"), Observer Physics, Quantum Darwinism, 100 MJ human workweek ledger, Satoshi’s Betrayal, and Unified Audit Functional.',
             parameters: [
               { name: 'mode', in: 'query', schema: { type: 'string', enum: ['GENIUS', 'NORMIE'] } }
             ],
-            responses: { '200': { description: 'Full 17-axiom origin thesis' } }
+            responses: { '200': { description: 'Full 23-axiom origin thesis' } }
           }
         },
         '/api/agent/research': {
@@ -2177,7 +2177,7 @@ AI assistants, link readers (ChatGPT, Claude, Perplexity), and MCP agents should
 3. **Live Thermodynamic Gains & US M2 Money Supply Benchmark** (Passed E > 0 vs Failed E = 0 + KAS, BTC, Gold, S&P 500 vs FRED M2)
    - HTML View: ${origin}/?gains=1
    - JSON Endpoint: ${origin}/api/agent/gains
-4. **First-Principles Origin Thesis ("Physics Over Consensus")** (17 axioms, conservation equations, 100 MJ human biological workweek ledger, Grand Canyon & Sequoia PoW proofs)
+4. **First-Principles Origin Thesis ("Physics Over Consensus")** (23 axioms across 5 Parts: Six Invariants, 100 MJ Human Work Ledger, Cosmic & Observer Physics / Quantum Darwinism, Satoshi’s Betrayal, and Unified Audit Functional)
    - HTML View: ${origin}/?genesis=1
    - JSON Endpoint: ${origin}/api/agent/origin-thesis
 

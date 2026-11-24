@@ -1,4 +1,11 @@
-export type ThesisChapterId = 'ALL' | 'INVARIANTS' | 'INFLATION' | 'COSMOS';
+export type ThesisChapterId =
+  | 'ALL'
+  | 'INVARIANTS'
+  | 'INFLATION'
+  | 'COSMOS'
+  | 'BETRAYAL'
+  | 'UNIFIED';
+
 export type ThesisDepthMode = 'NORMIE' | 'GENIUS';
 
 export interface ThesisLawEquation {
@@ -9,351 +16,596 @@ export interface ThesisLawEquation {
 export interface ThesisParagraph {
   id: number;
   chapter: Exclude<ThesisChapterId, 'ALL'>;
+  partTitle: string;
   tag: string;
   text: string;
   laws: ThesisLawEquation[];
 }
 
-const AXIOM_LAWS_BY_ID: Record<number, ThesisLawEquation[]> = {
-  1: [
-    {
-      law: 'Existential Entity Decoupling & Sovereign Boundary Principle',
-      equation: '∂G / ∂E_admin = 0   |   Sovereignty = 0 ⇒ Score_CostFloor ≤ 1.0 ∧ Grade ≤ D+'
-    }
-  ],
-  2: [
-    {
-      law: 'First Law of Thermodynamics (Conservation of Energy)',
-      equation: 'dU = δQ − δW   |   E_mint = P_ASIC · Δt > 0   (E = 0 ⇒ F)'
-    }
-  ],
-  3: [
-    {
-      law: 'Second Law of Thermodynamics & Landauer’s Principle',
-      equation: 'ΔS_universe = ΔS_sys + ΔS_env ≥ 0   |   ΔQ ≥ k_B · T · ln 2'
-    }
-  ],
-  4: [
-    {
-      law: 'Brewer’s CAP Theorem, FLP Impossibility & Nakamoto Liveness',
-      equation: 'BFT Halt: N_offline > ⅓ N_stake   |   PoW Partition: λ_island > 0 ⇒ Live'
-    }
-  ],
-  5: [
-    {
-      law: 'Disjoint UTXO Mass Conservation & Parallel Verification Bound',
-      equation: '∑ UTXO_in = ∑ UTXO_out + Fee   |   U_i ∩ U_j = ∅ ⇒ S(p) = p'
-    }
-  ],
-  6: [
-    {
-      law: 'Relativistic Optical Speed Limit & Carrier Subordination Law',
-      equation: 'v_fiber = c / n ≈ 2.0 × 10⁸ m/s   |   M_overlay < M_L1 ≤ 1.0'
-    }
-  ],
-  7: [
-    {
-      law: 'Mechanical Equivalent of Heat & Metabolic ATP Conversion',
-      equation: '1 kcal = 4,184 J   |   W_workweek ≈ 100 MJ = 1.0 × 10⁸ J'
-    }
-  ],
-  8: [
-    {
-      law: 'Carnot Efficiency Ceiling & Bureaucratic Waste Heat Law',
-      equation: 'η_max = 1 − T_cold / T_hot < 1   |   W_net = W_tax (20 MJ) − Q_friction (8 MJ)'
-    }
-  ],
-  9: [
-    {
-      law: 'Noether’s Time-Translation Theorem & Zero-Creation Constraint',
-      equation: '∂L / ∂t = 0 ⇒ dE / dt = 0   |   Claims (40 MJ) − Tax (20 MJ) ⇒ Theft (20 MJ)'
-    }
-  ],
-  10: [
-    {
-      law: 'Exponential Paper Lien Divergence vs. Physical Reserve Boundary',
-      equation: 'D(t) = D₀ · e^(r·t) ≫ ∫ P_phys(τ) dτ   |   E_reserve = 0.00 J'
-    }
-  ],
-  11: [
-    {
-      law: 'Enthalpy of Combustion Floor (Hyperinflation Convergence)',
-      equation: 'lim_{M → ∞} V_fiat(E = 0) → ΔH°_comb(Cellulose) ≈ 16 MJ / kg'
-    }
-  ],
-  12: [
-    {
-      law: 'Stefan–Boltzmann Thermal Radiation & Bond Enthalpy Law',
-      equation: 'P_rad = ε · σ · A · T⁴   |   ΔE_sketch = 0 ⇒ ΔQ_heat = 0 J'
-    }
-  ],
-  13: [
-    {
-      law: 'Gravitational Potential Energy & Mechanical Work Integral',
-      equation: 'ΔU_g = m · g · h   |   W_canyon = ∫ F_shear · v · dt ≫ 0'
-    }
-  ],
-  14: [
-    {
-      law: 'Photochemical Endergonic Synthesis & Arrhenius Activation Threshold',
-      equation: '6 CO₂ + 6 H₂O + hν → C₆H₁₂O₆ + 6 O₂   |   k = A · e^(−E_a / R·T)'
-    }
-  ],
-  15: [
-    {
-      law: 'Gibbs Free Energy Decay & Continuous Negentropy Maintenance',
-      equation: 'ΔG = ΔH − T·ΔS < 0  (Fe → Fe₂O₃·nH₂O)   ⇒   dW_maint / dt > 0'
-    }
-  ],
-  16: [
-    {
-      law: 'Asymmetric Energy Extraction & Zero-Joule Weak Subjectivity',
-      equation: 'E_consensus = 0 J  ⇒  CostFloor = 0  ∧  |S_fork − S_truth| = 0 J'
-    }
-  ],
-  17: [
-    {
-      law: 'The Truth 6-Invariant Thermodynamic Audit Functional',
-      equation: 'Score_total = ∑_{i=1..6} S_i ∈ [0, 6.0]   |   S₀₂ = 0 ⇒ F   |   S₀₁ = 0 ⇒ ≤ D+'
-    }
-  ]
-};
+export const GENESIS_THESIS_TITLE =
+  'THE TRUTH // FIRST PRINCIPLES — WHAT LED THE TRUTH TO... THE TRUTH';
 
-interface RawThesisParagraph {
+export const GENESIS_THESIS_SUBTITLE =
+  'Physics Over Consensus • Thermodynamics, 100 MJ Human Work, Cosmic Proof-of-Work & Satoshi’s Betrayal';
+
+/**
+ * Verbatim unabridged GENIUS Edition of the First-Principles Origin Thesis
+ * (5 Parts, 23 Axioms — preserved character-for-character without modification).
+ */
+export const GENESIS_THESIS_GENIUS_RAW_MARKDOWN = [
+  '# THE TRUTH // FIRST PRINCIPLES — WHAT LED THE TRUTH TO... THE TRUTH (GENIUS EDITION)',
+  '',
+  '**Physics Over Consensus • Thermodynamics, 100 MJ Human Work, Cosmic Proof-of-Work & Satoshi’s Betrayal**',
+  '',
+  '---',
+  '',
+  '## PART I — THE SIX PHYSICAL INVARIANTS OF SOVEREIGN MONEY',
+  '',
+  '### [01 • EXISTENTIAL SOVEREIGNTY, ENTITY DECOUPLING & THE ENERGY-ARBITRAGE LAW]',
+  '',
+  '**Law:** Existential Entity Decoupling, Sovereign Boundary Principle & Energy-Arbitrage Law',
+  '',
+  '**Equation:** `∂G / ∂E_admin = 0   |   E_unit = ∑E_mined / (S_mined + S_zero-joule)   |   S₀₁ = 0 ⇒ S₀₂ ≤ 0.35 ∧ Grade ≤ D+`',
+  '',
+  'A sovereign monetary ledger is not a social construct, a corporate software product, or a democratic agreement; it is a physical machine governed strictly by the laws of thermodynamics and information physics. To survive the relentless pull of entropy, state coercion, and adversarial greed, an architecture must satisfy six non-negotiable physical invariants. At the foundational layer stands **Existential Sovereignty and Entity Decoupling**, which demands that the protocol emerge from an immaculate, permissionless genesis completely severed from human boards, corporate foundations, or venture capital syndicates. If a monetary network pre-mines its supply in a configuration file, allocates insider treasuries, enforces mandatory coinbase developer siphons, vests multi-sig admin keys, or relies on registered corporate validators and trademarked governance councils, it possesses a biological neck that nation-state regulators can choke with a single subpoena, OFAC injunction, or DNS seizure. Because law-enforcement pressure propagates asymptotically to the single locus of human control—and because any protocol that injects zero-joule insider tokens alongside miner-forged coins permanently dilutes the unit energy backing of the entire fungible supply pool:',
+  '',
+  '$$E_{\\text{unit}} = \\frac{\\sum E_{\\text{mined}}}{S_{\\text{mined}} + S_{\\text{zero-joule}}}$$',
+  '',
+  'a breach of Existential Sovereignty ($S_{01} = 0$) triggers the **Sovereignty-Compromise & Energy-Arbitrage Law**, clamping any derivative Thermodynamic Cost Floor score strictly at $S_{02} \\le 0.35$ (on the $[0, 1.00]$ invariant scale) and hard-capping terminal compliance at **Grade D+**. True entity decoupling requires a fair-launch substrate where every single atomic unit is forged in the open market from block zero, ensuring that even if the original creators vanish from the Earth or turn hostile, the network continues operating autonomously as an unfeeling, leaderless force of nature.',
+  '',
+  '---',
+  '',
+  '### [02 • FIRST LAW, THERMODYNAMIC COST FLOOR (E > 0) & THE PURITY ASSAY]',
+  '',
+  '**Law:** First Law of Thermodynamics (Conservation of Energy) & 24-Karat Thermodynamic Purity Assay',
+  '',
+  '**Equation:** `dU = δQ − δW   |   E_mint = P_ASIC · Δt > 0   (E = 0 ⇒ VOID ∧ Grade F)`',
+  '',
+  'This structural independence is impossible without the second invariant: the **Thermodynamic Cost Floor ($E > 0$)**, anchored in the First Law of Thermodynamics ($dU = \\delta Q - \\delta W$) and the Conservation of Energy. Because energy can neither be created nor destroyed across any closed or open physical boundary, genuine value in the physical universe—whether a biological organism maintaining negative internal entropy against cellular decay, a canyon carved over millennia by gravitational kinetic water, or metallic gold ($\\text{Au}$) concentrated inside the Earth’s crust through supernovae and hydrothermal work—requires an irreversible expenditure of real-world Joules. A sovereign currency must embed this unforgeable physical costliness directly into its marginal issuance via pure Nakamoto Proof-of-Work ($dW = P_{\\text{ASIC}} \\cdot \\Delta t > 0$), forcing autonomous miners to burn continuous megawatts of electrical energy across real thermodynamic silicon furnaces to mint a single coin.',
+  '',
+  'Crucially, this invariant operates as a **24-karat thermodynamic purity assay, not a cumulative watt-hour leaderboard**: metallurgical purity does not change between a one-ounce gold coin and the entire vault at Fort Knox. What this invariant measures is whether 100% of marginal monetary issuance obeys $E > 0$ physical arbitrage—where competitive mining forces marginal extraction cost to converge dynamically toward marginal market price—or whether the monetary alloy is adulterated by zero-joule issuance. If an asset operates at $E = 0$, no physical arbitrage boundary exists, and insider supply creation is thermodynamically free. Any Proof-of-Stake, Proof-of-Authority, Delegated PoS, Proof-of-History, or Federated Byzantine system that conjures tokens out of thin air at $0.00\\text{ Joules}$ of ongoing energetic sacrifice is mathematically a digital fiat counterfeit machine, institutionalizing the Cantillon Effect by allowing corporate insiders at the genesis spigot to trade weightless keystrokes for the real kinetic sweat and finite metabolic life-force of the working class.',
+  '',
+  '---',
+  '',
+  '### [03 • SECOND LAW, LANDAUER’S ARROW OF TIME & BARE-METAL VERIFICATION]',
+  '',
+  '**Law:** Second Law of Thermodynamics, Landauer’s Principle & Sovereign Verification Bound',
+  '',
+  '**Equation:** `ΔS_universe = ΔS_sys + ΔS_env ≥ 0   |   ΔQ ≥ k_B · T · ln 2`',
+  '',
+  'When consensus is anchored strictly to burned energy, it automatically enforces the third invariant: **Historical Immutability and the Physical Arrow of Time**, governed by the Second Law of Thermodynamics ($\\Delta S_{\\text{universe}} \\ge 0$) and Landauer’s Principle ($\\Delta Q \\ge k_B T \\ln 2$ per irreversibly erased bit of state entropy). Recording, ordering, and locking information into a physical substrate requires the irreversible dissipation of low-entropy free energy as waste heat into the cosmic environment, creating a strict, non-negotiable thermodynamic asymmetry between the past and the future. In a Proof-of-Work ledger, every confirmed block acts as an irreversible kinetic measurement across billions of terahashes that collapses transactional uncertainty into calcified historical mass; rewriting depth $D$ into the past requires an adversary to physically assemble equivalent silicon ASIC mass and re-burn every megawatt-hour of electrical work expended by the global hashrate fleet since that height was sealed—without benefiting from any shortcut inside the laws of physics. Moreover, that cumulative Proof-of-Work chain must remain trustlessly verifiable from Genesis on commodity consumer bare metal (via full-chain replay or cryptographic Proofs-of-Proof-of-Work header commitments with bounded rolling pruning) rather than forcing operators to trust centralized cloud snapshots.',
+  '',
+  'Conversely, zero-joule Proof-of-Stake networks secure their ledgers with weightless, reversible ECDSA/BLS/Ed25519 cryptographic signatures whose generation costs microscopic fractions of a millijoule. Once private keys age past the unbonding horizon, nothing in thermodynamics prevents a historical validator cartel from signing an alternate branch for zero marginal cost—leaving PoS history massless, permanently trapped in Vitalik Buterin’s own admitted *"weak subjectivity"* trust loop (requiring external human social checkpoints to decide truth), and perpetually vulnerable to costless long-range rollbacks, nothing-at-stake forks, or administrative social-slashing rewrites whenever insiders decide to alter the timeline.',
+  '',
+  '---',
+  '',
+  '### [04 • DYNAMIC AVAILABILITY UNDER WARTIME PARTITION]',
+  '',
+  '**Law:** Brewer’s CAP Theorem, FLP Impossibility & Nakamoto Partition Liveness',
+  '',
+  '**Equation:** `BFT Halt: N_offline > ⅓ N_stake   |   PoW Partition: λ_island > 0 ⇒ Live`',
+  '',
+  'This physical mass must remain functional under maximum geopolitical trauma, which defines the fourth invariant: **Dynamic Availability under a wartime network partition**—a direct physical consequence of Brewer’s CAP Theorem and the FLP impossibility boundary. Classical Byzantine Fault Tolerant (BFT) and supermajority-sampling Proof-of-Stake architectures (Tendermint, Casper FFG, Tower BFT, HotStuff, Snowman) choose synchronous or partially-synchronous safety prioritization calibrated strictly for peacetime data centers, requiring continuous bidirectional gossip and a rigid supermajority ($>66.7\\%$ to $75\\%+$) of staked voting weight to advance finality. The moment a sovereign BGP blackhole, wartime EMP, national firewall, or severed undersea fiber-optic cable isolates just $33.4\\%$ of staked validators across continents, a BFT network suffers total liveness collapse: finality freezes, mempools stall, inactivity-leak slashing confiscates trapped honest validators, and surviving islands fracture into permanent, irreconcilable split-brain ledgers that require manual out-of-band human governance treaties to reconcile.',
+  '',
+  'By contrast, a sovereign Proof-of-Work engine bound by parallel BlockDAG consensus never halts under partition; isolated continents continue hashing blocks and clearing commerce autonomously along whatever local electrical gradient survives, dynamically calibrating target difficulty per block (such as `KIP-14` Sampled DAA over a ~44-minute `26,410`-block window rather than freezing an isolated 10% hemisphere at 100-minute block intervals for ~20 weeks—or a 20% hemisphere for ~10 weeks—across a rigid `2,016`-block epoch). When the severed fiber cables are spliced back together, partitions within bounded merge depth (`merge_depth = 36,000`) cleanly weave parallel histories back into one deterministic unified ledger—or resolve strictly by accumulated physical Blue Work—without ever surrendering liveness to a committee.',
+  '',
+  '---',
+  '',
+  '### [05 • STATELESS PARALLEL UTXO TOPOLOGY VS. MUTEX STATE]',
+  '',
+  '**Law:** Disjoint UTXO Mass Conservation & Parallel Verification Bound',
+  '',
+  '**Equation:** `∑ UTXO_in = ∑ UTXO_out + Fee   |   U_i ∩ U_j = ∅ ⇒ S(p) = p`',
+  '',
+  'For an unhaltable ledger to preserve sovereignty and verification determinism over multi-century timescales, it must obey the fifth invariant: **Stateless, Parallel State Machine Topology**. Account-based virtual machines (such as EVM and SVM global state tries) pack every user balance, allowance bitmap, contract bytecode variable, and administrative role inside a single globally mutable state tree accessed under contested read-write mutex locks. Because transaction $T_k$ mutates shared global memory before $T_{k+1}$ can evaluate preconditions, account VMs force sequential state serialization, institutionalize builder/searcher Maximum Extractable Value (MEV) sandwich extraction, trigger unbounded state bloat requiring coercive state-rent seizures, and expose native freeze, blacklist, upgrade-proxy, or arbitrary clawback hooks at the execution layer. Mandatory global privacy accumulators (such as unpruneable shielded-pool nullifier sets or RingCT key-image registries paired with protocol spendability locks) inflict an analogous permanent storage tax on every full node.',
+  '',
+  'By stark topological contrast, a pure Unspent Transaction Output (UTXO) graph models value as discrete, self-contained cryptographic state capsules anchored strictly to spending predicates rather than mutable global accounts. Every UTXO input consumption is mutually orthogonal and embarrassingly parallelizable across multi-core hardware verification threads without mutex contention; spent outputs can be pruned safely in constant bounded disk footprints using cryptographic commitment accumulators, while total monetary supply remains trivially, deterministically auditable in plaintext arithmetic directly against consensus coinbase rules from block zero. Extended on Layer-1 via stateless UTXO covenants, native transaction introspection, inline zero-knowledge verification opcodes, and partitioned sequencing lanes (`Toccata`, `DAA 474,165,565`), the money itself becomes programmable without shared-account write locks or deterministic leader-based MEV extraction.',
+  '',
+  '---',
+  '',
+  '### [06 • THERMODYNAMIC VELOCITY (M = 1.0) AT THE SPEED OF LIGHT]',
+  '',
+  '**Law:** Relativistic Optical Speed Limit & Carrier Subordination Law',
+  '',
+  '**Equation:** `v_fiber = c / n ≈ 2.0 × 10⁸ m/s   |   M_overlay < M_L1 ≤ 1.0`',
+  '',
+  'Finally, a monetary machine built to clear planetary human commerce cannot throttle or waste the thermodynamic energy it burns through archaic linear block bottlenecks; it must achieve the sixth invariant: **Thermodynamic Velocity ($M = 1.0$)** operating near the relativistic boundary of electromagnetic signal propagation through optical fiber ($c/n \\approx 200{,}000\\text{ km/s}$, imposing ~67 ms antipodal round-trip propagation latency across Earth’s circumference). Sequential, longest-chain single-tip architectures such as Satoshi’s original $k = 0$ chain parameter ($600\\text{s}$ block interval) face a lethal coupling trap: whenever honest global block production rate approaches intercontinental propagation latency ($\\text{bps} \\cdot D_{\\text{network}} \\ge 1$), honest concurrent blocks mined simultaneously across Asia, Europe, and the Americas collide, turn into wasted stale orphans, reduce the effective adversarial security threshold, and force real-world retail users back into custodial Layer-2 IOUs, state channels, and liquidity hubs strictly subordinated to Layer-1 capacity (**Carrier Subordination / Overlay Velocity Law:** $M_{\\text{overlay}} < M_{\\text{L1}} \\le 1.0$).',
+  '',
+  'Through topological BlockDAG inclusion under live **GHOSTDAG** consensus today (`k = 124`, `10 BPS` / `100 ms` Crescendo throughput activated at `DAA 110,165,000` with sub-second confirmation visibility, ~10s full finality ordering, and `864,000` PoW blocks/day)—and future parameterless **DAGKNIGHT** *[Roadmap / KIP-2 Proposed — In Testnet Review; strictly excluded from live scoring alongside 100 BPS]* ordering designed to adapt dynamically to arbitrary real-world network delay without hardcoded $D$ bounds—100% of honest concurrent mining energy weaves additively into canonical total security and parallel transaction throughput at $M = 1.0$.',
+  '',
+  '---',
+  '',
+  '## PART II — THE 100 MJ HUMAN WORK LEDGER & FIAT THERMODYNAMIC EXPROPRIATION',
+  '',
+  '### [07 • BIOLOGICAL WORK AS AN EXACT JOULE LEDGER (100 MJ/WK)]',
+  '',
+  '**Law:** Mechanical Equivalent of Heat & Metabolic ATP Conversion',
+  '',
+  '**Equation:** `1 kcal = 4,184 J   |   W_workweek ≈ 100 MJ = 1.0 × 10⁸ J`',
+  '',
+  'Why do these six silicon invariants govern human freedom? Because once you strip away Keynesian monetary euphemisms, CPI basket substitutions, and central-bank balance-sheet sophistry, inflation ceases to look like an abstract price index drift and reveals its true physical identity: **an unconsented thermodynamic expropriation of biological human work**. Every dietary kilocalorie ($\\text{kcal}$) equals precisely $4{,}184\\text{ Joules}$ of chemical bond enthalpy extracted from solar photosynthesis, fixed into adenosine triphosphate (ATP) gradients inside mitochondria, and expended through skeletal muscle contraction and neural ion-pump polarization to push human civilization uphill against entropy. Across a standard forty-hour workweek of carpentry, machining, electrical line maintenance, logistics, medical care, or systems engineering, an adult human body converts roughly **100 megajoules ($100{,}000{,}000\\text{ Joules}$)** of finite, non-refundable biological work-hours into tangible physical goods, maintained infrastructure, harvested nutrition, or low-entropy information structure. Because your lifespan contains a strictly finite stock of total metabolic Joules between birth and death, money only functions honestly if every saved monetary unit stores an unwatered, non-dilutable claim on equivalent external Joules of work.',
+  '',
+  '---',
+  '',
+  '### [08 • EXPLICIT TAXATION (20 MJ) & BUREAUCRATIC CARNOT FRICTION (8 MJ)]',
+  '',
+  '**Law:** Carnot Efficiency Ceiling & Bureaucratic Waste Heat Law',
+  '',
+  '**Equation:** `η_max = 1 − T_cold / T_hot < 1   |   W_net = W_tax (20 MJ) − Q_friction (8 MJ)`',
+  '',
+  'Examine what happens mathematically to that $100\\text{ MJ}$ weekly physical output inside a managed fiat polity. When a state levies a transparent twenty percent explicit tax on labor or production, it transfers a $20\\text{ MJ}$ claim over real physical goods directly from the producer to the fiscal treasury. At least explicit taxation remains visible on a paystub and bounded by political consent. Yet no administrative state operates at 100% thermodynamic efficiency—just as the Second Law forbids a Carnot heat engine from converting 100% of thermal gradient into useful mechanical work without exhaust heat loss. Staffing overlapping compliance agencies, tax enforcement bureaucracies, lobbying corridors, regulatory clearinghouses, and contractor middlemen introduces immense administrative entropy: roughly **$8\\text{ MJ}$** out of that extracted claim dissipates purely as organizational waste heat—consuming buildings, paper, fuel, and human lifespans while producing zero additional wheat, zero kilowatt-hours of clean electricity, zero miles of paved steel rail, and zero bits of cryptographic ledger security.',
+  '',
+  '---',
+  '',
+  '### [09 • UNFUNDED PROMISES (40 MJ ISSUED VS. 20 MJ WORK)]',
+  '',
+  '**Law:** Noether’s Time-Translation Theorem & Zero-Creation Constraint',
+  '',
+  '**Equation:** `∂L / ∂t = 0 ⇒ dE / dt = 0   |   Claims (40 MJ) − Tax (20 MJ) ⇒ Theft (20 MJ)`',
+  '',
+  'Because no political coalition survives election cycles if it taxes citizens openly for the true physical sum of every subsidy, war, bailout, and entitlement it signs into law, states resolve the arithmetic shortfall by abusing the monopoly printing press. Suppose the state extracts $20\\text{ MJ}$ of real productive energy via open taxes while legislating $40\\text{ MJ}$ of spending promises across defense contractors, bondholders, and domestic programs. That missing $20\\text{ MJ}$ of real physical energy cannot materialize out of thin air—Noether’s Theorem and the First Law of Thermodynamics strictly forbid *creatio ex nihilo* energy generation. Instead, central banks and commercial credit desks conjure matching nominal currency units at zero energetic cost ($E = 0.00\\text{ J}$). Those weightless digital keystrokes enter the market first through primary dealers and sovereign bond desks (Cantillon advantage), bid directly against savers for finite groceries, copper, timber, and shelter, and silently siphon **$20\\text{ MJ}$** worth of purchasing power straight out of every worker’s saved biological hours—an invisible regressive heat tax collected continuously across every held banknote.',
+  '',
+  '---',
+  '',
+  '### [10 • $35+ TRILLION ZERO-JOULE SOVEREIGN LIEN]',
+  '',
+  '**Law:** Exponential Paper Lien Divergence vs. Physical Reserve Boundary',
+  '',
+  '**Equation:** `D(t) = D₀ · e^(r·t) ≫ ∫ P_phys(τ) dτ   |   E_reserve = 0.00 J`',
+  '',
+  'Compounded asymmetrically across decades of abandoned metallic convertibility, this zero-Joule counterfeiting loop scales into an unsustainable macroeconomic phase transition: more than **$\\$35\\text{ trillion}$** in sovereign principal debt—plus multiples in unfunded long-duration liabilities—backed by precisely $0.00\\text{ Joules}$ of physical reserve work. Unlike a gold ingot, a barrel of crude oil, or a Proof-of-Work UTXO sealed behind megawatts of burned ASIC electricity, every newly auctioned treasury bond is fundamentally a synthetic paper lien demanding future megajoules of physical muscle, electricity, and mineral extraction from workers and engineers who have not even been born yet. Because exponential compounding on weightless paper claims always outruns linear thermodynamic productivity growth (which remains physically capped by solar flux, mineral ore grades, and Carnot limits), the ledger faces a strict mathematical dichotomy: either overt nominal default or relentless unit-of-account dilution against scarce physical energy and $E > 0$ Proof-of-Work assets.',
+  '',
+  '---',
+  '',
+  '### [11 • 1923 WEIMAR & THE 16 MJ/KG CELLULOSE FLOOR]',
+  '',
+  '**Law:** Enthalpy of Combustion Floor (Hyperinflation Convergence)',
+  '',
+  '**Equation:** `lim_{M → ∞} V_fiat(E = 0) → ΔH°_comb(Cellulose) ≈ 16 MJ / kg`',
+  '',
+  'Empirical history documented the asymptotic collapse of zero-Joule monetary illusions during the 1923 Weimar German hyperinflation. Once Reichsbank printing presses multiplied paper Marks orders of magnitude faster than Ruhr coal mines, steel mills, wheat farms, and human labor could expand real thermodynamic supply, the nominal monetary premium pinned to printed ink converged cleanly toward zero—and then crossed straight beneath the raw chemical enthalpy of the physical paper substrate itself. Citizens literally hauled laundry baskets and wheelbarrows stacked with multi-million-Mark notes straight into kitchen stoves because stamped cellulose wood pulp liberates roughly **$\\sim 16\\text{ MJ/kg}$** of dry kindling heat when oxidized with atmospheric oxygen, making burned paper bills physically more valuable as firewood enthalpy than as sovereign legal tender backed by nothing.',
+  '',
+  '---',
+  '',
+  '### [12 • CHARCOAL SKETCH OF A FIRE VS. REAL JOULES]',
+  '',
+  '**Law:** Stefan–Boltzmann Thermal Radiation & Bond Enthalpy Law',
+  '',
+  '**Equation:** `P_rad = ε · σ · A · T⁴   |   ΔE_sketch = 0 ⇒ ΔQ_heat = 0 J`',
+  '',
+  'Issuing zero-Joule central-bank fiat currency, pre-mined Proof-of-Stake tokens, or committee-governed governance coins to simulate real economic capital is thermodynamically indistinguishable from sketching an intricate charcoal drawing of a roaring campfire onto the frozen timber wall of a winter cabin and expecting the illustration to stop hypothermia. You can gather a quorum of elders to vote that the charcoal fire burns at $900\\text{ Kelvin}$, attach a "slashing rule" fining anyone who touches the painting without permission, or publish whitepapers boasting sub-second consensus among art critics—yet not a single photon of infrared radiation will leave the wall. Only breaking high-energy molecular bonds or dissipating real irreversible electrical Joules through physical matter delivers measurable heat and unforgeable proof across spacetime.',
+  '',
+  '---',
+  '',
+  '## PART III — COSMIC, BIOLOGICAL & OBSERVER PHYSICS OF RECORD CREATION',
+  '',
+  '### [13 • GEOLOGICAL PROOF-OF-WORK & THE GRAND CANYON]',
+  '',
+  '**Law:** Gravitational Potential Energy & Mechanical Work Integral',
+  '',
+  '**Equation:** `ΔU_g = m · g · h   |   W_canyon = ∫ F_shear · v · dt ≫ 0`',
+  '',
+  'Step back from human financial theater and observe physical reality itself: the universe runs exclusively on Proof-of-Work, and nature never signs off on historical truth using cheap cryptographic quorums or committee attestations. Stand on the South Rim of the Grand Canyon and you are staring directly into an incorruptible geological ledger sealed across roughly five to six million years of cumulative gravitational kinetic work. Solar radiation evaporated ocean water uphill against gravity ($\\Delta U_g = m g h$), atmospheric convection carried that high-potential moisture over the Colorado Plateau, and turbulent liquid water plus suspended quartz grit physically abraded and evacuated trillions of metric tons of solid Coconino sandstone, Redwall limestone, and Vishnu basement granite a full mile deep. No legislature could vote that gorge into existence, no multi-sig could backdate its stratigraphy, and no adversary can fake it—only cumulative irreversible Joules carve permanent geometry into rock.',
+  '',
+  '---',
+  '',
+  '### [14 • SEQUOIA TREE RINGS, PHOTONS & SEROTINOUS PYROLYSIS]',
+  '',
+  '**Law:** Photochemical Endergonic Synthesis & Arrhenius Activation Threshold',
+  '',
+  '**Equation:** `6 CO₂ + 6 H₂O + hν → C₆H₁₂O₆ + 6 O₂   |   k = A · e^(−E_a / R·T)`',
+  '',
+  'Living biology obeys the exact same unforgeable Proof-of-Work auditing across every trophic layer. Slice cleanly across a two-thousand-year-old Giant Sequoia trunk and every concentric annual growth ring stands as an indelible chemical ledger recording verified seasonal solar photon capture—six $\\text{CO}_2$ plus six $\\text{H}_2\\text{O}$ molecules driven uphill against chemical equilibrium through chlorophyll reaction centers to synthesize durable structural lignin and cellulose. Even biological disaster recovery itself relies on real thermal proof: Giant Sequoia serotinous cones lock their fertile seeds inside dense organic resin vaults that stay sealed for decades against wind, squirrels, and false alarms, opening only when a genuine forest crown wildfire supplies sufficient real kilojoules of thermal energy to melt the resin bond—simultaneously sterilizing competing floor brush and unlocking mineral ash for the next generation.',
+  '',
+  '---',
+  '',
+  '### [15 • THE STEEL STREET SIGN & PERPETUAL OXIDATION ENTROPY]',
+  '',
+  '**Law:** Gibbs Free Energy Decay & Continuous Negentropy Maintenance',
+  '',
+  '**Equation:** `ΔG = ΔH − T·ΔS < 0  (Fe → Fe₂O₃·nH₂O)   ⇒   dW_maint / dt > 0`',
+  '',
+  'Even an ordinary painted galvanized steel street sign bolted beside an interstate highway demonstrates why real physical order never coasts indefinitely at $0.00\\text{ Joules}$ after genesis. Refining iron oxide ore inside a $1{,}500\\text{ }^\\circ\\text{C}$ blast furnace, rolling sheet alloy, electroplating zinc coats, and curing synthetic enamel pigments required an immense upfront thermodynamic investment to lift iron atoms artificially high above their natural ground-state mineral equilibrium. From the very first millisecond that sign stands outdoors, atmospheric oxygen, rain electrolyte films, thermal expansion cycles, and ultraviolet photons launch a relentless electrochemical attack to pull that iron downhill into low-energy hydrated ferric oxide rust ($\\text{Fe}_2\\text{O}_3 \\cdot n\\text{H}_2\\text{O}$). Without ongoing energy inputs—repainting, re-galvanizing, physical maintenance—order inevitably decays back into dust. Claiming a monetary ledger can remain eternally secure with zero ongoing electrical expenditure denies the Second Law outright.',
+  '',
+  '---',
+  '',
+  '### [16 • OBSERVER PHYSICS, SUBJECTIVE VALUE & THE MEASUREMENT APPARATUS]',
+  '',
+  '**Law:** Demonstrated Preference Operator & Metrological Invariance Principle',
+  '',
+  '**Equation:** `M̂_exch |ψ_pref⟩ → P_clear (ΔE > 0)   |   ∂L_ruler / ∂E_admin = 0`',
+  '',
+  'Confronted with this unbroken thermodynamic record across geology, biology, and metallurgy, economists defending fiat currency or zero-joule ($E = 0$) Proof-of-Stake ledgers retreat into epistemology—invoking Carl Menger’s Subjective Theory of Value to argue that physical energy expenditure has no necessary connection to monetary worth. Because human valuation originates in private ordinal preferences rather than embedded labor or heat, critics conclude that market prices are purely psychological—and cite central-bank credit expansion or Proof-of-Stake market capitalizations as proof that $E = 0$ instruments can command real purchasing power while arbitraging physical commodities.',
+  '',
+  'That objection commits a fundamental category error in measurement physics: **it confuses the subjective signal being measured with the physical invariance of the measuring apparatus.**',
+  '',
+  'Prior to an act of exchange, subjective human preferences exist as private, unobservable rankings across isolated minds. In information-theoretic terms, unexpressed preferences occupy an unmeasured state space: shifting an internal opinion expends negligible energy, leaves no public state transition in the environment, and produces no market price. A market price emerges only at the boundary of **demonstrated preference**—the irreversible physical event in which an agent sacrifices scarce time, capital, or metabolic and electrical free energy to execute one state transition at the expense of all foregone alternatives. Exchange is therefore a physical measurement operator: it collapses private subjective rankings into an objective, publicly observable clearing ratio.',
+  '',
+  'For any measurement across space and time to remain non-arbitrary, the standard of measure cannot deform at zero cost during the observation. Measuring dynamic lengths with an elastic ruler whose tick marks can be rewritten at $E = 0$ by its custodian does not refute geometry; it corrupts the instrument. When a central bank conjures reserve balances via keystroke, or a Proof-of-Stake cartel mints pre-allocated Genesis tokens at zero thermodynamic cost, the resulting wealth transfer is not an economic refutation of physical scarcity—it is **apparatus tampering** (the Cantillon Effect), in which insiders closest to an $E = 0$ ledger inject zero-joule claims to extract real $E > 0$ labor, land, silicon, and commodities before price discovery finishes propagating the dilution across the network.',
+  '',
+  '---',
+  '',
+  '### [17 • QUANTUM DARWINISM, POINTER STATES & MAXWELL’S DEMON]',
+  '',
+  '**Law:** Zurek Redundancy Plateau & Bennett’s Demon Entropy Resolution',
+  '',
+  '**Equation:** `ℰ = ⨂_k ℱ_k   |   I(𝒮 : ℱ_f) ≈ H_𝒮   (R_δ ≫ 1,  ΔQ ≥ k_B · T · ln 2)`',
+  '',
+  'In laboratory physics, classical objectivity does not arise from human consciousness or committee votes; it emerges strictly through **Quantum Darwinism** (Zurek) and the thermodynamics of irreversible record creation. Decoherence alone—the suppression of interference when a system $\\mathcal{S}$ interacts with an environment $\\mathcal{E}$—does not explain why independent observers agree on a single historical fact without trusting a central referee. Objective classical reality emerges only when an interaction Hamiltonian selects dynamically stable **pointer states** and imprints massive redundant copies ($R_\\delta \\gg 1$) of that state across disjoint fragments of the environment ($\\mathcal{E} = \\bigotimes_{k} \\mathcal{F}_k$). Once the mutual information between the system and any captured environmental fragment reaches the redundancy plateau,',
+  '',
+  '$$I(\\mathcal{S} : \\mathcal{F}_f) \\approx H_{\\mathcal{S}}$$',
+  '',
+  'any independent observer anywhere in the universe can intercept a local fragment $\\mathcal{F}_k$ and deduce the exact same historical state indirectly, without perturbing the underlying system and without trusting any prior observer’s testimony.',
+  '',
+  'A sovereign monetary ledger is an engineered Quantum Darwinist apparatus. Each independent validating node holds an environmental fragment $\\mathcal{F}_k$ of the ledger’s state history. To prevent contradictory histories (double-spends or shadow-ledgers) from coexisting in superposition across partitioned observers, selecting and broadcasting the winning pointer state must cross Rolf Landauer’s thermodynamic threshold of irreversible bit erasure:',
+  '',
+  '$$\\Delta Q \\ge k_B T \\ln 2$$',
+  '',
+  'Zero-joule ledgers attempt to operate as macroeconomic **Maxwell’s Demons**—sorting ownership claims and extracting real kinetic work ($W > 0$) from pure informational updates at zero consensus energy cost. As Charles Bennett proved in resolving Maxwell’s paradox, the Demon never escapes the Second Law of Thermodynamics: the full thermodynamic cycle must pay the entropy bill when erasing and resetting the Demon’s own memory register. When a monetary protocol artificially forces consensus work toward $E \\to 0$, the Landauer cost is never eliminated; it is merely externalized:',
+  '',
+  '* **Coercive Kinetic Externalization (Fiat Currency):** Although ledger entries cost zero joules to issue digitally, public acceptance is anchored outside the database by a high-joule physical enforcement apparatus—taxation mandates, legal-tender statutes, courts, and sovereign military power—compelling productive citizens to surrender $E > 0$ output to extinguish $E = 0$ tax liabilities.',
+  '* **Cantillon Dilution Externalization (Proof-of-Stake & Premined Ledgers):** Where no state military enforces acceptance, $E = 0$ consensus replaces thermodynamic irreversibility with social subjectivity checkpoints, validator cartels, and insider token cliffs—bleeding purchasing power over full market cycles from late entrants who expended real $E > 0$ capital to acquire units conjured by insiders at zero marginal energy.',
+  '',
+  '---',
+  '',
+  '### [18 • THEOREM OF THERMODYNAMIC STATE PERSISTENCE]',
+  '',
+  '**Law:** Intertemporal State Persistence & Asymmetric Verification Theorem',
+  '',
+  '**Equation:** `V_{t>0} > 0 ⇒ E_{t=0} > 0  ∧  I(ℛ_{t>0} ; E_{t=0}) > 0  ∧  E_verify / E_forge → 0`',
+  '',
+  'A recurring critique of Proof-of-Work—descending from John Maynard Keynes’s 1936 coal-mine banknote parable to modern critiques of cryptographic hashing—asserts that expending kinetic energy on non-consumable work (such as paying laborers to dig trenches in dirt and immediately refill them) produces a market value of zero, supposedly disproving any link between energy dissipation and economic value. Resolving this apparent paradox requires separating the **instantaneous clearing value of an action at $t = 0$** from the **transferable monetary value of its surviving physical state at $t > 0$**.',
+  '',
+  '**Statement.** Let an economic agent voluntarily expend purchasing power to induce an irreversible dissipation of free energy $E_{t=0} > 0$ into an environment at temperature $T$. By demonstrated preference, the spot clearing value of that expenditure at execution is strictly positive ($V_{t=0} > 0$), irrespective of third-party judgments regarding its utility. However, the capacity of that energy expenditure to sustain positive transferable monetary value across independent observers at $t > 0$ vanishes unless the dissipated energy crystallizes into a persistent, asymmetrically verifiable low-entropy state receipt $\\mathcal{R}_{t>0}$ whose conditional mutual information with the original work remains strictly bounded away from zero:',
+  '',
+  '$$V_{t > 0} > 0 \\quad \\Longrightarrow \\quad E_{t=0} > 0 \\;\\;\\wedge\\;\\; I(\\mathcal{R}_{t>0} \\,;\\, E_{t=0}) > 0 \\;\\;\\wedge\\;\\; \\frac{E_{\\text{verify}}(\\mathcal{R}_{t>0})}{E_{\\text{forge}}(\\mathcal{R}_{t>0})} \\to 0$$',
+  '',
+  '**Proof by Exhaustion of Physical Regimes.** Every candidate monetary action falls into one of three mutually exclusive thermodynamic regimes:',
+  '',
+  '1. **Ephemeral Dissipation (Self-Erasing Work / The Empty Refilled Trench):** Suppose a patron pays laborers at $t = 0$ to excavate barren soil ($\\Delta E_1 > 0$) and immediately refill the excavation ($\\Delta E_2 > 0$) without extracting any enduring artifact. Because a voluntary trade occurred, $V_{t=0} > 0$ holds unconditionally—whether the patron valued physical conditioning, theatrical display, or costly signaling under Zahavi’s Handicap Principle. Yet the second act physically erases the macroscopic state record of the first, relaxing the soil back into statistical indistinguishability from unworked ground. At $t > 0$, no independent observer inspecting the field can extract physical evidence that $E_{t=0} > 0$ occurred without relying on corruptible human testimony: $I(\\mathcal{R}_{t>0} ; E_{t=0}) = 0$. Because the receipt self-erased into ambient thermal noise, zero unforgeable state survives to carry scarcity forward into secondary exchange, forcing $V_{t>0} = 0$.',
+  '2. **Symbolic Assertion Without Work (Counterfeit Receipt / $E = 0$ Consensus):** Suppose a ledger preserves a persistent digital record $\\mathcal{R}_{t>0}$ across servers, but generating valid state transitions, pre-allocating supply, or signing an alternative history requires negligible physical energy ($E_{\\text{forge}}(\\mathcal{R}_{t>0}) \\approx 0$). Although a readable state receipt exists at $t > 0$, its conditional coupling to irreversible physical scarcity is identically zero ($E_{t=0} = 0$). Because an insider committee or governance fork can replicate or rewrite the receipt without re-expending historical energy, $\\mathcal{R}_{t>0}$ cannot serve as a trustless intertemporal store of work without external coercion.',
+  '3. **Persistent Thermodynamic Fossil (Unforgeable Pointer State / Proof-of-Work & Elemental Commodities):** Suppose an agent expends irreversible free energy $E_{t=0} > 0$—either through stellar nucleosynthesis and terrestrial extraction in elemental metals ($\\text{Au}$, $\\text{Ag}$) or through dedicated silicon executing cryptographic hash evaluations until a block header satisfies $H(\\text{header} \\parallel \\text{nonce}) < T_{\\text{target}}$—and extracts a permanent, non-erased low-entropy boundary receipt $\\mathcal{R}_{t>0}$. Forging an equivalent record requires re-burning cumulative physical work $E_{\\text{forge}}(\\mathcal{R}_{t>0}) \\ge E_{t=0} \\gg k_B T \\ln 2$, whereas any stranger at $t \\gg 0$ can verify the expenditure in microseconds at near-zero energy ($E_{\\text{verify}} \\ll E_{\\text{forge}}$) using nothing but mathematics and a local header fragment. $\\blacksquare$',
+  '',
+  '---',
+  '',
+  '### [19 • THE PALEONTOLOGICAL BLIND SPOT & TRIADIC MONETARY SYNTHESIS]',
+  '',
+  '**Law:** Overburden Conservation Corollary & Triadic Value Equation',
+  '',
+  '**Equation:** `E_{t=0} (Search MW) → ΔQ_ambient (Overburden) + ℛ_{t>0} (Calcified PoW Fossil)`',
+  '',
+  'The literal mechanics of paleontological excavation expose why orthodox economists persistently mistake Proof-of-Work for Keynes’s refilled-trench fallacy. A fossilized organism entombed deep inside Cretaceous shale already possesses an immutable structural geometry, yet while buried in unsearched geological strata it commands zero economic value and coordinates zero human action. Likewise, every valid cryptographic block preimage ($H(\\text{header} \\parallel \\text{nonce}) < T_{\\text{target}}$) already exists *in potentia* within the combinatorial bedrock of the $2^{256}$ search space at zero market value. In both domains, latent structure becomes an economic asset only when a subjective human or autonomous agent judges the specimen worth unearthing, expends real free energy ($E_{t=0} > 0$) to strip away vast volumes of sterile overburden, isolates the rare low-entropy artifact, and calcifies it into a publicly verifiable record.',
+  '',
+  'Crucially, under modern land-reclamation mandates, a paleontological expedition hauls fuel, heavy tools, and labor into barren badlands, carves deep trenches into dead rock, jackets a compact mineralized specimen in plaster, and **physically shovels every ton of excavated dirt right back into the pit** before departing. To an uninitiated bystander watching from a distant ridge—incapable of distinguishing mineralized vertebra from sterile mud—the net macroscopic displacement of soil is identically zero ($\\Delta M_{\\text{soil}} = 0$). From that ridge, the paleontologist is *literally* paying laborers to dig holes in the dirt and fill them back in.',
+  '',
+  'Critics who dismiss Proof-of-Work as "wasted electricity" suffer from this exact **Paleontological Blind Spot**. Staring exclusively at ASIC exhaust vents, they measure only the backfilled thermal overburden—the dissipated heat $\\Delta Q_{\\text{ambient}}$ returning harmlessly to ambient equilibrium—while remaining blind to the thermodynamic information compression that walked out of the quarry:',
+  '',
+  '$$\\underbrace{E_{t=0} \\text{ (Search Megawatts)}}_{\\text{Excavation}} \\;\\longrightarrow\\; \\underbrace{\\Delta Q_{\\text{ambient}}}_{\\text{Backfilled Overburden}} \\;+\\; \\underbrace{\\mathcal{R}_{t>0} \\text{ (Valid PoW Header)}}_{\\text{Calcified Thermodynamic Fossil}}$$',
+  '',
+  'The bulk mass and heat return to equilibrium, but the intentional search energy leaves behind a compact, unforgeable specimen whose provenance any observer can verify across centuries and no counterfeiter can fake without re-excavating the entire combinatorial stratum.',
+  '',
+  '**Triadic Synthesis of Sovereign Monetary Value.** Subjective utility theory and thermodynamic costliness are therefore orthogonal halves of a single physical measurement equation rather than competing doctrines. Subjective human demand acts as the **selection vector at $t = 0$**, motivating agents to direct scarce energy into the earth—or into silicon—to unearth what would otherwise remain valueless, buried structure; an abandoned hash algorithm with zero human utility attracts zero sustained excavation regardless of historical watts burned. Conversely, once subjective demand converges on a monetary network, irreversible Proof-of-Work ($E > 0$) calcified into a persistent, non-erased pointer fossil ($\\mathcal{R}_{t>0}$) acts as the **conservation law at $t > 0$**—ensuring that private subjective valuations settle onto an objective, tamper-proof ruler that no sovereign, foundation, or validator cartel can print for free.',
+  '',
+  '---',
+  '',
+  '## PART IV — SATOSHI’S BETRAYAL & THE COMPLETION OF NAKAMOTO CONSENSUS',
+  '',
+  '### [20 • SATOSHI’S BETRAYAL I: LAYER-1 OSSIFICATION & CUSTODIAL RE-INTERMEDIATION]',
+  '',
+  '**Law:** Sequential Bottleneck Re-Intermediation & Liquidity Centralization Law',
+  '',
+  '**Equation:** `k = 0 (600s, ~7 TPS) ⇒ Custody_ETF ≈ 84%  ∧  Gini_LN ≈ 0.97  ∧  Pools_top3 > 60%`',
+  '',
+  'Measured against these physical laws, the eighteen-year arc since October 2008 exposes a profound historical tragedy—**Satoshi’s Betrayal**. Satoshi Nakamoto’s whitepaper was titled *Bitcoin: A Peer-to-Peer Electronic Cash System*, explicitly engineered to allow any two willing parties—including for small, casual everyday commerce—to transact directly without financial institutions mediating disputes or custody. In July 2010, Nakamoto projected that Bitcoin would scale on commodity hardware to surpass legacy processors like Visa at a fraction of the cost. What Nakamoto left unresolved in 2008 was a topological bottleneck in **linear single-chain ordering ($k = 0$)**: pushing block frequency or size on a single-file chain inflates orphan rates and rewards the largest pools. Instead of generalizing that $k = 0$ graph constraint, Bitcoin’s institutional stewardship froze Layer-1 at ~7 TPS and rebranded peer-to-peer electronic cash into immobile vault collateral—driving humanity straight back into the exact financial intermediaries Satoshi built Bitcoin to escape:',
+  '',
+  '* **Wall Street Custody Capture:** Priced out of sovereign Layer-1 UTXO self-custody during fee spikes, institutional and retail adoption consolidated inside regulated paper wrappers, with **Coinbase Custody alone holding ~84% of U.S. spot Bitcoin ETF assets** across roughly $\\$300\\text{ billion}$ in institutional custody alongside OCC-chartered trust banks (Fidelity Digital Assets, Anchorage Digital, BitGo, BNY Mellon, Morgan Stanley).',
+  '* **The Lightning Overlay Collapse ($M_{\\text{overlay}} < M_{\\text{L1}} < 1.0$):** Bound strictly by Layer-1 dispute windows and channel-opening fees, public Lightning node counts contracted from ~20,700 in mid-2022 to ~14,900–15,000 by 2026 (~5,637 BTC capacity), while liquidity concentrated to a **Gini coefficient of $\\approx 0.97$** (top 10 exchange/institutional hubs controlling ~62% of capacity), pushing everyday users back into custodial wallets and Liquidity Service Providers.',
+  '* **Pool Cartelization & Partition Fragility:** Amplified by 10-minute payout variance across ~991 EH/s of SHA-256 silicon, just **three pools—Foundry USA (KYC-enforced, ~24–26%), AntPool (~19–21%), and F2Pool (~16–18%)—control over 60% of global block templates**, while transaction fees contribute **$<1\\%$ (~0.6–0.7%)** of block rewards as halvings erode the security subsidy, and the rigid `2,016`-block DAA leaves severed hemispheres vulnerable to multi-month block freezes.',
+  '',
+  '---',
+  '',
+  '### [21 • SATOSHI’S BETRAYAL II: ONTOLOGICAL FALSITY OF FIAT, POS & TAXED POW]',
+  '',
+  '**Law:** Asymmetric Energy Extraction, Zero-Joule Weak Subjectivity & Taxed PoW Dilution',
+  '',
+  '**Equation:** `E_consensus = 0 J ⇒ CostFloor = 0  ∧  |S_fork − S_truth| = 0 J   |   Tax_coinbase > 0 ⇒ ≤ D+`',
+  '',
+  'If Bitcoin maximalists betrayed Satoshi by freezing his architecture in 2009, the broader "Web3" industry betrayed him by destroying his foundational physics outright. Seen through first-principles physics rather than marketing press releases, central-bank fiat debasement and zero-Joule Proof-of-Stake blockchains—from Ethereum (which already breached immutability via its Foundation-coordinated Block `1,920,000` DAO bailout before deleting ~99.95% of its Proof-of-Work at Block `15,537,394`), Solana, Cardano, XRP, Avalanche, and Sui to the Internet Computer (`ICP`) and corporate AI-agent subnets like Kite (`KITE`, operating a 100%-premined PoS chain over revocable passkeys and freezeable `USDC`/`PYUSD` stablecoin rails)—commit the identical fundamental violation: **both sever monetary authority, wealth storage, and historical finality from physical energy sacrifice**. Whether an official expands M2 in an emergency liquidity spreadsheet or a validator clique self-compounds staking emissions while censoring transactions under OFAC compliance or weak-subjectivity social forks, both systems operate an asymmetric extraction engine where weightless symbols minted at $0.00\\text{ Joules}$ lay permanent claim to the finite $100\\text{ MJ}$ workweeks of human beings sweating inside real thermodynamics. A consensus system without an external physical cost floor cannot serve as an objective anchor for civilization; it collapses back into pure political subjectivity.',
+  '',
+  'Even inside the Proof-of-Work camp, compromised forks betray Satoshi’s purity through the back door: embedding mandatory coinbase developer taxes into circulating supply ($ZEC$’s historic 20% Founders\' Reward or $ZKAS$’s front-loaded 5% coinbase siphon across its first `6,983,500` blocks, which permanently lock zero-joule insider units into the supply pool under the Energy-Arbitrage Law even after later tax removal), piggybacking on zero-marginal-joule merged mining (`AuxPoW`), or saddling every validating node with unpruneable shielded nullifier bloat and multi-minute spendability locks.',
+  '',
+  '---',
+  '',
+  '### [22 • COMPLETING NAKAMOTO CONSENSUS: FROM k = 0 CHAINS TO PARALLEL BLOCKDAGS]',
+  '',
+  '**Law:** Parallel BlockDAG Generalization & Live Mainnet Scaling Proof',
+  '',
+  '**Equation:** `lim_{k → BlockDAG} OrphanWaste = 0   |   DAA 110,165,000 (1→10 BPS)  ∧  DAA 474,165,565 (Toccata)`',
+  '',
+  'Completing Satoshi’s Peer-to-Peer Electronic Cash System required neither Wall Street custody nor zero-Joule heresy; it required preserving 100% of Nakamoto’s thermodynamic foundation ($E > 0$, immaculate fair launch, zero premine or dev tax, stateless UTXO sovereignty, bare-metal verification) while generalizing his $k = 0$ sequential chain into a **parallel Proof-of-Work BlockDAG**. Under live GHOSTDAG consensus on Kaspa mainnet, concurrent blocks mined across the globe are woven simultaneously into the Directed Acyclic Graph rather than discarded as orphans.',
+  '',
+  'Crucially, Proof-of-Work scaling at internet speed is no longer a theoretical whitepaper projection—it is calcified as an **immutable thermodynamic fossil on live mainnet**:',
+  '',
+  '* **Live 10x Mid-Flight Phase Transition (`DAA 110,165,000`):** On May 5, 2025, `KIP-14` (Crescendo) scaled Proof-of-Work block production tenfold from `1 BPS` (`1,000 ms`) to **`10 BPS` (`100 ms`)** in mid-flight with zero downtime, zero chain split, zero foundation multisig switch, and exact sompi-for-sompi preservation of the Chromatic emission curve. On October 5, 2025, live mainnet settled **`158.4 million` transactions in 24 hours** (peaking at `5,584 TPS`) at sub-cent fees on sovereign consumer hardware (`8 CPU cores / 16 GB RAM / 256 GB NVMe SSD` across a ~30-hour `pruning_depth = 1,080,000` PoPoW horizon).',
+  '* **Stateless Layer-1 Covenants (`DAA 474,165,565`):** On June 30, 2026, `Toccata` (`KIP-16`, `KIP-17`, `KIP-20`, `KIP-21`) activated native Layer-1 UTXO Covenants, SilverScript, inline ZK proof verification opcodes, and partitioned sequencing lanes—delivering trustless timelocked vaults, uniform-price batch auctions, and autonomous agentic settlement where parallel UTXO topology and randomized `100 ms` multi-leader block production neutralize deterministic leader-based MEV extraction.',
+  '',
+  '---',
+  '',
+  '## PART V — THE UNIFIED AUDIT FUNCTIONAL',
+  '',
+  '### [23 • THE TRUTH THERMODYNAMIC AUDIT LAW: MULTIPLICATIVE MASS GATE & DYNAMIC FRONTIER]',
+  '',
+  '**Law:** Multiplicative Momentum Gate ($p = m \\cdot v$) & Dynamic Pareto-Frontier Normalization',
+  '',
+  '**Equation:** `p = m(S₀₁..₀₃) · v(S₀₄..₀₆) ∈ [0, 6.00]   |   S₀₂ = 0 ⇒ S₀₄..₀₆ = VOID ∧ 0.00 (F)   |   S₀₁ = 0 ⇒ S₀₂ ≤ 0.35 ∧ ≤ D+`',
+  '',
+  'That single, unyielding synthesis of thermodynamics, $100\\text{ MJ}$ human metabolism, Quantum Darwinism, paleontological state persistence, and live cryptographic proof is what forged **The Truth**: stop grading glossy investor decks, celebrity founders, speculative TVL loops, arbitrary market-cap ranks, or consensus theater, and measure every digital protocol and physical commodity strictly against the invariant conservation laws that govern stars, river canyons, cellular metabolism, oxidized steel, and ASIC silicon.',
+  '',
+  'To ensure mathematical exactness across every historical epoch and candidate ledger, the audit functional enforces three non-negotiable physical boundary rules:',
+  '',
+  '1. **The Multiplicative `VOID` Gate ($p = m \\cdot v$):** In physics, momentum is multiplicative, not additive. Invariants `01–03` (**Existential Sovereignty, $E > 0$ Cost Floor, and Landauer Immutability**) constitute the **Foundational Mass ($m$)** determining whether an asset is physically anchored money; Invariants `04–06` (**Wartime Availability, State Topology, and Velocity**) measure its **Operational Velocity ($v$)**. Whenever an asset breaches the Conservation of Energy Floor ($S_{02} = 0$, $E = 0$), its physical mass is identically zero ($m = 0$). Operational database speed on an unanchored chain carries zero thermodynamic weight; Invariants `04–06` lock automatically to **`VOID (Unanchored)`** while retaining full forensic disclosures, forcing terminal output to **`0.00 / 6.00` (Grade F)**.',
+  '2. **The Sovereignty-Compromise & Energy-Arbitrage Clamp:** Whenever a genuine $E > 0$ Proof-of-Work network breaches Existential Sovereignty ($S_{01} = 0$) via a genesis premine, VC allocation, or coinbase developer tax, zero-joule insider units permanently dilute unit energy backing ($S_{02} \\le 0.35$) and hard-cap compliance at **Grade D+** across all subsequent epochs.',
+  '3. **Dynamic Pareto-Frontier Normalization:** Each invariant $S_i \\in [0, 1.00]$ is normalized strictly against the **highest verified physical implementation live on mainnet at the audited epoch**—excluding unshipped roadmap proposals. In 2009–2010, Satoshi’s Bitcoin defined the `6.00 / A+` frontier across all six axes; in 2023–2024, `1 BPS` Kaspa held the Velocity apex while yielding the State Topology frontier to Bitcoin Cash’s live `CashTokens` covenants until `Crescendo` (`DAA 110,165,000`) and `Toccata` (`DAA 474,165,565`) established today’s `6.00` benchmark—and if any future fair-launched $E > 0$ protocol surpasses that physical frontier on live mainnet, the entire board recalibrates automatically.',
+  '',
+  '$$S_{\\text{total}}(t) = \\begin{cases} 0.00 \\;\\;(\\text{Grade F, } S_{04..06} = \\text{VOID}) & \\text{if } S_{02}(t) = 0 \\;\\;(E = 0) \\\\[6pt] \\sum_{i=1}^{6} \\frac{\\Phi_i(\\text{Asset}, t)}{\\max_{\\mathcal{A} \\in \\text{Live}(t)} \\Phi_i(\\mathcal{A}, t)} \\;\\;(\\text{Capped } \\le \\text{D+ if } S_{01} = 0) & \\text{if } S_{02}(t) > 0 \\;\\;(E > 0) \\end{cases}$$',
+  '',
+  'Physics never negotiates, never lobbies a committee, never bails out insiders, and always settles the final ledger in Joules.'
+].join('\n');
+
+function resolveChapterFromPartHeading(partTitle: string): Exclude<ThesisChapterId, 'ALL'> {
+  if (/^PART\s+I\b/i.test(partTitle)) return 'INVARIANTS';
+  if (/^PART\s+II\b/i.test(partTitle)) return 'INFLATION';
+  if (/^PART\s+III\b/i.test(partTitle)) return 'COSMOS';
+  if (/^PART\s+IV\b/i.test(partTitle)) return 'BETRAYAL';
+  return 'UNIFIED';
+}
+
+function parseGeniusThesisMarkdown(markdown: string): ThesisParagraph[] {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const sections: ThesisParagraph[] = [];
+  let currentPartTitle = 'PART I — THE SIX PHYSICAL INVARIANTS OF SOVEREIGN MONEY';
+  let currentChapter: Exclude<ThesisChapterId, 'ALL'> = 'INVARIANTS';
+
+  let activeTag: string | null = null;
+  let activeId = 0;
+  let activePartTitle = currentPartTitle;
+  let activeChapter: Exclude<ThesisChapterId, 'ALL'> = currentChapter;
+  let activeLaw = '';
+  let activeEquation = '';
+  let bodyLines: string[] = [];
+
+  const flush = () => {
+    if (!activeTag) return;
+    while (bodyLines.length > 0 && (bodyLines[0].trim() === '' || bodyLines[0].trim() === '---')) {
+      bodyLines.shift();
+    }
+    while (
+      bodyLines.length > 0 &&
+      (bodyLines[bodyLines.length - 1].trim() === '' ||
+        bodyLines[bodyLines.length - 1].trim() === '---')
+    ) {
+      bodyLines.pop();
+    }
+    sections.push({
+      id: activeId,
+      chapter: activeChapter,
+      partTitle: activePartTitle,
+      tag: activeTag,
+      text: bodyLines.join('\n'),
+      laws:
+        activeLaw || activeEquation
+          ? [
+              {
+                law: activeLaw,
+                equation: activeEquation
+              }
+            ]
+          : []
+    });
+    activeTag = null;
+    activeLaw = '';
+    activeEquation = '';
+    bodyLines = [];
+  };
+
+  for (const line of lines) {
+    const partMatch = line.match(/^##\s+(PART\s+[IVX]+\s+—\s+.+)$/);
+    if (partMatch) {
+      flush();
+      currentPartTitle = partMatch[1].trim();
+      currentChapter = resolveChapterFromPartHeading(currentPartTitle);
+      continue;
+    }
+
+    const secMatch = line.match(/^###\s+\[(.+)\]$/);
+    if (secMatch) {
+      flush();
+      activeTag = secMatch[1].trim();
+      const idMatch = activeTag.match(/^(\d+)/);
+      activeId = idMatch ? Number(idMatch[1]) : sections.length + 1;
+      activePartTitle = currentPartTitle;
+      activeChapter = currentChapter;
+      continue;
+    }
+
+    if (!activeTag) continue;
+
+    if (!activeLaw && line.startsWith('**Law:**')) {
+      activeLaw = line.replace(/^\*\*Law:\*\*\s*/, '').trim();
+      continue;
+    }
+
+    if (!activeEquation && line.startsWith('**Equation:**')) {
+      const rawEq = line.replace(/^\*\*Equation:\*\*\s*/, '').trim();
+      activeEquation =
+        rawEq.startsWith('`') && rawEq.endsWith('`') ? rawEq.slice(1, -1) : rawEq;
+      continue;
+    }
+
+    bodyLines.push(line);
+  }
+
+  flush();
+  return sections;
+}
+
+/**
+ * Unabridged long-form GENIUS Edition of the First-Principles Origin Thesis (23 Axioms across 5 Parts).
+ */
+export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = parseGeniusThesisMarkdown(
+  GENESIS_THESIS_GENIUS_RAW_MARKDOWN
+);
+
+const AXIOM_LAWS_BY_ID: Record<number, ThesisLawEquation[]> = Object.fromEntries(
+  GENESIS_THESIS_GENIUS_PARAGRAPHS.map((p) => [p.id, p.laws])
+);
+
+const AXIOM_PART_BY_ID: Record<number, { chapter: Exclude<ThesisChapterId, 'ALL'>; partTitle: string }> =
+  Object.fromEntries(
+    GENESIS_THESIS_GENIUS_PARAGRAPHS.map((p) => [
+      p.id,
+      { chapter: p.chapter, partTitle: p.partTitle }
+    ])
+  );
+
+interface RawNormieParagraph {
   id: number;
-  chapter: Exclude<ThesisChapterId, 'ALL'>;
   tag: string;
   text: string;
 }
 
-const RAW_NORMIE_PARAGRAPHS: RawThesisParagraph[] = [
+const RAW_NORMIE_PARAGRAPHS: RawNormieParagraph[] = [
   {
     id: 1,
-    chapter: 'INVARIANTS',
-    tag: '01 • EXISTENTIAL SOVEREIGNTY',
-    text: 'A sovereign monetary ledger is not a social construct, a corporate software product, or a democratic agreement; it is a physical machine governed strictly by the laws of thermodynamics and information physics. To survive the relentless pull of entropy, state coercion, and adversarial greed, an architecture must satisfy six non-negotiable physical invariants. At the foundational layer stands Existential Sovereignty and Entity Decoupling, which demands that the protocol emerge from an immaculate, permissionless genesis completely severed from human boards, corporate foundations, or venture capital syndicates. If a monetary network pre-mines its supply in a configuration file, allocates insider treasuries, or relies on registered corporate validators and administrative upgrade keys, it possesses a biological neck that nation-state regulators can choke with a single subpoena. True entity decoupling requires a fair-launch substrate where every single atomic unit is forged in the open market from block zero, ensuring that even if the original creators vanish from the Earth, the network continues operating autonomously as an unfeeling, leaderless force of nature.'
+    tag: '01 • EXISTENTIAL SOVEREIGNTY & ENERGY-ARBITRAGE LAW',
+    text: 'A sovereign monetary ledger is not a social construct, a corporate software product, or a democratic agreement; it is a physical machine governed strictly by the laws of thermodynamics and information physics. At the foundational layer stands Existential Sovereignty and Entity Decoupling: a protocol must launch fairly from block zero without premines, insider treasuries, coinbase developer taxes, or corporate admin keys that regulators can choke with a single subpoena. Whenever insiders mint zero-joule coins into the same supply pool as miner-forged coins, they permanently dilute the energy backing of every unit—clamping its Cost Floor score at 0.35 and capping its grade at D+.'
   },
   {
     id: 2,
-    chapter: 'INVARIANTS',
-    tag: '02 • COST FLOOR E > 0',
-    text: 'This structural independence is impossible without the second invariant: the Thermodynamic Cost Floor (E > 0), anchored in the First Law of Thermodynamics and the Conservation of Energy. Because energy can neither be created nor destroyed, genuine value in the physical universe—whether a biological organism resisting cellular decay, a canyon carved by kinetic water, or gold extracted from the Earth’s crust—requires an irreversible expenditure of real-world Joules. A sovereign currency must embed this unforgeable costliness directly into its issuance via pure Nakamoto Proof-of-Work, forcing miners to burn continuous megawatts of electricity across physical silicon to mint a single coin. Any Proof-of-Stake, Proof-of-Authority, or Federated Byzantine system that conjures tokens out of thin air at 0 joules of energetic sacrifice is a digital fiat counterfeit machine, institutionalizing the Cantillon Effect by allowing corporate insiders at the genesis spigot to trade weightless keystrokes for the real kinetic sweat and life-force of the working class.'
+    tag: '02 • COST FLOOR (E > 0) & PURITY ASSAY',
+    text: 'Structural independence is impossible without the Thermodynamic Cost Floor (E > 0), anchored in the First Law of Thermodynamics and the Conservation of Energy. Like a 24-karat gold purity assay rather than a raw size contest, this invariant tests whether 100% of new coins require real electrical work across Proof-of-Work hardware, forcing minting cost toward market price. Any Proof-of-Stake or committee ledger that conjures tokens at 0.00 Joules is a digital fiat counterfeit machine, locking downstream operational metrics to VOID and forcing Grade F.'
   },
   {
     id: 3,
-    chapter: 'INVARIANTS',
-    tag: '03 • LANDAUER’S PRINCIPLE',
-    text: 'When consensus is anchored strictly to burned energy, it automatically enforces the third invariant: Historical Immutability and the Physical Arrow of Time, governed by the Second Law of Thermodynamics and Landauer’s Principle. Recording and locking information into a physical substrate requires the irreversible dissipation of heat into the environment, creating an asymmetric wall of entropy between the past and the future. In a Proof-of-Work ledger, every confirmed block acts as a kinetic measurement that collapses transactional possibilities into calcified history; rewriting that past requires an attacker to physically re-burn every megawatt-hour of electricity expended by the global ASIC fleet since that block was sealed. Conversely, zero-joule Proof-of-Stake networks secure their ledgers with weightless cryptographic signatures, leaving their history massless, trapped in "weak subjectivity," and perpetually vulnerable to costless long-range rollbacks or administrative rewrites whenever a validator cartel decides to alter the timeline.'
+    tag: '03 • LANDAUER’S PRINCIPLE & BARE-METAL VERIFICATION',
+    text: 'When consensus is anchored strictly to burned energy, it enforces Historical Immutability and the Physical Arrow of Time under the Second Law of Thermodynamics and Landauer’s Principle. Rewriting a Proof-of-Work ledger requires physically re-burning every megawatt-hour of electricity spent since that block was sealed, while everyday citizens can verify that entire chain from Genesis on consumer hardware. Zero-joule Proof-of-Stake ledgers rely on weightless signatures and social "weak subjectivity" checkpoints that insiders can rewrite at negligible physical cost.'
   },
   {
     id: 4,
-    chapter: 'INVARIANTS',
-    tag: '04 • WARTIME PARTITION',
-    text: 'This physical mass must remain functional under maximum geopolitical trauma, which defines the fourth invariant: Dynamic Availability under a wartime network partition. Classical Byzantine Fault Tolerant (BFT) Proof-of-Stake architectures are engineered for peacetime data centers, requiring continuous, synchronous communication and a rigid two-thirds (>66.7%) supermajority of staked voting weight to finalize blocks. The moment a sovereign firewall, internet blackout, or severed undersea fiber-optic cable isolates just 33.4% of staked validators, a BFT network either flatlines completely or bleeds offline validators to create permanent, irreconcilable split-brain ledgers. A sovereign Proof-of-Work engine bound by parameterless DAG consensus never halts; isolated landmasses continue mining and ordering transactions autonomously along whatever local electrical gradient survives, and when the severed cables are spliced back together, the partitions seamlessly and deterministically weave their parallel histories back into a single unified ledger strictly by evaluating accumulated Proof-of-Work.'
+    tag: '04 • WARTIME PARTITION AVAILABILITY',
+    text: 'Physical money must stay live under maximum geopolitical trauma—Dynamic Availability under a wartime network partition. Classical BFT Proof-of-Stake chains require >66.7% supermajority voting across peacetime data centers; severing an undersea cable that isolates 33.4% of stake freezes finality and slashes trapped honest nodes. A parallel Proof-of-Work BlockDAG never halts: isolated continents keep mining along local electricity, recalibrate difficulty per block, and deterministically merge parallel histories by accumulated work once cables reconnect.'
   },
   {
     id: 5,
-    chapter: 'INVARIANTS',
-    tag: '05 • STATE MACHINE TOPOLOGY',
-    text: 'For an unhaltable ledger to remain resistant to systemic capture over centuries, it must obey the fifth invariant: Stateless, Parallel State Machine Topology. Account-based virtual machines pack global balances, permissions, and contract state into a single contested mutex tree—creating serial write-lock bottlenecks, extractive front-running (MEV), mandatory state-rent seizures, and native freeze or clawback hooks at the protocol base. By contrast, a pure Unspent Transaction Output (UTXO) graph decomposes every unit of value into isolated cryptographic coins whose validity can be checked independently in parallel across cores without lock contention, pruning spent outputs safely while keeping total monetary supply arithmetically verifiable in plaintext from genesis.'
+    tag: '05 • STATELESS PARALLEL UTXO TOPOLOGY',
+    text: 'To stay uncapturable over centuries, a ledger needs Stateless, Parallel State Machine Topology. Shared-account virtual machines (like EVM and SVM) funnel every user and contract into one contested global state tree—breeding serial bottlenecks, toxic MEV front-running, state bloat, and token freeze switches. A stateless UTXO graph treats coins as independent cryptographic capsules verified in parallel across CPU cores, extendable on Layer 1 via native UTXO covenants without shared-account locks.'
   },
   {
     id: 6,
-    chapter: 'INVARIANTS',
-    tag: '06 • VELOCITY M = 1.0',
-    text: 'Finally, a monetary machine built to carry planetary commerce cannot waste the energy it burns through linear bottlenecks; it must achieve the sixth invariant: Thermodynamic Velocity (M = 1.0) at the physical speed limit of light through optical fiber. Sequential single-chain architectures such as Bitcoin force honest concurrent blocks mined simultaneously across continents to collide as stale orphans, capping real Layer-1 finality at slow 600-second epochs and forcing everyday users back into custodial IOU layers. Through GHOSTDAG ordering today and parameterless DAGKNIGHT [Roadmap / KIP-2 Proposed — In Testnet-13 Review], a parallel Proof-of-Work BlockDAG converts 100% of honest concurrent hash power into forward security and parallel throughput—reaching 10+ blocks per second on Layer 1 with zero wasted orphan work.'
+    tag: '06 • THERMODYNAMIC VELOCITY (M = 1.0)',
+    text: 'Planetary electronic cash cannot waste burned energy in single-file bottlenecks; it must reach Thermodynamic Velocity (M = 1.0) near the speed of light in fiber. Single-chain designs like Bitcoin’s 10-minute loop turn concurrent global blocks into wasted orphans and push users onto custodial Layer-2 IOUs capped beneath Layer 1. Live 10-BPS GHOSTDAG BlockDAG consensus weaves 100% of honest parallel mining work into instant security and sub-second confirmation visibility with zero orphan waste.'
   },
   {
     id: 7,
-    chapter: 'INFLATION',
-    tag: '07 • HUMAN WORK AS JOULES',
-    text: 'Once you view economics through physics rather than fiat accounting tricks, inflation ceases to be a mysterious macroeconomic variable and reveals itself as an explicit theft of biological work. Every human calorie equals 4,184 Joules of chemical potential energy stored in food and metabolized through muscle and brain tissue to reorder matter against entropy. Across a standard forty-hour workweek of physical exertion, focus, and technical labor, a productive human worker expends roughly 100 megajoules (100 MJ) of irreversible biological work into real goods, maintained infrastructure, food, or verifiable energy.'
+    tag: '07 • HUMAN WORK AS JOULES (100 MJ/WK)',
+    text: 'Viewed through physics rather than central-bank jargon, inflation is an unconsented theft of biological human work. Every food kilocalorie equals 4,184 Joules of solar energy converted into muscle and neural effort. Over a forty-hour workweek, an adult worker pours roughly 100 megajoules (100 MJ) of non-refundable life-energy into real goods and infrastructure—meaning honest money must store an unwatered claim on real external Joules.'
   },
   {
     id: 8,
-    chapter: 'INFLATION',
-    tag: '08 • TAX & ENTROPY FRICTION',
-    text: 'When a state levies an explicit twenty percent income or consumption tax on that worker’s output, it confiscates 20 MJ of kinetic human effort directly at the source. Worse still, running an uncompetitive, bloated administrative apparatus to collect, audit, and redistribute that claim generates pure thermodynamic friction—squandering roughly 8 MJ in deadweight bureaucratic waste heat that builds zero bridges, harvests zero wheat, and adds zero real computational security to society.'
+    tag: '08 • TAXATION (20 MJ) & CARNOT FRICTION (8 MJ)',
+    text: 'When a government levies an explicit 20% tax on a 100 MJ workweek, it takes a visible 20 MJ claim on real output. Yet just like a heat engine losing exhaust under Carnot limits, running overlapping compliance bureaucracies and middlemen burns roughly 8 MJ of that extracted effort as pure administrative waste heat—producing zero food, zero electricity, zero steel rail, and zero ledger security.'
   },
   {
     id: 9,
-    chapter: 'INFLATION',
-    tag: '09 • UNFUNDED PROMISES',
-    text: 'Because no political class survives if it openly taxes citizens for every promise it makes, governments close the gap by conjuring unbacked monetary claims out of thin air. When politicians issue 40 MJ of spending promises against only 20 MJ of real productive energy extracted via taxation, the missing 20 MJ deficit cannot be materialized from a vacuum—the First Law of Thermodynamics forbids free energy. Instead, central banks inject unbacked currency units at zero energetic cost, silently siphoning purchasing power out of every worker’s saved hours until prices re-equilibrate to the true scarcity of physical output.'
+    tag: '09 • UNFUNDED PROMISES (40 MJ VS. 20 MJ)',
+    text: 'Because politicians lose elections if they openly tax citizens for every spending promise, states bridge the gap with the printing press. Legislating 40 MJ of promises against 20 MJ of real taxes leaves a 20 MJ physical hole that laws cannot conjure out of thin air. Central banks print zero-joule currency units instead, letting connected insiders spend new money first and silently siphoning 20 MJ of purchasing power out of workers’ savings.'
   },
   {
     id: 10,
-    chapter: 'INFLATION',
-    tag: '10 • $35T ZERO-JOULE LIEN',
-    text: 'Compounded over decades, this divergence accumulates into an impossible energetic lien: over $35+ trillion in sovereign debt obligations backed by 0.00 Joules of physical reserve work. Every newly printed treasury bond is a paper claim demanding future megajoules of labor from generations not yet born, mathematically guaranteeing that the underlying unit of account must either overtly default or covertly evaporate in real purchasing power against finite matter and proof-of-work energy.'
+    tag: '10 • $35+ TRILLION ZERO-JOULE LIEN',
+    text: 'Compounded over decades off the gold standard, zero-joule money creation has piled up more than $35 trillion in sovereign debt—plus vast unfunded liabilities—backed by 0.00 Joules of physical reserves. Every new treasury bond is a paper claim on the future sweat and electricity of children not yet born, guaranteeing relentless currency dilution against scarce real energy and Proof-of-Work assets.'
   },
   {
     id: 11,
-    chapter: 'INFLATION',
-    tag: '11 • WEIMAR 16 MJ/KG KINDLING',
-    text: 'History demonstrated the terminal boundary of zero-joule money during the 1923 Weimar hyperinflation. When the Reichsbank multiplied paper Marks faster than coal, grain, or human muscle could be harvested, citizens literally hauled banknotes in wheelbarrows to burn in kitchen stoves—because stamped paper notes carried zero monetary energy cost and fell below their own raw chemical fuel value as cellulose wood pulp (~16 MJ/kg of dry kindling heat).'
+    tag: '11 • WEIMAR & THE 16 MJ/KG CELLULOSE FLOOR',
+    text: '1923 Weimar Germany showed where zero-joule money ends. Once printing presses multiplied paper Marks far faster than coal mines, farms, and workers could produce real goods, the currency’s purchasing power dropped below the raw heat value of the paper itself—driving families to burn wheelbarrows of banknotes in kitchen stoves for ~16 MJ/kg of dry wood-pulp warmth.'
   },
   {
     id: 12,
-    chapter: 'INFLATION',
-    tag: '12 • SKETCH OF A FIRE',
-    text: 'Issuing zero-joule fiat currency or pre-minted Proof-of-Stake tokens to simulate real capital is indistinguishable from drawing a charcoal sketch of a campfire on a freezing cabin wall and expecting the painting to warm your hands. No matter how intricate the governance vote, slashing formula, or marketing narrative around the drawing, only burning real molecular bonds or irreversible electrical Joules emits real heat across spacetime.'
+    tag: '12 • CHARCOAL SKETCH OF A FIRE',
+    text: 'Printing zero-joule fiat or pre-mined Proof-of-Stake tokens to imitate real capital is like drawing a charcoal sketch of a campfire on a freezing cabin wall and voting that it burns at 900 Kelvin. No governance quorum, slashing rule, or whitepaper can make a drawing radiate heat; only breaking real chemical bonds or burning real electrical Joules warms the room.'
   },
   {
     id: 13,
-    chapter: 'COSMOS',
-    tag: '13 • GRAND CANYON KINETIC WORK',
-    text: 'The universe itself runs exclusively on Proof-of-Work; nature never validates history with cheap signatures or consensus committees. Stand at the rim of the Grand Canyon and you are looking at an unforgeable geological ledger: millions of years of solar-lifted rainfall and gravitational kinetic river flow physically carving a mile deep into solid granite and limestone. Nobody can fake the canyon with an administrative decree or a quorum vote—only centuries of cumulative mechanical Joules leave that stratigraphic record.'
+    tag: '13 • GRAND CANYON GEOLOGICAL POW',
+    text: 'Nature itself runs exclusively on Proof-of-Work and never validates history by committee vote. The Grand Canyon is a five-million-year geological ledger carved a mile deep into solid rock by solar-lifted rain and gravitational river shear. No parliament can vote a canyon into existence and no multisig can fake its strata—only cumulative irreversible Joules carve permanent history.'
   },
   {
     id: 14,
-    chapter: 'COSMOS',
-    tag: '14 • SEQUOIA & TREE RINGS',
-    text: 'Biology records time with the exact same irreversible thermodynamics. Every concentric growth ring locked inside an ancient trunk preserves a chemical proof-of-photosynthesis season forged from photons, soil minerals, and atmospheric carbon. Even the Giant Sequoia encodes natural thermodynamic disaster recovery in its architecture: its serotinous cones remain resin-sealed for decades until intense wildfire heat physically melts the resin open, proving survival requires surviving real thermal energy.'
+    tag: '14 • SEQUOIA TREE RINGS & WILDFIRE PROOF',
+    text: 'Living biology records time through the same unforgeable energy receipts. Every growth ring inside a two-thousand-year-old Giant Sequoia locks in a verified season of captured sunlight, carbon, and water, while its resin-sealed cones stay shut for decades until genuine wildfire heat melts them open to seed the next forest.'
   },
   {
     id: 15,
-    chapter: 'COSMOS',
-    tag: '15 • STREET SIGN & ENTROPY',
-    text: 'Even a painted steel street sign standing on an ordinary highway illustrates the perpetual cost of preserving order against the Second Law of Thermodynamics. From the moment iron ore is smelted in a blast furnace, stamped, galvanized, and bolted into concrete, atmospheric oxygen, rain, and ultraviolet radiation relentlessly attack the metal to return it to low-energy rust and iron oxide. Order never stays intact for free; maintenance demands continuous energy.'
+    tag: '15 • STEEL STREET SIGN & ENTROPY',
+    text: 'Even a galvanized steel highway sign proves that physical order never coasts for free after launch. Smelted at 1,500 °C far above natural mineral equilibrium, steel immediately faces oxygen, rain, and UV light pulling it back into rust. Without continuous energy spent on maintenance, order decays—proving no ledger stays secure forever at 0.00 Joules.'
   },
   {
     id: 16,
-    chapter: 'COSMOS',
-    tag: '16 • WHY FIAT & POS FAIL',
-    text: 'This is why central-bank fiat printing and zero-joule Proof-of-Stake protocols are not merely flawed economic designs—they are an ontological insult to the architecture of physical reality. Both pretend that ledger authority, wealth preservation, and historical finality can exist at 0.00 Joules of ongoing thermodynamic sacrifice, letting incumbents print weightless ledger entries to harvest the finite biological life-hours of people working inside the real physical universe.'
+    tag: '16 • OBSERVER PHYSICS & APPARATUS TAMPERING',
+    text: 'Critics cite Subjective Value Theory to claim prices are purely psychological and need no energy anchor—confusing what is being measured with the ruler doing the measuring. Private preferences stay invisible until someone sacrifices scarce energy, time, or capital in real exchange (demonstrated preference). Measuring trade with a zero-joule ledger that insiders can stretch by keystroke is apparatus tampering—a rubber ruler used to siphon real goods from everyone else.'
   },
   {
     id: 17,
-    chapter: 'COSMOS',
-    tag: '17 • THE TRUTH AUDIT LAW',
-    text: 'That realization is what forged The Truth: stop grading narratives, celebrity founders, roadmaps, or market-cap illusions, and weigh every currency strictly against the conservation laws that govern stars, rocks, biological cells, and silicon ASICs. Measure Existential Sovereignty, E > 0 Cost Floor, Landauer Immutability, Wartime Availability, Stateless Topology, and Velocity M = 1.0—because physics never negotiates, never bails out insiders, and always settles the final ledger in Joules.'
+    tag: '17 • QUANTUM DARWINISM & MAXWELL’S DEMON',
+    text: 'In physics, objective reality emerges through Quantum Darwinism: stable pointer states copied redundantly across independent slices of the environment so anyone can verify history without trusting a central referee. A Proof-of-Work node network does the exact same thing by crossing Landauer’s heat threshold. Zero-joule ledgers pretend to be free-energy Maxwell’s Demons, but they merely push the energy bill onto military tax enforcement (fiat) or Cantillon insider dilution (Proof-of-Stake).'
+  },
+  {
+    id: 18,
+    tag: '18 • STATE PERSISTENCE VS. REFILLED TRENCHES',
+    text: 'Why doesn’t digging a ditch and refilling it create money? Because refilling the hole erases the physical receipt, leaving future observers zero verifiable proof that work happened. Conversely, zero-joule digital ledgers keep a database receipt that cost nothing to forge. Lasting monetary value requires spending real energy that crystallizes into a permanent, unforgeable physical fossil—like gold or a valid Proof-of-Work header—expensive to forge, yet instant for any stranger to verify.'
+  },
+  {
+    id: 19,
+    tag: '19 • THE PALEONTOLOGICAL BLIND SPOT',
+    text: 'Paleontologists haul heavy equipment into badlands, dig deep rock trenches, extract a rare fossil, and shovel all the dirt back into the pit under reclamation laws. From a distant ridge, it looks like workers just dug holes and refilled them—the exact blind spot of critics who stare only at ASIC heat exhaust while missing the rare cryptographic Proof-of-Work fossil extracted from the search space. Human demand chooses what to dig for; Proof-of-Work keeps the unearthed standard incorruptible.'
+  },
+  {
+    id: 20,
+    tag: '20 • SATOSHI’S BETRAYAL I: L1 OSSIFICATION',
+    text: 'Satoshi built Bitcoin as Peer-to-Peer Electronic Cash meant to scale past Visa, leaving only its single-file 10-minute chain bottleneck (k = 0) to be generalized. Instead, institutional stewards froze Layer 1 at ~7 TPS and rebranded cash into vault collateral—herding ~84% of U.S. spot ETF Bitcoin into Coinbase Custody, shrinking Lightning into a centralized hub-and-spoke web (Gini ~0.97), and concentrating over 60% of block templates in three mining pools.'
+  },
+  {
+    id: 21,
+    tag: '21 • SATOSHI’S BETRAYAL II: POS & TAXED POW',
+    text: 'While maximalists froze Bitcoin’s base layer, "Web3" abandoned Satoshi’s physics altogether—replacing Proof-of-Work with premined zero-joule Proof-of-Stake chains, OFAC-compliant validator cartels, and freezeable stablecoin rails that extract real 100 MJ human workweeks with weightless tokens. Even compromised Proof-of-Work forks that bake mandatory developer coinbase taxes into supply permanently dilute unit energy purity under the Energy-Arbitrage Law.'
+  },
+  {
+    id: 22,
+    tag: '22 • COMPLETING NAKAMOTO: PARALLEL BLOCKDAGS',
+    text: 'Fulfilling Satoshi’s electronic cash vision meant keeping 100% of his fair-launch Proof-of-Work physics while upgrading his single-file chain into a parallel BlockDAG. On live Kaspa mainnet, KIP-14 Crescendo scaled Proof-of-Work 10x to 10 blocks per second (100 ms, settling 158.4M transactions in a single day on consumer hardware), and Toccata activated native stateless Layer-1 UTXO covenants and ZK opcodes without MEV leader monopolies.'
+  },
+  {
+    id: 23,
+    tag: '23 • THE UNIFIED AUDIT FUNCTIONAL',
+    text: 'The Truth unites these physical laws into one deterministic equation: Invariants 01–03 measure Foundational Mass (m) and Invariants 04–06 measure Operational Velocity (v) in p = m · v. If Cost Floor E = 0, mass is zero, locking 04–06 to VOID and forcing 0.00 / Grade F; if a PoW chain premines or taxes supply, it caps at Grade D+; and every live score calibrates dynamically against the highest verified mainnet implementation.'
   }
 ];
 
-const RAW_GENIUS_PARAGRAPHS: RawThesisParagraph[] = [
-  {
-    id: 1,
-    chapter: 'INVARIANTS',
-    tag: '01 • EXISTENTIAL SOVEREIGNTY & ENTITY DECOUPLING',
-    text: 'A sovereign monetary ledger is not a social construct, a corporate software product, or a democratic agreement; it is a physical machine governed strictly by the laws of thermodynamics and information physics. To survive the relentless pull of entropy, state coercion, and adversarial greed, an architecture must satisfy six non-negotiable physical invariants. At the foundational layer stands Existential Sovereignty and Entity Decoupling, which demands that the protocol emerge from an immaculate, permissionless genesis completely severed from human boards, corporate foundations, or venture capital syndicates. If a monetary network pre-mines its supply in a configuration file, allocates insider treasuries, vests multi-sig admin keys, or relies on registered corporate validators and trademarked governance councils, it possesses a biological neck that nation-state regulators can choke with a single subpoena, OFAC injunction, or DNS seizure. Because law-enforcement pressure propagates asymptotically to the single locus of human control—and because a chain whose upgrade path or finality halt switch can be coerced inherits the risk envelope of its weakest human custodian (Sovereignty = 0 caps any derivative cost floor strictly at <= 1.0)—true entity decoupling requires a fair-launch substrate where every single atomic unit is forged in the open market from block zero, ensuring that even if the original creators vanish from the Earth or turn hostile, the network continues operating autonomously as an unfeeling, leaderless force of nature.'
-  },
-  {
-    id: 2,
-    chapter: 'INVARIANTS',
-    tag: '02 • FIRST LAW & THERMODYNAMIC COST FLOOR (E > 0)',
-    text: 'This structural independence is impossible without the second invariant: the Thermodynamic Cost Floor (E > 0), anchored in the First Law of Thermodynamics (dU = dQ - dW) and the Conservation of Energy. Because energy can neither be created nor destroyed across any closed or open physical boundary, genuine value in the physical universe—whether a biological organism maintaining negative internal entropy against cellular decay, a canyon carved over millennia by gravitational kinetic water, or metallic gold concentrated inside the Earth’s crust through supernovae and hydrothermal work—requires an irreversible expenditure of real-world Joules. A sovereign currency must embed this unforgeable physical costliness directly into its marginal issuance via pure Nakamoto Proof-of-Work (dW = P_ASIC * t > 0), forcing autonomous miners to burn continuous megawatts of electrical energy across real thermodynamic silicon furnaces to mint a single coin. Under pure PoW equilibrium, marginal extraction cost converges dynamically toward marginal market price through competitive physical arbitrage; if an asset has E = 0, no such energy arbitrage boundary exists, and insider supply creation is thermodynamically free. Any Proof-of-Stake, Proof-of-Authority, Delegated PoS, or Federated Byzantine system that conjures tokens out of thin air at 0.00 Joules of ongoing energetic sacrifice is mathematically a digital fiat counterfeit machine, institutionalizing the Cantillon Effect by allowing corporate insiders at the genesis spigot to trade weightless keystrokes for the real kinetic sweat and finite metabolic life-force of the working class.'
-  },
-  {
-    id: 3,
-    chapter: 'INVARIANTS',
-    tag: '03 • SECOND LAW & LANDAUER’S ARROW OF TIME',
-    text: 'When consensus is anchored strictly to burned energy, it automatically enforces the third invariant: Historical Immutability and the Physical Arrow of Time, governed by the Second Law of Thermodynamics (dS_universe >= 0) and Landauer’s Principle (Delta Q >= k_B * T * ln 2 per irreversibly erased bit of state entropy). Recording, ordering, and locking information into a physical substrate requires the irreversible dissipation of low-entropy free energy as waste heat into the cosmic environment, creating a strict, non-negotiable thermodynamic asymmetry between the past and the future. In a Proof-of-Work ledger, every confirmed block acts as an irreversible kinetic measurement across billions of tera-hashes that collapses transactional uncertainty into calcified historical mass; rewriting depth D into the past requires an adversary to physically assemble equivalent silicon ASIC mass and re-burn every megawatt-hour of electrical work expended by the global hash-rate fleet since that height was sealed—without benefiting from any shortcut inside the laws of physics. Conversely, zero-joule Proof-of-Stake networks secure their ledgers with weightless, reversible ECDSA/BLS/Ed25519 cryptographic signatures whose generation costs microscopic fractions of a millijoule. Once private keys age past the unbonding horizon, nothing in thermodynamics prevents a historical validator cartel from signing an alternate branch for zero marginal cost—leaving PoS history massless, permanently trapped in Vitalik Buterin’s own admitted "weak subjectivity" trust loop (requiring external human social checkpoints to decide truth), and perpetually vulnerable to costless long-range rollbacks, nothing-at-stake forks, or administrative social-slashing rewrites whenever insiders decide to alter the timeline.'
-  },
-  {
-    id: 4,
-    chapter: 'INVARIANTS',
-    tag: '04 • DYNAMIC AVAILABILITY UNDER WARTIME PARTITION',
-    text: 'This physical mass must remain functional under maximum geopolitical trauma, which defines the fourth invariant: Dynamic Availability under a wartime network partition—a direct physical consequence of Brewer’s CAP Theorem and the FLP impossibility boundary. Classical Byzantine Fault Tolerant (BFT) Proof-of-Stake architectures (Tendermint, Casper FFG, Tower BFT, HotStuff) choose synchronous/partially-synchronous safety prioritization calibrated strictly for peacetime data centers, requiring continuous, bidirectional gossip and a rigid two-thirds (>66.7%) supermajority of staked voting weight to advance finality. The moment a sovereign BGP blackhole, wartime EMP, national firewall, or severed undersea fiber-optic cable isolates just 33.4% of staked validators across continents, a BFT network suffers total liveness collapse: finality freezes, mempools stall, inactivity-leak slashing confiscates trapped honest validators, and surviving islands fracture into permanent, irreconcilable split-brain ledgers that require manual out-of-band human governance treaties to reconcile. By contrast, a sovereign Proof-of-Work engine bound by parameterless DAG consensus never halts under partition; isolated continents continue hashing blocks and clearing commerce autonomously along whatever local electrical gradient survives, dynamically calibrating target difficulty per block (such as KIP-14 Sampled DAA over a ~44-minute 26,410-block window rather than freezing for ~10 weeks across a rigid 2,016-block epoch), and when the severed fiber cables are spliced back together, partitions within bounded merge depth cleanly weave parallel histories back into one deterministic unified ledger—or cleanly resolve strictly by accumulated physical Blue Work—without ever surrendering liveness to a committee.'
-  },
-  {
-    id: 5,
-    chapter: 'INVARIANTS',
-    tag: '05 • STATELESS PARALLEL UTXO TOPOLOGY VS MUTEX STATE',
-    text: 'For an unhaltable ledger to preserve sovereignty and verification determinism over multi-century timescales, it must obey the fifth invariant: Stateless, Parallel State Machine Topology. Account-based virtual machines (such as EVM and SVM global state tries) pack every user balance, allowance bitmap, contract bytecode variable, and administrative role inside a single globally mutable state tree accessed under contested read-write mutex locks. Because transaction T_k mutates shared global memory before T_{k+1} can evaluate preconditions, account VMs force sequential state serialization, institutionalize builder/searcher Maximum Extractable Value (MEV) sandwich extraction, trigger unbounded state bloat requiring coercive state-rent seizures, and expose native freeze, blacklist, upgrade-proxy, or arbitrary clawback hooks at the execution layer. By stark topological contrast, a pure Unspent Transaction Output (UTXO) graph models value as discrete, self-contained cryptographic state capsules anchored strictly to spending predicates rather than mutable global accounts. Every UTXO input consumption is mutually orthogonal and embarrassingly parallelizable across multi-core hardware verification threads without mutex contention; spent outputs can be pruned safely in constant bounded disk footprints using cryptographic commitment accumulators, while total monetary supply remains trivially, deterministically auditable in plaintext arithmetic directly against consensus coinbase rules from block zero.'
-  },
-  {
-    id: 6,
-    chapter: 'INVARIANTS',
-    tag: '06 • THERMODYNAMIC VELOCITY (M = 1.0) AT THE SPEED OF LIGHT',
-    text: 'Finally, a monetary machine built to clear planetary human commerce cannot throttle or waste the thermodynamic energy it burns through archaic linear block bottlenecks; it must achieve the sixth invariant: Thermodynamic Velocity (M = 1.0) operating near the relativistic boundary of electromagnetic signal propagation through optical fiber (c/n ~ 200,000 km/s, imposing ~67 ms antipodal round-trip propagation latency across Earth’s circumference). Sequential, longest-chain single-tip architectures such as Satoshi’s original 1-chain parameter (600s block interval) face a lethal coupling trap: whenever honest global block production rate approaches intercontinental propagation latency (bps * D_network >= 1), honest concurrent blocks mined simultaneously across Asia, Europe, and the Americas collide, turn into wasted stale orphans, reduce effective adversarial security threshold, and force real-world retail users back into custodial Layer-2 IOUs and payment channels subordinated to L1 capacity (Carrier Subordination Law: M_overlay < M_L1 <= 1.0). Through topological BlockDAG inclusion under GHOSTDAG today (k = 124, 10 BPS Crescendo throughput with sub-second confirmation visibility and ~10s full finality ordering) and parameterless DAGKNIGHT [Roadmap / KIP-2 Proposed — In Testnet-13 Review] ordering that adapts dynamically to arbitrary real-world network delay without hardcoded D parameters, 100% of honest concurrent SHA-256 or kHeavyHash mining energy weaves additively into canonical total security and parallel transaction throughput at M = 1.0.'
-  },
-  {
-    id: 7,
-    chapter: 'INFLATION',
-    tag: '07 • BIOLOGICAL WORK AS AN EXACT JOULE LEDGER (100 MJ/WK)',
-    text: 'Once you strip away Keynesian monetary euphemisms, CPI basket substitutions, and central-bank balance-sheet sophistry, inflation ceases to look like an abstract price index drift and reveals its true physical identity: an unconsented thermodynamic expropriation of biological human work. Every dietary kilocalorie (kcal) equals precisely 4,184 Joules of chemical bond enthalpy extracted from solar photosynthesis, fixed into adenosine triphosphate (ATP) gradients inside mitochondria, and expended through skeletal muscle contraction and neural ion-pump polarization to push human civilization uphill against entropy. Across a standard forty-hour workweek of carpentry, machining, electrical line maintenance, logistics, medical care, or systems engineering, an adult human body converts roughly 100 megajoules (100,000,000 Joules) of finite, non-refundable biological work-hours into tangible physical goods, maintained infrastructure, harvested nutrition, or low-entropy information structure. Because your lifespan contains a strictly finite stock of total metabolic Joules between birth and death, money only functions honestly if every saved monetary unit stores an unwatered, non-dilutable claim on equivalent external Joules of work.'
-  },
-  {
-    id: 8,
-    chapter: 'INFLATION',
-    tag: '08 • EXPLICIT TAXATION (20 MJ) & BUREAUCRATIC CARNOT FRICTION (8 MJ)',
-    text: 'Examine what happens mathematically to that 100 MJ weekly physical output inside a managed fiat polity. When a state levies a transparent twenty percent explicit tax on labor or production, it transfers a 20 MJ claim over real physical goods directly from the producer to the fiscal treasury. At least explicit taxation remains visible on a paystub and bounded by political consent. Yet no administrative state operates at 100% thermodynamic efficiency—just as the Second Law forbids a Carnot heat engine from converting 100% of thermal gradient into useful mechanical work without exhaust heat loss. Staffing overlapping compliance agencies, tax enforcement bureaucracies, lobbying corridors, regulatory clearinghouses, and contractor middlemen introduces immense administrative entropy: roughly 8 MJ out of that extracted claim dissipates purely as organizational waste heat—consuming buildings, paper, fuel, and human lifespans while producing zero additional wheat, zero kilowatt-hours of clean electricity, zero miles of paved steel rail, and zero bits of cryptographic ledger security.'
-  },
-  {
-    id: 9,
-    chapter: 'INFLATION',
-    tag: '09 • UNFUNDED PROMISES (40 MJ ISSUED VS 20 MJ WORK)',
-    text: 'Because no political coalition survives election cycles if it taxes citizens openly for the true physical sum of every subsidy, war, bailout, and entitlement it signs into law, states resolve the arithmetic shortfall by abusing the monopoly printing press. Suppose the state extracts 20 MJ of real productive energy via open taxes while legislating 40 MJ of spending promises across defense contractors, bondholders, and domestic programs. That missing 20 MJ of real physical energy cannot materialize out of thin air—Noether’s Theorem and the First Law of Thermodynamics strictly forbid creatio ex nihilo energy generation. Instead, central banks and commercial credit desks conjure matching nominal currency units at zero energetic cost (E = 0.00 J). Those weightless digital keystrokes enter the market first through primary dealers and sovereign bond desks (Cantillon advantage), bid directly against savers for finite groceries, copper, timber, and shelter, and silently siphon 20 MJ worth of purchasing power straight out of every worker’s saved biological hours—an invisible regressive heat tax collected continuously across every held banknote.'
-  },
-  {
-    id: 10,
-    chapter: 'INFLATION',
-    tag: '10 • $35+ TRILLION ZERO-JOULE SOVEREIGN LIEN',
-    text: 'Compounded asymmetrically across decades of abandoned metallic convertibility, this zero-Joule counterfeiting loop scales into an unsustainable macroeconomic phase transition: more than $35 trillion in sovereign principal debt—plus multiples in unfunded long-duration liabilities—backed by precisely 0.00 Joules of physical reserve work. Unlike a gold ingot, a barrel of crude oil, or a Proof-of-Work UTXO sealed behind megawatts of burned ASIC electricity, every newly auctioned treasury bond is fundamentally a synthetic paper lien demanding future megajoules of physical muscle, electricity, and mineral extraction from workers and engineers who have not even been born yet. Because exponential compounding on weightless paper claims always outruns linear thermodynamic productivity growth (which remains physically capped by solar flux, mineral ore grades, and Carnot limits), the ledger faces a strict mathematical dichotomy: either overt nominal default or relentless unit-of-account dilution against scarce physical energy and E > 0 Proof-of-Work assets.'
-  },
-  {
-    id: 11,
-    chapter: 'INFLATION',
-    tag: '11 • 1923 WEIMAR & THE 16 MJ/KG CELLULOSE FLOOR',
-    text: 'Empirical history documented the asymptotic collapse of zero-Joule monetary illusions during the 1923 Weimar German hyperinflation. Once Reichsbank printing presses multiplied paper Marks orders of magnitude faster than Ruhr coal mines, steel mills, wheat farms, and human labor could expand real thermodynamic supply, the nominal monetary premium pinned to printed ink converged cleanly toward zero—and then crossed straight beneath the raw chemical enthalpy of the physical paper substrate itself. Citizens literally hauled laundry baskets and wheelbarrows stacked with multi-million-Mark notes straight into kitchen stoves because stamped cellulose wood pulp liberates roughly ~16 MJ/kg of dry kindling heat when oxidized with atmospheric oxygen, making burned paper bills physically more valuable as firewood enthalpy than as sovereign legal tender backed by nothing.'
-  },
-  {
-    id: 12,
-    chapter: 'INFLATION',
-    tag: '12 • CHARCOAL SKETCH OF A FIRE VS REAL JOULES',
-    text: 'Issuing zero-Joule central-bank fiat currency, pre-mined Proof-of-Stake tokens, or committee-governed governance coins to simulate real economic capital is thermodynamically indistinguishable from sketching an intricate charcoal drawing of a roaring campfire onto the frozen timber wall of a winter cabin and expecting the illustration to stop hypothermia. You can gather a quorum of elders to vote that the charcoal fire burns at 900 Kelvin, attach a "slashing rule" fining anyone who touches the painting without permission, or publish whitepapers boasting sub-second consensus among art critics—yet not a single photon of infrared radiation will leave the wall. Only breaking high-energy molecular bonds or dissipating real irreversible electrical Joules through physical matter delivers measurable heat and unforgeable proof across spacetime.'
-  },
-  {
-    id: 13,
-    chapter: 'COSMOS',
-    tag: '13 • GEOLOGICAL PROOF-OF-WORK & THE GRAND CANYON',
-    text: 'Step back from human financial theater and observe physical reality itself: the universe runs exclusively on Proof-of-Work, and nature never signs off on historical truth using cheap cryptographic quorums or committee attestations. Stand on the South Rim of the Grand Canyon and you are staring directly into an incorruptible geological ledger sealed across roughly five to six million years of cumulative gravitational kinetic work. Solar radiation evaporated ocean water uphill against gravity (Delta U = m * g * h), atmospheric convection carried that high-potential moisture over the Colorado Plateau, and turbulent liquid water plus suspended quartz grit physically abraded and evacuated trillions of metric tons of solid Coconino sandstone, Redwall limestone, and Vishnu basement granite a full mile deep. No legislature could vote that gorge into existence, no multi-sig could backdate its stratigraphy, and no adversary can fake it—only cumulative irreversible Joules carve permanent geometry into rock.'
-  },
-  {
-    id: 14,
-    chapter: 'COSMOS',
-    tag: '14 • SEQUOIA TREE RINGS, PHOTONS & SEROTINOUS PYROLYSIS',
-    text: 'Living biology obeys the exact same unforgeable Proof-of-Work auditing across every trophic layer. Slice cleanly across a two-thousand-year-old Giant Sequoia trunk and every concentric annual growth ring stands as an indelible chemical ledger recording verified seasonal solar photon capture—six CO2 + six H2O molecules driven uphill against chemical equilibrium through chlorophyll reaction centers to synthesize durable structural lignin and cellulose. Even biological disaster recovery itself relies on real thermal proof: Giant Sequoia serotinous cones lock their fertile seeds inside dense organic resin vaults that stay sealed for decades against wind, squirrels, and false alarms, opening only when a genuine forest crown wildfire supplies sufficient real kilojoules of thermal energy to melt the resin bond—simultaneously sterilizing competing floor brush and unlocking mineral ash for the next generation.'
-  },
-  {
-    id: 15,
-    chapter: 'COSMOS',
-    tag: '15 • THE STEEL STREET SIGN & PERPETUAL OXIDATION ENTROPY',
-    text: 'Even an ordinary painted galvanized steel street sign bolted beside an interstate highway demonstrates why real physical order never coasts indefinitely at 0.00 Joules after genesis. Refining iron oxide ore inside a 1,500 °C blast furnace, rolling sheet alloy, electroplating zinc coats, and curing synthetic enamel pigments required an immense upfront thermodynamic investment to lift iron atoms artificially high above their natural ground-state mineral equilibrium. From the very first millisecond that sign stands outdoors, atmospheric oxygen, rain electrolyte films, thermal expansion cycles, and ultraviolet photons launch a relentless electrochemical attack to pull that iron downhill into low-energy hydrated ferric oxide rust (Fe2O3·nH2O). Without ongoing energy inputs—repainting, re-galvanizing, physical maintenance—order inevitably decays back into dust. Claiming a monetary ledger can remain eternally secure with zero ongoing electrical expenditure denies the Second Law outright.'
-  },
-  {
-    id: 16,
-    chapter: 'COSMOS',
-    tag: '16 • WHY FIAT & PROOF-OF-STAKE ARE ONTOLOGICALLY FALSE',
-    text: 'Seen through first-principles physics rather than marketing press releases, central-bank fiat debasement and zero-Joule Proof-of-Stake blockchains commit the identical fundamental violation: both try to sever monetary authority, wealth storage, and historical finality from physical energy sacrifice. Whether an official expands M2 in an emergency liquidity spreadsheet or a validator clique self-compounds staking emissions while censoring transactions under OFAC compliance or weak-subjectivity social forks, both systems operate an asymmetric extraction engine where weightless symbols minted at 0.00 Joules lay permanent claim to the finite 100 MJ workweeks of human beings sweating inside real thermodynamics. A consensus system without an external physical cost floor cannot serve as an objective anchor for civilization; it collapses back into pure political subjectivity.'
-  },
-  {
-    id: 17,
-    chapter: 'COSMOS',
-    tag: '17 • THE TRUTH THERMODYNAMIC AUDIT LAW',
-    text: 'That single, unyielding realization is what forged The Truth: stop grading glossy investor decks, celebrity founders, speculative TVL loops, arbitrary market-cap ranks, or consensus theater, and measure every digital protocol and physical commodity strictly against the invariant conservation laws that govern stars, river canyons, cellular metabolism, oxidized steel, and ASIC silicon. Enforce Existential Sovereignty, E > 0 Cost Floor, Landauer Immutability, Wartime Partition Availability, Stateless UTXO Topology, and Velocity M = 1.0 under non-negotiable zero-clamp physics (E = 0 forces terminal Grade F; Sovereignty = 0 caps derivative floors; overlays subordinate beneath their L1 carrier)—because physics never negotiates, never lobbies a committee, never bails out insiders, and always settles the final ledger in Joules.'
-  }
-];
-
-function attachAxiomLaws(raw: RawThesisParagraph[]): ThesisParagraph[] {
-  return raw.map((item) => ({
-    ...item,
+export const GENESIS_THESIS_PARAGRAPHS: ThesisParagraph[] = RAW_NORMIE_PARAGRAPHS.map((item) => {
+  const meta = AXIOM_PART_BY_ID[item.id] || {
+    chapter: 'INVARIANTS' as const,
+    partTitle: 'PART I — THE SIX PHYSICAL INVARIANTS OF SOVEREIGN MONEY'
+  };
+  return {
+    id: item.id,
+    chapter: meta.chapter,
+    partTitle: meta.partTitle,
+    tag: item.tag,
+    text: item.text,
     laws: AXIOM_LAWS_BY_ID[item.id] || []
-  }));
-}
-
-/**
- * Concise 17-axiom origin thesis (NORMIE Edition — kept intact + law/equation blocks).
- */
-export const GENESIS_THESIS_PARAGRAPHS: ThesisParagraph[] = attachAxiomLaws(RAW_NORMIE_PARAGRAPHS);
-
-/**
- * Unabridged long-form GENIUS Edition of the origin thesis:
- * preserves every invariant, conservation law, biological/metabolic Joule ledger,
- * and cosmic Proof-of-Work proof at full first-principles forensic resolution.
- */
-export const GENESIS_THESIS_GENIUS_PARAGRAPHS: ThesisParagraph[] = attachAxiomLaws(RAW_GENIUS_PARAGRAPHS);
+  };
+});
 
 export function getGenesisThesisParagraphs(mode: ThesisDepthMode): ThesisParagraph[] {
   return mode === 'GENIUS' ? GENESIS_THESIS_GENIUS_PARAGRAPHS : GENESIS_THESIS_PARAGRAPHS;
@@ -454,7 +706,7 @@ export const SECRET_GENIUS_PARAGRAPH_SPECS: readonly SecretGeniusTemplateSpec[] 
     { id: '04', axiomId: 4, label: 'Dynamic Availability (Wartime Partition)' },
     { id: '05', axiomId: 5, label: 'State Machine Topology' },
     { id: '06', axiomId: 6, label: 'Thermodynamic Velocity (M = 1.0)' },
-    { id: 'CONCLUSION', axiomId: 17, label: 'GRADE Evidence Certainty Synthesis' }
+    { id: 'CONCLUSION', axiomId: 23, label: 'GRADE Evidence Certainty Synthesis' }
   ] as const
 ).map((entry) => {
   const lawEq = getAxiomLaw(entry.axiomId);

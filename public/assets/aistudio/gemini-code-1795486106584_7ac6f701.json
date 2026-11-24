@@ -1,0 +1,284 @@
+{
+  "ETH": {
+    "ticker": "ETH",
+    "name": "Ethereum",
+    "historicalSnapshots": [
+      {
+        "epochId": "eth-2015-frontier-pow",
+        "epochLabel": "Pre-DAO Ethash PoW",
+        "dateOrHeight": "Jul 30, 2015 — Block 1,919,999",
+        "frontierContext": "Sequential PoW Era (DGB 15s / LTC 150s / BTC 600s)",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": true,
+        "totalScore": 2.30,
+        "terminalGrade": "D+",
+        "verdictSummary": "Even under pure Ethash GPU Proof-of-Work prior to the DAO rollback, Ethereum never qualified above D+. Its 72,009,990 ETH zero-joule genesis premine triggered the Sovereignty-Compromise & Energy-Arbitrage Law from Block 0.",
+        "invariants": {
+          "01": {
+            "id": "01",
+            "label": "Existential Sovereignty",
+            "status": "CAPPED_ARBITRAGE",
+            "score": 0.00,
+            "telemetry": "72M ETH minted at zero joules in Genesis JSON (60M ICO + 12M Ethereum Foundation/insider endowment) alongside Stiftung Ethereum corporate stewardship."
+          },
+          "02": {
+            "id": "02",
+            "label": "Thermodynamic Cost Floor",
+            "status": "CAPPED_ARBITRAGE",
+            "score": 0.35,
+            "telemetry": "Genuine Ethash GPU PoW (E > 0), but unit energy floor is permanently diluted by 72M zero-joule genesis coins sharing the same fungible supply pool (clamped at 0.35)."
+          },
+          "03": {
+            "id": "03",
+            "label": "Historical Immutability",
+            "status": "ACTIVE",
+            "score": 0.75,
+            "telemetry": "Cumulative Ethash PoW ledger intact prior to July 2016; rising state-trie growth already straining consumer HDD sync."
+          },
+          "04": {
+            "id": "04",
+            "label": "Dynamic Availability",
+            "status": "ACTIVE",
+            "score": 0.65,
+            "telemetry": "Per-block Ethash DAA recovers under partition without BFT halts, though GHOST uncle rate spikes under transoceanic latency."
+          },
+          "05": {
+            "id": "05",
+            "label": "State Machine Topology",
+            "status": "ACTIVE",
+            "score": 0.20,
+            "telemetry": "Sequential global mutable account tree (EVM) introduces shared-state write contention, reentrancy attack surfaces, and unbounded state bloat."
+          },
+          "06": {
+            "id": "06",
+            "label": "Thermodynamic Velocity",
+            "status": "ACTIVE",
+            "score": 0.35,
+            "frontierReference": "13–15s Sequential PoW Frontier",
+            "telemetry": "~14.5s block interval with uncle rewards; single-chain sequential execution limits throughput and leaks orphan/uncle hashpower."
+          }
+        }
+      },
+      {
+        "epochId": "eth-2016-post-dao-pow",
+        "epochLabel": "Post-DAO Rollback PoW",
+        "dateOrHeight": "Jul 20, 2016 (Block 1,920,000) — Sep 15, 2022 (Block 15,537,393)",
+        "frontierContext": "Late Sequential PoW / Early 1-BPS BlockDAG Transition",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": true,
+        "totalScore": 1.65,
+        "terminalGrade": "D+",
+        "verdictSummary": "At Block 1,920,000, Foundation-led social coordination overrode cumulative Proof-of-Work to bail out The DAO contract—proving social subjectivity supersedes Landauer heat on Ethereum even before PoS.",
+        "invariants": {
+          "01": {
+            "id": "01",
+            "label": "Existential Sovereignty",
+            "status": "CAPPED_ARBITRAGE",
+            "score": 0.00,
+            "telemetry": "72M ETH premine intact; Foundation trademark capture forced non-bailed-out immutable chain onto minority ticker (ETC)."
+          },
+          "02": {
+            "id": "02",
+            "label": "Thermodynamic Cost Floor",
+            "status": "CAPPED_ARBITRAGE",
+            "score": 0.35,
+            "telemetry": "Ethash GPU/ASIC PoW active, capped at 0.35 under the Energy-Arbitrage Law due to genesis premine overhang and EIP-1559 fee burn dynamics benefiting premined holders."
+          },
+          "03": {
+            "id": "03",
+            "label": "Historical Immutability",
+            "status": "ACTIVE",
+            "score": 0.30,
+            "telemetry": "Irreversibility breached at Block 1,920,000 via irregular state-transition bailout; archive state swells into multi-terabyte territory."
+          },
+          "04": {
+            "id": "04",
+            "label": "Dynamic Availability",
+            "status": "ACTIVE",
+            "score": 0.65,
+            "telemetry": "Nakamoto/Ethash partition liveness preserved, though Difficulty Bomb ('Ice Age') hardcode repeatedly threatens manual developer-timed freezes."
+          },
+          "05": {
+            "id": "05",
+            "label": "State Machine Topology",
+            "status": "ACTIVE",
+            "score": 0.10,
+            "telemetry": "Global EVM gas auctions, Flashbots/MEV sandwich extraction, and severe state-trie bloat price out sovereign retail cash use."
+          },
+          "06": {
+            "id": "06",
+            "label": "Thermodynamic Velocity",
+            "status": "ACTIVE",
+            "score": 0.25,
+            "frontierReference": "KAS 1 BPS GHOSTDAG (Nov 2021+)",
+            "telemetry": "~13.3s sequential blocks (~15 TPS ceiling) fall an order of magnitude behind live 1-BPS parallel BlockDAG settlement."
+          }
+        }
+      },
+      {
+        "epochId": "eth-2022-post-merge-pos",
+        "epochLabel": "Post-Merge PoS (Live)",
+        "dateOrHeight": "Sep 15, 2022 (Block 15,537,394) — Present (2026)",
+        "frontierContext": "Live 10-BPS Crescendo + Toccata Frontier",
+        "foundationalMassValid": false,
+        "arbitrageCapTriggered": true,
+        "totalScore": 0.00,
+        "terminalGrade": "F",
+        "verdictSummary": "Paris (Block 15,537,394) severed Ethereum from physical energy expenditure (~99.95% PoW deletion). With m = 0, operational metrics lose all thermodynamic weight and lock to VOID.",
+        "invariants": {
+          "01": {
+            "id": "01",
+            "label": "Existential Sovereignty",
+            "status": "CAPPED_ARBITRAGE",
+            "score": 0.00,
+            "telemetry": "72M premine compounded by perpetuating zero-joule staking yield, liquid-staking (Lido) concentration, and OFAC-compliant MEV-Boost relay filtering."
+          },
+          "02": {
+            "id": "02",
+            "label": "Thermodynamic Cost Floor",
+            "status": "VOID_UNANCHORED",
+            "score": 0.00,
+            "telemetry": "FATAL BREACH (E = 0): Gasper Proof-of-Stake signs blocks at ~0 marginal joules. Triggers Conservation of Energy Floor override."
+          },
+          "03": {
+            "id": "03",
+            "label": "Historical Immutability",
+            "status": "VOID_UNANCHORED",
+            "score": 0.00,
+            "telemetry": "Requires social Weak Subjectivity checkpoints to block zero-cost long-range attacks; no Landauer heat wall protects canonical history."
+          },
+          "04": {
+            "id": "04",
+            "label": "Dynamic Availability",
+            "status": "VOID_UNANCHORED",
+            "score": null,
+            "telemetry": "[FORENSIC NOTE — UNANCHORED]: Strong multi-client diversity (Geth/Nethermind/Reth + Prysm/Lighthouse), but Gasper finality halts if >33.3% stake partitions and triggers inactivity-leak slashing."
+          },
+          "05": {
+            "id": "05",
+            "label": "State Machine Topology",
+            "status": "VOID_UNANCHORED",
+            "score": null,
+            "telemetry": "[FORENSIC NOTE — UNANCHORED]: Sequential EVM + centralized single-sequencer L2 rollups (EIP-4844/PeerDAS blobs) bound by M_overlay < M_L1 and PBS builder MEV monopolies."
+          },
+          "06": {
+            "id": "06",
+            "label": "Thermodynamic Velocity",
+            "status": "VOID_UNANCHORED",
+            "score": null,
+            "telemetry": "[FORENSIC NOTE — UNANCHORED]: 12s slot cadence / ~12.8m (2-epoch) Casper FFG finality carries zero physical mass (M = 0.00)."
+          }
+        }
+      }
+    ]
+  },
+
+  "BTC": {
+    "ticker": "BTC",
+    "name": "Bitcoin",
+    "historicalSnapshots": [
+      {
+        "epochId": "btc-2010-satoshi-frontier",
+        "epochLabel": "Satoshi Cash Frontier",
+        "dateOrHeight": "Jan 3, 2009 — Dec 2010 (Blocks 0 — 100,000)",
+        "frontierContext": "Sole E > 0 Sovereign Monetary Protocol in Existence",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": false,
+        "totalScore": 6.00,
+        "terminalGrade": "A+",
+        "verdictSummary": "In the Genesis era prior to faster PoW topologies, pool centralization, or Wall Street ETF custody, Bitcoin defined the 1.00 Pareto frontier across all six physical axes.",
+        "invariants": {
+          "01": { "id": "01", "label": "Existential Sovereignty", "status": "ACTIVE", "score": 1.00, "telemetry": "Public Jan 3, 2009 launch with Times headline timestamp; zero premine, zero tax, Satoshi coins never spent." },
+          "02": { "id": "02", "label": "Thermodynamic Cost Floor", "status": "ACTIVE", "score": 1.00, "telemetry": "100% pure SHA-256 Proof-of-Work issuance; zero energy arbitrage." },
+          "03": { "id": "03", "label": "Historical Immutability", "status": "ACTIVE", "score": 1.00, "telemetry": "Full Genesis-to-tip verification on any standard consumer desktop CPU and laptop drive." },
+          "04": { "id": "04", "label": "Dynamic Availability", "status": "ACTIVE", "score": 1.00, "frontierReference": "BTC 2016-Block DAA (Sole PoW Standard)", "telemetry": "Only permissionless partition-tolerant consensus engine on Earth; BFT alternatives required fixed quorums." },
+          "05": { "id": "05", "label": "State Machine Topology", "status": "ACTIVE", "score": 1.00, "frontierReference": "BTC Stateless UTXO", "telemetry": "Pioneered parallel, stateless UTXO verification without global account locks." },
+          "06": { "id": "06", "label": "Thermodynamic Velocity", "status": "ACTIVE", "score": 1.00, "frontierReference": "BTC 600s PoW (Sole E > 0 Benchmark)", "telemetry": "10-minute PoW settlement beat multi-day correspondent banking wires with zero trusted third party." }
+        }
+      },
+      {
+        "epochId": "btc-2026-live",
+        "epochLabel": "Live Institutional Era",
+        "dateOrHeight": "Nov 2026 (~991 EH/s, Post-ETF & Post-Crescendo/Toccata)",
+        "frontierContext": "Normalized Against Live 10-BPS Parallel BlockDAG + L1 Covenant Frontier",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": false,
+        "totalScore": 4.25,
+        "terminalGrade": "B+",
+        "verdictSummary": "Bitcoin's thermodynamic purity (01–03) remains untouched, but L1 ossification pushed custody to Wall Street ETFs (84% Coinbase Custody), concentrated >60% of hashrate in 3 pools, and left its 600s k=0 chain two orders of magnitude behind the live PoW frontier.",
+        "invariants": {
+          "01": { "id": "01", "label": "Existential Sovereignty", "status": "ACTIVE", "score": 0.95, "telemetry": "Immaculate L1 rules, tempered operationally by ~84% US ETF custody concentration at Coinbase and >60% block-template control across Foundry USA (KYC), AntPool, and F2Pool." },
+          "02": { "id": "02", "label": "Thermodynamic Cost Floor", "status": "ACTIVE", "score": 1.00, "telemetry": "100% pure SHA-256 energy assay (~991 EH/s); zero premine or coinbase tax dilution." },
+          "03": { "id": "03", "label": "Historical Immutability", "status": "ACTIVE", "score": 1.00, "telemetry": "Deepest cumulative Landauer heat wall in human history, fully verifiable on commodity consumer hardware." },
+          "04": { "id": "04", "label": "Dynamic Availability", "status": "ACTIVE", "score": 0.45, "frontierReference": "KAS Per-Block Sampled DAA (~44m window)", "telemetry": "2,016-block (~14-day) retarget epoch stretches a severed 10% hemisphere to 100-minute blocks for ~20 weeks before adjusting." },
+          "05": { "id": "05", "label": "State Machine Topology", "status": "ACTIVE", "score": 0.65, "frontierReference": "KAS Toccata UTXO Covenants (DAA 474,165,565)", "telemetry": "Clean UTXO base, but crippled L1 scripting forces users onto custodial/hub-and-spoke Lightning overlays (Gini ~0.97, top 10 nodes ~62% capacity)." },
+          "06": { "id": "06", "label": "Thermodynamic Velocity", "status": "ACTIVE", "score": 0.20, "frontierReference": "KAS 10 BPS / 100ms GHOSTDAG (M = 1.0)", "telemetry": "600,000ms sequential k=0 chain (~7 TPS, <1% fee-to-reward ratio) vs. 100ms orphan-free parallel BlockDAG settlement." }
+        }
+      }
+    ]
+  },
+
+  "KAS": {
+    "ticker": "KAS",
+    "name": "Kaspa",
+    "historicalSnapshots": [
+      {
+        "epochId": "kas-2024-1bps",
+        "epochLabel": "1 BPS Pre-Covenant Era",
+        "dateOrHeight": "May 2023 — May 5, 2025 (Pre-DAA 110,165,000)",
+        "frontierContext": "1-BPS GHOSTDAG Velocity Apex / BCH CashTokens Covenant Apex",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": false,
+        "totalScore": 5.75,
+        "terminalGrade": "A",
+        "verdictSummary": "Even at 1 BPS, Kaspa held the undisputed 1.00 Velocity apex among pure fair-launch PoW networks—dropping 0.25 points strictly on State Topology because Bitcoin Cash (Block 792,772 CashTokens) already shipped live L1 UTXO covenants.",
+        "invariants": {
+          "01": { "id": "01", "label": "Existential Sovereignty", "status": "ACTIVE", "score": 1.00, "telemetry": "Fair public launch Nov 7, 2021; zero premine, zero VC allocation, zero mandatory coinbase dev tax." },
+          "02": { "id": "02", "label": "Thermodynamic Cost Floor", "status": "ACTIVE", "score": 1.00, "telemetry": "100% pure optical-ready kHeavyHash PoW; every sompi forged via irreversible electrical work." },
+          "03": { "id": "03", "label": "Historical Immutability", "status": "ACTIVE", "score": 1.00, "telemetry": "Trustless PoPoW header verification from Genesis with rolling ~30-hour pruning on consumer hardware." },
+          "04": { "id": "04", "label": "Dynamic Availability", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS 2,641-Window Per-Block DAA", "telemetry": "Per-block difficulty recalibration keeps isolated partitions live and merges parallel sub-DAGs cleanly upon cable resplice." },
+          "05": { "id": "05", "label": "State Machine Topology", "status": "ACTIVE", "score": 0.75, "frontierReference": "BCH CashTokens L1 UTXO Covenants (Block 792,772)", "telemetry": "Contention-free parallel UTXO base, but lacked native L1 transaction introspection and covenant opcodes already live on Bitcoin Cash." },
+          "06": { "id": "06", "label": "Thermodynamic Velocity", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS 1,000ms GHOSTDAG (Fastest Pure PoW)", "telemetry": "1.0s parallel BlockDAG confirmation with zero orphan waste—13x faster than ETC (13s), 15x faster than DGB (15s), and 600x faster than BTC." }
+        }
+      },
+      {
+        "epochId": "kas-2025-crescendo",
+        "epochLabel": "Crescendo 10 BPS Fork",
+        "dateOrHeight": "May 5, 2025 (DAA 110,165,000) — Jun 29, 2026",
+        "frontierContext": "10-BPS Parallel PoW Frontier (158.4M Tx/24h Mainnet Proof)",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": false,
+        "totalScore": 5.80,
+        "terminalGrade": "A+",
+        "verdictSummary": "KIP-14 Crescendo scaled PoW block cadence 10x in mid-flight (1,000ms to 100ms) with zero downtime, dragging sequential PoW chains' relative Velocity scores lower while awaiting Toccata covenants.",
+        "invariants": {
+          "01": { "id": "01", "label": "Existential Sovereignty", "status": "ACTIVE", "score": 1.00, "telemetry": "Decentralized hardfork executed cleanly with exact sompi-for-sompi preservation of the Chromatic emission curve." },
+          "02": { "id": "02", "label": "Thermodynamic Cost Floor", "status": "ACTIVE", "score": 1.00, "telemetry": "100% pure kHeavyHash PoW across 864,000 blocks/day." },
+          "03": { "id": "03", "label": "Historical Immutability", "status": "ACTIVE", "score": 1.00, "telemetry": "Full validating rusty-kaspa node sustained on 8 cores / 16 GB RAM / 256 GB SSD (`pruning_depth = 1,080,000`)." },
+          "04": { "id": "04", "label": "Dynamic Availability", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS KIP-14 Sampled DAA", "telemetry": "100ms per-block sampled DAA (~44m window) + `merge_depth = 36,000` guarantees wartime partition continuity." },
+          "05": { "id": "05", "label": "State Machine Topology", "status": "ACTIVE", "score": 0.80, "frontierReference": "BCH CashTokens / Layla UTXO Covenants", "telemetry": "KIP-9 storage mass active and randomized 10-BPS parallel block production suppresses leader MEV, pending native L1 covenant opcodes." },
+          "06": { "id": "06", "label": "Thermodynamic Velocity", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS 100ms GHOSTDAG (5,584 Peak TPS)", "telemetry": "Settled 158.4M mainnet transactions on Oct 5, 2025 at sub-cent fees—establishing the 10-BPS PoW standard." }
+        }
+      },
+      {
+        "epochId": "kas-2026-toccata",
+        "epochLabel": "Toccata Covenants (Live)",
+        "dateOrHeight": "Jun 30, 2026 (DAA 474,165,565) — Present",
+        "frontierContext": "Live 6.00 Pareto Frontier (DAGKnight & 100 BPS Excluded)",
+        "foundationalMassValid": true,
+        "arbitrageCapTriggered": false,
+        "totalScore": 6.00,
+        "terminalGrade": "A+",
+        "verdictSummary": "Toccata (KIP-16, KIP-17, KIP-20, KIP-21) activated native L1 UTXO Covenants, SilverScript, inline ZK verification, and partitioned sequencing—closing the final 0.20 State Topology gap on live mainnet.",
+        "invariants": {
+          "01": { "id": "01", "label": "Existential Sovereignty", "status": "ACTIVE", "score": 1.00, "telemetry": "Zero premine, zero coinbase dev tax, zero corporate admin keys." },
+          "02": { "id": "02", "label": "Thermodynamic Cost Floor", "status": "ACTIVE", "score": 1.00, "telemetry": "100% pure E > 0 Proof-of-Work monetary base." },
+          "03": { "id": "03", "label": "Historical Immutability", "status": "ACTIVE", "score": 1.00, "telemetry": "Consumer bare-metal verification from Genesis via PoPoW without trusted snapshots." },
+          "04": { "id": "04", "label": "Dynamic Availability", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS KIP-14 Sampled DAA", "telemetry": "Continuous block production across arbitrary network splits with deterministic Blue-Work reconciliation." },
+          "05": { "id": "05", "label": "State Machine Topology", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS Toccata Stateful UTXO + ZK Opcodes", "telemetry": "Stateless parallel UTXO covenants + inline ZK verification + KIP-21 sequencing lanes eliminate shared-account locks and leader MEV." },
+          "06": { "id": "06", "label": "Thermodynamic Velocity", "status": "ACTIVE", "score": 1.00, "frontierReference": "KAS 100ms GHOSTDAG (M = 1.0)", "telemetry": "864,000 PoW blocks/day live on mainnet (roadmap 100 BPS & DAGKnight strictly excluded from score)." }
+        }
+      }
+    ]
+  }
+}

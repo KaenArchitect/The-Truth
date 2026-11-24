@@ -154,9 +154,11 @@ test('Pillar 2, 3, and 4 reference builders return complete deterministic payloa
 
   const thesis = buildAgentOriginThesisReference('GENIUS');
   assert.equal(thesis.ok, true);
-  assert.equal(thesis.axiomCount, 17);
-  assert.equal(thesis.chapters.length, 3);
+  assert.equal(thesis.axiomCount, 23);
+  assert.equal(thesis.chapters.length, 5);
   assert.match(thesis.axioms[6].geniusText, /100 megajoules/i);
+  assert.match(thesis.axioms[16].geniusText, /Quantum Darwinism/i);
+  assert.match(thesis.axioms[22].geniusText, /Dynamic Pareto-Frontier Normalization/i);
 });
 
 test('parseDeepLinkSearchParams & buildOpenGraphMetaForUrl handle all 4 canonical pillars', () => {

@@ -5,24 +5,32 @@ import {
   type InvariantData,
   buildCanonicalGeniusParagraphs,
   buildCanonicalSingleInvariantEssayParagraph,
+  buildHistoricalEpochGeniusEssayParagraphs,
+  buildHistoricalEpochInvariantProse,
   canonicalizeAuditsCollection,
   clampSingleInvariantByPhysics,
   coerceDisplayText,
   computeRunningAuditAccent,
   deriveGradeFromTotal,
   enforceEnergyArbitrageLawOnAudit,
+  evaluateThermodynamicGate,
+  formatEpochScrubberLabel,
   getGradeAccent,
   getHarmonizedScoreStyle,
   getScoreStyle,
   inspectStreamedAuditProgress,
+  isInvariantVoidUnanchored,
   isResponseTextTruncated,
+  mergeHistoricalSnapshots,
   normalizeAuditPayload,
   resolveCanonicalAssetTicker,
   safeParseAuditJson,
   sanitizeAuditData,
   sanitizeInvLogsMap,
-  sortAuditTickersByGrade
+  sortAuditTickersByGrade,
+  type HistoricalSnapshot
 } from './rubricSpec.ts';
+import { PRELOADED_AUDITS } from './preloadedAudits.ts';
 import { partitionTickersByEcosystem } from './auditProvenance.ts';
 
 function makeDummyInvariants(scores: [number, number, number, number, number, number]): InvariantData[] {
@@ -637,4 +645,167 @@ test('buildCanonicalGeniusParagraphs and normalizeAuditPayload deduplicate Secre
     'CUSTOM SECRET CONCLUSION STRUCTURE FOR $KAS: Empirical verification across all six physical invariants yields 6.00 / 6.00 (Grade A+).'
   );
 });
+
+test('evaluateThermodynamicGate enforces Multiplicative VOID Gate (E=0 -> 04-06 VOID_UNANCHORED) and Energy-Arbitrage Cap (Inv01=0 -> Inv02<=0.35, D+)', () => {
+  const zeroJouleSnapshot: HistoricalSnapshot = {
+    epochId: 'test-pos-live',
+    epochLabel: 'Post-Merge PoS (Live)',
+    dateOrHeight: 'Sep 15, 2022 — Present',
+    frontierContext: 'Live 10-BPS Frontier',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 2.5,
+    terminalGrade: 'C-',
+    verdictSummary: 'Zero-joule validator consensus.',
+    invariants: {
+      '01': { id: '01', label: 'Sovereignty', status: 'ACTIVE', score: 0, telemetry: 'Premine' },
+      '02': { id: '02', label: 'Cost Floor', status: 'ACTIVE', score: 0, telemetry: 'E = 0' },
+      '03': { id: '03', label: 'Immutability', status: 'ACTIVE', score: 0, telemetry: 'Weak subj' },
+      '04': { id: '04', label: 'Availability', status: 'ACTIVE', score: 0.85, telemetry: 'Multi-client' },
+      '05': { id: '05', label: 'State Topology', status: 'ACTIVE', score: 0.65, telemetry: 'EVM' },
+      '06': { id: '06', label: 'Velocity', status: 'ACTIVE', score: 0.9, telemetry: '12s slots' }
+    }
+  };
+
+  const gatedVoid = evaluateThermodynamicGate(zeroJouleSnapshot);
+  assert.equal(gatedVoid.foundationalMassValid, false);
+  assert.equal(gatedVoid.totalScore, 0.0);
+  assert.equal(gatedVoid.terminalGrade, 'F');
+  assert.equal(gatedVoid.invariants['04'].status, 'VOID_UNANCHORED');
+  assert.equal(gatedVoid.invariants['04'].score, null);
+  assert.equal(gatedVoid.invariants['05'].status, 'VOID_UNANCHORED');
+  assert.equal(gatedVoid.invariants['05'].score, null);
+  assert.equal(gatedVoid.invariants['06'].status, 'VOID_UNANCHORED');
+  assert.equal(gatedVoid.invariants['06'].score, null);
+  assert.equal(gatedVoid.invariants['04'].telemetry, 'Multi-client');
+
+  const preminePowSnapshot: HistoricalSnapshot = {
+    epochId: 'test-premine-pow',
+    epochLabel: 'Pre-DAO PoW',
+    dateOrHeight: 'Jul 30, 2015',
+    frontierContext: 'Sequential PoW Era',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: false,
+    totalScore: 5.0,
+    terminalGrade: 'A-',
+    verdictSummary: 'Premine PoW chain.',
+    invariants: {
+      '01': { id: '01', label: 'Sovereignty', status: 'ACTIVE', score: 0, telemetry: '72M premine' },
+      '02': { id: '02', label: 'Cost Floor', status: 'ACTIVE', score: 0.9, telemetry: 'GPU PoW' },
+      '03': { id: '03', label: 'Immutability', status: 'ACTIVE', score: 0.75, telemetry: 'PoW' },
+      '04': { id: '04', label: 'Availability', status: 'ACTIVE', score: 0.65, telemetry: 'DAA' },
+      '05': { id: '05', label: 'State Topology', status: 'ACTIVE', score: 0.2, telemetry: 'EVM' },
+      '06': { id: '06', label: 'Velocity', status: 'ACTIVE', score: 0.35, telemetry: '14.5s' }
+    }
+  };
+
+  const gatedArbitrage = evaluateThermodynamicGate(preminePowSnapshot);
+  assert.equal(gatedArbitrage.foundationalMassValid, true);
+  assert.equal(gatedArbitrage.arbitrageCapTriggered, true);
+  assert.equal(gatedArbitrage.invariants['02'].score, 0.35);
+  assert.equal(gatedArbitrage.invariants['02'].status, 'CAPPED_ARBITRAGE');
+  assert.equal(gatedArbitrage.totalScore, 2.3);
+  assert.equal(gatedArbitrage.terminalGrade, 'D+');
+});
+
+test('isInvariantVoidUnanchored and PRELOADED_AUDITS historicalSnapshots cover ETH, BTC, KAS, and standalone E=0 assets', () => {
+  assert.equal(isInvariantVoidUnanchored('01', 0, 0), false);
+  assert.equal(isInvariantVoidUnanchored('02', 0, 0), false);
+  assert.equal(isInvariantVoidUnanchored('03', 0, 0), false);
+  assert.equal(isInvariantVoidUnanchored('04', 0, 0), true);
+  assert.equal(isInvariantVoidUnanchored('05', 0, 0), true);
+  assert.equal(isInvariantVoidUnanchored('06', 0, 0), true);
+  assert.equal(isInvariantVoidUnanchored('04', 0.35, 0.65, 'ACTIVE'), false);
+  assert.equal(isInvariantVoidUnanchored('06', 0.35, null, 'VOID_UNANCHORED'), true);
+
+  const ethSnaps = PRELOADED_AUDITS.ETH.historicalSnapshots || [];
+  assert.equal(ethSnaps.length, 3);
+  assert.deepEqual(
+    ethSnaps.map((s, idx) => formatEpochScrubberLabel(s, idx === ethSnaps.length - 1)),
+    ['2015 Pre-DAO PoW', '2016 Post-DAO PoW', '2022+ Post-Merge PoS · LIVE']
+  );
+  assert.equal(ethSnaps[0].totalScore, 2.3);
+  assert.equal(ethSnaps[0].terminalGrade, 'D+');
+  assert.equal(ethSnaps[0].invariants['06'].frontierReference, '13–15s Sequential PoW Frontier');
+  assert.equal(ethSnaps[1].totalScore, 1.65);
+  assert.equal(ethSnaps[1].terminalGrade, 'D+');
+  assert.equal(ethSnaps[1].invariants['06'].frontierReference, 'KAS 1 BPS GHOSTDAG (Nov 2021+)');
+  assert.equal(ethSnaps[2].totalScore, 0.0);
+  assert.equal(ethSnaps[2].terminalGrade, 'F');
+  assert.equal(ethSnaps[2].invariants['04'].score, null);
+  assert.equal(ethSnaps[2].invariants['05'].score, null);
+  assert.equal(ethSnaps[2].invariants['06'].score, null);
+
+  const btcSnaps = PRELOADED_AUDITS.BTC.historicalSnapshots || [];
+  assert.equal(btcSnaps.length, 2);
+  assert.equal(btcSnaps[0].totalScore, 6.0);
+  assert.equal(btcSnaps[0].terminalGrade, 'A+');
+  assert.equal(btcSnaps[1].totalScore, 4.25);
+  assert.equal(btcSnaps[1].terminalGrade, 'B+');
+
+  const kasSnaps = PRELOADED_AUDITS.KAS.historicalSnapshots || [];
+  assert.equal(kasSnaps.length, 3);
+  assert.deepEqual(
+    kasSnaps.map((s) => s.totalScore),
+    [5.75, 5.8, 6.0]
+  );
+  assert.deepEqual(
+    kasSnaps.map((s) => s.terminalGrade),
+    ['A', 'A+', 'A+']
+  );
+
+  // Canonicalization preserves historicalSnapshots even if a newer record lacks them
+  const staleEthWithoutSnapshots = makeDummyAudit(
+    { ticker: 'ETH', archiveRevision: 5, lastFreshAuditAt: '12:00 PM' },
+    [0, 0, 0, 0, 0, 0]
+  );
+  const merged = canonicalizeAuditsCollection({
+    ETH: PRELOADED_AUDITS.ETH,
+    eth_cached: staleEthWithoutSnapshots
+  });
+  assert.equal(merged.ETH.historicalSnapshots?.length, 3);
+
+  // Historical long-form prose strictly enforces concise Normie < forensic Genius across all epochs & invariants
+  for (const tk of ['ETH', 'BTC', 'KAS'] as const) {
+    const asset = PRELOADED_AUDITS[tk];
+    for (const inv of asset.invariants) {
+      assert.ok(
+        (inv.geniusParagraph?.length ?? 0) > inv.paragraph.length + 250,
+        `${tk} Live Inv ${inv.id} Genius (${inv.geniusParagraph?.length ?? 0}) must substantially exceed Normie (${inv.paragraph.length})`
+      );
+    }
+    for (const snap of asset.historicalSnapshots || []) {
+      for (const id of ['01', '02', '03', '04', '05', '06']) {
+        const normieP = buildHistoricalEpochInvariantProse(asset, snap, id, false);
+        const geniusP = buildHistoricalEpochInvariantProse(asset, snap, id, true);
+        assert.notEqual(normieP, geniusP);
+        assert.ok(
+          normieP.length >= 90 && normieP.length <= 340,
+          `${tk} ${snap.epochId} Inv ${id} Normie length (${normieP.length}) should stay concise`
+        );
+        assert.ok(
+          geniusP.length > normieP.length + 120,
+          `${tk} ${snap.epochId} Inv ${id} Genius (${geniusP.length}) must strictly exceed Normie (${normieP.length})`
+        );
+      }
+      assert.equal(buildHistoricalEpochGeniusEssayParagraphs(asset, snap).length, 6);
+    }
+  }
+
+  // mergeHistoricalSnapshots enriches stale Firestore snapshots lacking normieParagraph/geniusParagraph
+  const strippedSnap = {
+    ...ethSnaps[0],
+    invariants: Object.fromEntries(
+      Object.entries(ethSnaps[0].invariants).map(([k, v]) => [
+        k,
+        { id: v.id, label: v.label, status: v.status, score: v.score, telemetry: v.telemetry }
+      ])
+    )
+  };
+  const enriched = mergeHistoricalSnapshots([strippedSnap], ethSnaps);
+  assert.ok(enriched?.[0]?.invariants['01']?.normieParagraph);
+  assert.ok(enriched?.[0]?.invariants['01']?.geniusParagraph);
+  assert.ok((enriched?.[0]?.invariants['01']?.receipts?.length ?? 0) >= 3);
+});
+
 

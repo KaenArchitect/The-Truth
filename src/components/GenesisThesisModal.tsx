@@ -1,14 +1,199 @@
-import { useMemo, useState } from 'react';
-import { Atom, Check, Copy, Flame, Layers, Sparkles, X } from 'lucide-react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Atom, Check, Copy, Flame, Layers, Scale, ShieldAlert, Sparkles, X } from 'lucide-react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import type { GradeAccent } from '../data/rubricSpec.ts';
 import {
-  GENESIS_THESIS_PARAGRAPHS,
   GENESIS_THESIS_GENIUS_PARAGRAPHS,
+  GENESIS_THESIS_GENIUS_RAW_MARKDOWN,
+  GENESIS_THESIS_PARAGRAPHS,
+  GENESIS_THESIS_SUBTITLE,
+  GENESIS_THESIS_TITLE,
   getGenesisThesisParagraphs,
   type ThesisChapterId
 } from '../data/genesisThesisData.ts';
 
 export { GENESIS_THESIS_PARAGRAPHS, GENESIS_THESIS_GENIUS_PARAGRAPHS };
+
+function renderKatexHtml(latex: string, displayMode: boolean): string {
+  try {
+    return katex.renderToString(latex, {
+      displayMode,
+      throwOnError: false,
+      strict: 'ignore'
+    });
+  } catch {
+    return latex;
+  }
+}
+
+function renderInlineAtomicTokens(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  // Matches either `inline code` or inline LaTeX $...$ (including escaped \$ inside math)
+  const tokenRe = /`([^`\n]+)`|(?<!\\)\$((?:\\\$|[^$\n])+?)\$/g;
+  let lastIdx = 0;
+  let match: RegExpExecArray | null = tokenRe.exec(text);
+  let idx = 0;
+
+  while (match !== null) {
+    if (match.index > lastIdx) {
+      nodes.push(text.slice(lastIdx, match.index));
+    }
+
+    if (match[1] !== undefined) {
+      nodes.push(
+        <code
+          key={`${keyPrefix}-code-${idx}`}
+          className="font-mono text-[12.5px] px-1.5 py-0.5 rounded bg-[#0D1117] border border-white/[0.08] text-neutral-100"
+        >
+          {match[1]}
+        </code>
+      );
+    } else if (match[2] !== undefined) {
+      const html = renderKatexHtml(match[2], false);
+      nodes.push(
+        <span
+          key={`${keyPrefix}-math-${idx}`}
+          className="inline-block align-baseline text-neutral-100"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    }
+
+    lastIdx = match.index + match[0].length;
+    idx += 1;
+    match = tokenRe.exec(text);
+  }
+
+  if (lastIdx < text.length) {
+    nodes.push(text.slice(lastIdx));
+  }
+
+  return nodes;
+}
+
+function renderItalicAndAtomicTokens(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const italicRe = /(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)/g;
+  let lastIdx = 0;
+  let match: RegExpExecArray | null = italicRe.exec(text);
+  let idx = 0;
+
+  while (match !== null) {
+    if (match.index > lastIdx) {
+      nodes.push(...renderInlineAtomicTokens(text.slice(lastIdx, match.index), `${keyPrefix}-p-${idx}`));
+    }
+    nodes.push(
+      <em key={`${keyPrefix}-em-${idx}`} className="italic text-neutral-300">
+        {renderInlineAtomicTokens(match[1], `${keyPrefix}-emi-${idx}`)}
+      </em>
+    );
+    lastIdx = match.index + match[0].length;
+    idx += 1;
+    match = italicRe.exec(text);
+  }
+
+  if (lastIdx < text.length) {
+    nodes.push(...renderInlineAtomicTokens(text.slice(lastIdx), `${keyPrefix}-tail`));
+  }
+
+  return nodes;
+}
+
+function renderRichInline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const boldRe = /\*\*(.+?)\*\*/g;
+  let lastIdx = 0;
+  let match: RegExpExecArray | null = boldRe.exec(text);
+  let idx = 0;
+
+  while (match !== null) {
+    if (match.index > lastIdx) {
+      nodes.push(
+        ...renderItalicAndAtomicTokens(text.slice(lastIdx, match.index), `${keyPrefix}-pre-${idx}`)
+      );
+    }
+    nodes.push(
+      <strong key={`${keyPrefix}-b-${idx}`} className="font-semibold text-white">
+        {renderItalicAndAtomicTokens(match[1], `${keyPrefix}-bi-${idx}`)}
+      </strong>
+    );
+    lastIdx = match.index + match[0].length;
+    idx += 1;
+    match = boldRe.exec(text);
+  }
+
+  if (lastIdx < text.length) {
+    nodes.push(...renderItalicAndAtomicTokens(text.slice(lastIdx), `${keyPrefix}-end`));
+  }
+
+  return nodes;
+}
+
+function ThesisBodyContent({ text, sectionId }: { text: string; sectionId: number }) {
+  const blocks = useMemo(() => text.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean), [text]);
+
+  return (
+    <div className="space-y-3">
+      {blocks.map((block, bIdx) => {
+        const keyBase = `s${sectionId}-b${bIdx}`;
+
+        if (block.startsWith('$$') && block.endsWith('$$') && block.length > 4) {
+          const expr = block.slice(2, -2).trim();
+          const html = renderKatexHtml(expr, true);
+          return (
+            <div
+              key={keyBase}
+              data-testid="thesis-display-equation"
+              className="rounded-xl bg-[#0D1117] border border-white/[0.07] px-4 py-3 overflow-x-auto no-scrollbar text-neutral-100 text-[13px] sm:text-[14px]"
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          );
+        }
+
+        const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+        if (lines.length > 0 && lines.every((l) => l.startsWith('* '))) {
+          return (
+            <ul
+              key={keyBase}
+              className="list-disc pl-5 space-y-2 text-[13.5px] sm:text-[14.5px] leading-[1.72] text-neutral-200 marker:text-neutral-500"
+            >
+              {lines.map((line, lIdx) => (
+                <li key={`${keyBase}-ul-${lIdx}`}>
+                  {renderRichInline(line.replace(/^\*\s+/, ''), `${keyBase}-uli-${lIdx}`)}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (lines.length > 0 && lines.every((l) => /^\d+\.\s+/.test(l))) {
+          return (
+            <ol
+              key={keyBase}
+              className="list-decimal pl-5 space-y-2.5 text-[13.5px] sm:text-[14.5px] leading-[1.72] text-neutral-200 marker:text-neutral-400 marker:font-mono"
+            >
+              {lines.map((line, lIdx) => (
+                <li key={`${keyBase}-ol-${lIdx}`}>
+                  {renderRichInline(line.replace(/^\d+\.\s+/, ''), `${keyBase}-oli-${lIdx}`)}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+
+        return (
+          <p
+            key={keyBase}
+            className="text-[13.5px] sm:text-[14.5px] leading-[1.72] text-neutral-200 font-normal"
+          >
+            {renderRichInline(block, keyBase)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
 
 interface GenesisThesisModalProps {
   isOpen: boolean;
@@ -44,18 +229,23 @@ export function GenesisThesisModal({
   if (!isOpen) return null;
 
   const editionLabel = isGeniusMode ? 'GENIUS' : 'NORMIE';
+  const totalCount = activeParagraphs.length;
 
-  const fullCopyText = [
-    `THE TRUTH // FIRST PRINCIPLES — WHAT LED THE TRUTH TO... THE TRUTH (${editionLabel} EDITION)`,
-    'Physics Over Consensus • Thermodynamics, 100 MJ Human Work & Cosmic Proof-of-Work',
-    '',
-    ...activeParagraphs.map((p) => {
-      const lawsBlock = p.laws
-        .map((l) => `Law: ${l.law}\nEquation: ${l.equation}`)
-        .join('\n');
-      return `[${p.tag}]\n${lawsBlock}\n${p.text}`;
-    })
-  ].join('\n\n');
+  const fullCopyText = isGeniusMode
+    ? GENESIS_THESIS_GENIUS_RAW_MARKDOWN
+    : [
+        `# ${GENESIS_THESIS_TITLE} (${editionLabel} EDITION)`,
+        `**${GENESIS_THESIS_SUBTITLE}**`,
+        '',
+        ...activeParagraphs.map((p, idx) => {
+          const prevPart = idx > 0 ? activeParagraphs[idx - 1].partTitle : null;
+          const partPrefix = prevPart !== p.partTitle ? `## ${p.partTitle}\n\n` : '';
+          const lawsBlock = p.laws
+            .map((l) => `**Law:** ${l.law}\n**Equation:** \`${l.equation}\``)
+            .join('\n');
+          return `${partPrefix}### [${p.tag}]\n\n${lawsBlock}\n\n${p.text}`;
+        })
+      ].join('\n\n---\n\n');
 
   return (
     <div
@@ -79,7 +269,7 @@ export function GenesisThesisModal({
           >
             <Sparkles className="w-3.5 h-3.5 shrink-0" />
             <span>
-              ORIGIN THESIS // 17 AXIOMS • {editionLabel}
+              ORIGIN THESIS // {totalCount} AXIOMS • {editionLabel}
             </span>
           </div>
 
@@ -193,7 +383,7 @@ export function GenesisThesisModal({
                 Cosmic Proof
               </div>
               <div className="text-xs font-bold text-emerald-300 mt-0.5">
-                Canyon • Sequoia • Rust
+                Canyon • Sequoia • Fossil
               </div>
             </div>
           </div>
@@ -201,10 +391,12 @@ export function GenesisThesisModal({
           <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10.5px]">
             {(
               [
-                ['ALL', 'All (17)', Layers],
+                ['ALL', `All (${totalCount})`, Layers],
                 ['INVARIANTS', 'I. Six Invariants (1–6)', Atom],
                 ['INFLATION', 'II. 100 MJ Inflation (7–12)', Flame],
-                ['COSMOS', 'III. Cosmic PoW (13–17)', Sparkles]
+                ['COSMOS', 'III. Cosmic & Observer (13–19)', Sparkles],
+                ['BETRAYAL', 'IV. Satoshi’s Betrayal (20–22)', ShieldAlert],
+                ['UNIFIED', 'V. Unified Law (23)', Scale]
               ] as const
             ).map(([id, label, Icon]) => {
               const active = chapter === id;
@@ -242,49 +434,63 @@ export function GenesisThesisModal({
           data-thesis-mode={isGeniusMode ? 'GENIUS' : 'NORMIE'}
           className="flex-1 overflow-y-auto px-4 sm:px-7 py-5 space-y-4"
         >
-          {filteredParagraphs.map((para) => (
-            <article
-              key={`${isGeniusMode ? 'G' : 'N'}-${para.id}`}
-              data-testid={`thesis-section-${para.id}`}
-              className="p-4 sm:p-5 rounded-2xl bg-[#090B0E] border border-white/[0.08] space-y-3"
-            >
-              <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
-                <span style={{ color: accent.primary }}>{para.tag}</span>
-                <span className="text-neutral-600 shrink-0 whitespace-nowrap">
-                  #{String(para.id).padStart(2, '0')} / 17
-                </span>
-              </div>
+          {filteredParagraphs.map((para, idx) => {
+            const showPartHeader =
+              idx === 0 || filteredParagraphs[idx - 1].partTitle !== para.partTitle;
+            return (
+              <Fragment key={`${isGeniusMode ? 'G' : 'N'}-${para.id}`}>
+                {showPartHeader && (
+                  <div
+                    data-testid={`thesis-part-header-${para.chapter}`}
+                    className={`font-mono text-[10.5px] sm:text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400 border-b border-white/[0.08] pb-2 ${
+                      idx > 0 ? 'pt-3' : ''
+                    }`}
+                  >
+                    {para.partTitle}
+                  </div>
+                )}
 
-              {para.laws.length > 0 && (
-                <div
-                  data-testid="thesis-section-laws"
-                  className="rounded-xl bg-[#0D1117] border border-white/[0.07] px-3.5 py-2.5 space-y-1.5"
+                <article
+                  data-testid={`thesis-section-${para.id}`}
+                  className="p-4 sm:p-5 rounded-2xl bg-[#090B0E] border border-white/[0.08] space-y-3"
                 >
-                  {para.laws.map((item, idx) => (
-                    <div key={idx} className="space-y-1">
-                      <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-400">
-                        <span
-                          className="w-1.5 h-1.5 rounded-full shrink-0"
-                          style={{ backgroundColor: accent.secondary }}
-                        />
-                        <span>{item.law}</span>
-                      </div>
-                      <div
-                        className="font-mono text-[11.5px] sm:text-[12.5px] font-semibold tracking-wide overflow-x-auto no-scrollbar whitespace-nowrap sm:whitespace-normal"
-                        style={{ color: accent.primary }}
-                      >
-                        {item.equation}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                  <div className="flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest">
+                    <span style={{ color: accent.primary }}>{para.tag}</span>
+                    <span className="text-neutral-600 shrink-0 whitespace-nowrap tabular-nums">
+                      #{String(para.id).padStart(2, '0')} / {totalCount}
+                    </span>
+                  </div>
 
-              <p className="text-[13.5px] sm:text-[14.5px] leading-[1.72] text-neutral-200 font-normal">
-                {para.text}
-              </p>
-            </article>
-          ))}
+                  {para.laws.length > 0 && (
+                    <div
+                      data-testid="thesis-section-laws"
+                      className="rounded-xl bg-[#0D1117] border border-white/[0.07] px-3.5 py-2.5 space-y-1.5"
+                    >
+                      {para.laws.map((item, lIdx) => (
+                        <div key={lIdx} className="space-y-1">
+                          <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+                            <span
+                              className="w-1.5 h-1.5 rounded-full shrink-0"
+                              style={{ backgroundColor: accent.secondary }}
+                            />
+                            <span>{renderRichInline(item.law, `law-${para.id}-${lIdx}`)}</span>
+                          </div>
+                          <div
+                            className="font-mono text-[11.5px] sm:text-[12.5px] font-semibold tracking-wide overflow-x-auto no-scrollbar whitespace-nowrap sm:whitespace-normal"
+                            style={{ color: accent.primary }}
+                          >
+                            {item.equation}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <ThesisBodyContent text={para.text} sectionId={para.id} />
+                </article>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
     </div>
