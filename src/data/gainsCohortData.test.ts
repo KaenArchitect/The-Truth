@@ -50,6 +50,7 @@ test('computeMedian calculates odd, even, and empty collections accurately', () 
 test('price, basket, and signed percentage formatters render clean display strings', () => {
   assert.equal(formatUsdPrice(null), '—');
   assert.equal(formatUsdPrice(75835), '$75,835');
+  assert.equal(formatUsdPrice(60520.4), '$60,520.40');
   assert.equal(formatUsdPrice(12.5), '$12.50');
   assert.equal(formatUsdPrice(0.042), '$0.0420');
   assert.equal(formatUsdPrice(0.0001859), '$0.0001859');
@@ -58,12 +59,14 @@ test('price, basket, and signed percentage formatters render clean display strin
   assert.equal(formatBasketUsd(2540000), '$2.54M');
   assert.equal(formatBasketUsd(42500), '$42.5K');
   assert.equal(formatBasketUsd(1500), '$1,500');
+  assert.equal(formatBasketUsd(0.0025), '<$1');
   assert.equal(formatBasketUsd(-250), '-$250');
 
   assert.equal(formatPctSigned(null), '—');
   assert.equal(formatPctSigned(14_100_000), '+14.1M%');
   assert.equal(formatPctSigned(2015.4), '+2,015%');
   assert.equal(formatPctSigned(-11.74), '-11.7%');
+  assert.equal(formatPctSigned(-99.9997), '-99.99%');
   assert.equal(formatPctSigned(18.5), '+18.5%');
 });
 
@@ -395,6 +398,49 @@ test('mergeResolvedEntriesIntoCohortRecord unlocks newly pulled custom audits so
 
   assert.notEqual(afterSummary.passCycleAvg, beforeSummary.passCycleAvg);
   assert.notEqual(afterSummary.failCycleAvg, beforeSummary.failCycleAvg);
+});
+
+test('resolveTimelineBaselineMode, historical resolveCohortBaselinePrice, and buildHistoricalTimelineCohortTrajectory sync with Time Machine stops', async () => {
+  const {
+    resolveTimelineBaselineMode,
+    buildHistoricalTimelineCohortTrajectory
+  } = await import('./gainsCohortData.ts');
+
+  assert.equal(resolveTimelineBaselineMode('PRESENT', 'ALL_TIME'), 'RELEASE');
+  assert.equal(resolveTimelineBaselineMode('PRESENT', 'Y1'), 'Y1');
+  assert.equal(resolveTimelineBaselineMode('1913', 'ALL_TIME'), 'Y1913');
+  assert.equal(resolveTimelineBaselineMode('1971', 'ALL_TIME'), 'Y1971');
+  assert.equal(resolveTimelineBaselineMode('2020', 'ALL_TIME'), 'Y2020');
+  assert.equal(resolveTimelineBaselineMode('2024', 'ALL_TIME'), 'Y2024');
+
+  const xau = PASSED_COHORT_GAINS.find((a) => a.ticker === 'XAU')!;
+  const btc = PASSED_COHORT_GAINS.find((a) => a.ticker === 'BTC')!;
+  const kas = PASSED_COHORT_GAINS.find((a) => a.ticker === 'KAS')!;
+
+  assert.equal(resolveCohortBaselinePrice(xau, 'Y1913').price, 20.67);
+  assert.equal(resolveCohortBaselinePrice(xau, 'Y1971').price, 35.0);
+  assert.equal(resolveCohortBaselinePrice(btc, 'Y1971').price, null);
+  assert.equal(resolveCohortBaselinePrice(btc, 'Y2008').price, 0.05);
+  assert.equal(resolveCohortBaselinePrice(btc, 'Y2020').price, 7200);
+  assert.equal(resolveCohortBaselinePrice(kas, 'Y2020').price, null);
+  assert.equal(resolveCohortBaselinePrice(kas, 'Y2024').price, 0.1118);
+
+  const traj1971 = buildHistoricalTimelineCohortTrajectory(
+    'Y1971',
+    {
+      passCycleAvg: 6500,
+      passExOutlierAvg: 2800,
+      failCycleAvg: 0,
+      failExOutlierAvg: 0
+    },
+    false
+  );
+  assert.equal(traj1971.length, 7);
+  assert.equal(traj1971[0].label, '1971');
+  assert.equal(traj1971[0].passAll, 1.0);
+  assert.equal(traj1971[6].label, 'Now');
+  assert.equal(traj1971[6].failAll, 1.0);
+  assert.ok(Math.abs(traj1971[6].passAll - 66.0) < 0.01);
 });
 
 

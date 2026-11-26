@@ -548,3 +548,37 @@ export function computeSpotlightCardPosition(
     placement: chosen.mode
   };
 }
+
+const HOME_RESET_STRIP_PARAMS = [
+  'asset',
+  'compare',
+  'tickers',
+  'mode',
+  'lab',
+  'inv',
+  'archive',
+  'gains',
+  'rubric',
+  'genesis',
+  'year'
+] as const;
+
+/**
+ * Strips asset, comparison, modal, and timeline deep-link query parameters so
+ * returning to Home after completing/closing the tutorial restores a clean root URL.
+ */
+export function buildCleanHomeUrl(pathname = '/', search = ''): string {
+  const safePath = pathname && pathname.startsWith('/') ? pathname : '/';
+  if (!search) return safePath;
+  try {
+    const params = new URLSearchParams(search);
+    for (const key of HOME_RESET_STRIP_PARAMS) {
+      params.delete(key);
+    }
+    const remaining = params.toString();
+    return remaining ? `${safePath}?${remaining}` : safePath;
+  } catch {
+    return safePath;
+  }
+}
+

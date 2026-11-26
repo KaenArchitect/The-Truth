@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
+  Clock,
   Copy,
   Database,
   DollarSign,
@@ -11,6 +12,7 @@ import {
   RELEASE_COHORT_TRAJECTORY,
   buildBasketSyncedCohortRecord,
   buildFallbackWindowTrajectory,
+  buildHistoricalTimelineCohortTrajectory,
   buildNiceYGridTicks,
   computeCohortAggregateSummary,
   formatBasketUsd,
@@ -19,22 +21,31 @@ import {
   getCohortSyncSignature,
   mergeResolvedEntriesIntoCohortRecord,
   resolveCohortBaselinePrice,
+  resolveTimelineBaselineMode,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
   type GainsBaselineMode,
   type GainsCohortRecord,
+  type GainsHistoricalStopKey,
   type WindowTrajectoriesMap
 } from '../data/gainsCohortData.ts';
 import {
   DEFAULT_M2_BENCHMARK_DATASET,
   applyLiveSpotsToM2Dataset,
   computeM2AssetSummaries,
+  formatM2SupplyLabel,
+  resolveBenchmarkSeriesForTimeline,
   type M2BenchmarkDataset
 } from '../data/m2BenchmarkData.ts';
 import { computeBtcHorizonSummary } from '../data/btcBenchmarkData.ts';
 import { BtcBenchmarkPanel } from './BtcBenchmarkPanel.tsx';
 import { M2BenchmarkPanel } from './M2BenchmarkPanel.tsx';
-import { formatScore, type AuditData } from '../data/rubricSpec.ts';
+import { GlobalTimeMachineSlider } from './GlobalTimeMachineSlider.tsx';
+import {
+  getGlobalTimelineStop,
+  type GlobalTimelineYear
+} from '../data/globalTimeMachine.ts';
+import { formatScore, getGradeAccent, type AuditData } from '../data/rubricSpec.ts';
 import {
   firebaseAuth,
   getFirebaseIdToken,
@@ -49,6 +60,10 @@ export type GainsChartView = 'COHORTS' | 'BTC_BENCHMARK' | 'M2_BENCHMARK';
 export interface ThermodynamicGainsModalProps {
   onClose: () => void;
   auditsMap: Record<string, AuditData>;
+  fullAuditsMap?: Record<string, AuditData>;
+  timelineYear?: GlobalTimelineYear;
+  onChangeTimelineYear?: (next: GlobalTimelineYear) => void;
+  onInteractTimeMachine?: () => void;
   onSelectOrAuditTicker: (ticker: string) => void;
   onCopyReport: (text: string, label: string) => void;
   copiedTarget: string | null;
@@ -97,9 +112,27 @@ const HORIZON_META: Record<
   }
 };
 
+function extractSpotsFromM2Dataset(ds?: M2BenchmarkDataset | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!ds) return out;
+  const s = ds.spots;
+  if (s) {
+    if (Number.isFinite(s.btc) && s.btc > 0) out.BTC = s.btc;
+    if (Number.isFinite(s.kas) && s.kas > 0) out.KAS = s.kas;
+    if (Number.isFinite(s.eth) && s.eth > 0) out.ETH = s.eth;
+    if (Number.isFinite(s.gold) && s.gold > 0) out.XAU = s.gold;
+    if (Number.isFinite(s.spx) && s.spx > 0) out.SPX = s.spx;
+  }
+  return out;
+}
+
 export function ThermodynamicGainsModal({
   onClose,
   auditsMap,
+  fullAuditsMap,
+  timelineYear = 'PRESENT',
+  onChangeTimelineYear,
+  onInteractTimeMachine,
   onSelectOrAuditTicker,
   onCopyReport,
   copiedTarget,
@@ -107,6 +140,10 @@ export function ThermodynamicGainsModal({
   initialLiveSpots,
   onCohortSynced
 }: ThermodynamicGainsModalProps) {
+  const activeTimelineYear: GlobalTimelineYear = timelineYear || 'PRESENT';
+  const isHistoricalStop = activeTimelineYear !== 'PRESENT';
+  const activeStopMeta = getGlobalTimelineStop(activeTimelineYear);
+  const canonicalAuditsMap = fullAuditsMap || auditsMap;
   const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(
     initialCohortRecord ?? null
   );
@@ -168,16 +205,27 @@ export function ThermodynamicGainsModal({
     () => buildBasketSyncedCohortRecord(auditsMap, persistedCohortRecord),
     [auditsMap, persistedCohortRecord]
   );
-  const cohortRecordRef = useRef(cohortRecord);
-  cohortRecordRef.current = cohortRecord;
-  const auditsMapRef = useRef(auditsMap);
-  auditsMapRef.current = auditsMap;
+  const canonicalSyncRecord = useMemo(
+    () => buildBasketSyncedCohortRecord(canonicalAuditsMap, persistedCohortRecord),
+    [canonicalAuditsMap, persistedCohortRecord]
+  );
+  const canonicalSyncRecordRef = useRef(canonicalSyncRecord);
+  canonicalSyncRecordRef.current = canonicalSyncRecord;
+  const canonicalAuditsMapRef = useRef(canonicalAuditsMap);
+  canonicalAuditsMapRef.current = canonicalAuditsMap;
   const isSyncingRef = useRef(false);
+
+  useEffect(() => {
+    if (isHistoricalStop && horizon !== 'ALL_TIME') {
+      setHorizon('ALL_TIME');
+      setUseLogScale(true);
+    }
+  }, [isHistoricalStop, horizon]);
 
   // Hydrate saved spot prices from backend API + subscribe to Firestore snapshot
   useEffect(() => {
     let active = true;
-    fetch('/api/gains-cohort')
+    fetch('/api/gains-cohort', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then(
         (
@@ -208,11 +256,15 @@ export function ThermodynamicGainsModal({
         if (active) setHasLoadedBackend(true);
       });
 
-    fetch('/api/m2-benchmark')
+    fetch('/api/m2-benchmark', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
         if (!active || !payload?.dataset?.seriesByHorizon) return;
         setRawM2Dataset(payload.dataset);
+        const dsSpots = extractSpotsFromM2Dataset(payload.dataset);
+        if (Object.keys(dsSpots).length > 0) {
+          setLiveSpots((prev) => ({ ...dsSpots, ...prev, ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {}) }));
+        }
       })
       .catch(() => {});
 
@@ -229,10 +281,12 @@ export function ThermodynamicGainsModal({
     };
   }, []);
 
-  // Automatically keep backend & Firestore cohort storage synced with the live PASSED/FAILED baskets for verified signed-in users
+  // Automatically keep backend & Firestore cohort storage synced with the full canonical PASSED/FAILED baskets
   useEffect(() => {
-    if (!hasLoadedBackend || !firebaseAuth?.currentUser?.emailVerified) return undefined;
-    const syncedSig = getCohortSyncSignature(cohortRecord);
+    if (isHistoricalStop || !hasLoadedBackend || !firebaseAuth?.currentUser?.emailVerified) {
+      return undefined;
+    }
+    const syncedSig = getCohortSyncSignature(canonicalSyncRecord);
     const persistedSig = persistedCohortRecord ? getCohortSyncSignature(persistedCohortRecord) : '';
     if (syncedSig === persistedSig || lastAutoSyncedSigRef.current === syncedSig) {
       return undefined;
@@ -251,9 +305,9 @@ export function ThermodynamicGainsModal({
             Authorization: `Bearer ${idToken}`
           },
           body: JSON.stringify({
-            passed: cohortRecord.passed,
-            failed: cohortRecord.failed,
-            sourceLabel: cohortRecord.sourceLabel,
+            passed: canonicalSyncRecord.passed,
+            failed: canonicalSyncRecord.failed,
+            sourceLabel: canonicalSyncRecord.sourceLabel,
             isCustomized: Boolean(persistedCohortRecord?.isCustomized)
           })
         });
@@ -263,7 +317,7 @@ export function ThermodynamicGainsModal({
         if (!active || !payload?.record) return;
         const saved = sanitizeGainsCohortRecord(payload.record);
         lastAutoSyncedSigRef.current = getCohortSyncSignature(
-          buildBasketSyncedCohortRecord(auditsMap, saved)
+          buildBasketSyncedCohortRecord(canonicalAuditsMap, saved)
         );
         setPersistedCohortRecord(saved);
         if (firebaseAuth?.currentUser?.emailVerified) {
@@ -277,14 +331,20 @@ export function ThermodynamicGainsModal({
     return () => {
       active = false;
     };
-  }, [hasLoadedBackend, cohortRecord, persistedCohortRecord, auditsMap]);
+  }, [
+    isHistoricalStop,
+    hasLoadedBackend,
+    canonicalSyncRecord,
+    persistedCohortRecord,
+    canonicalAuditsMap
+  ]);
 
   const syncLiveExchangeSpots = useCallback(async () => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
     setIsSyncingLive(true);
     const clientSpots: Record<string, number> = {};
-    const snapshotCohort = cohortRecordRef.current;
+    const snapshotCohort = canonicalSyncRecordRef.current;
     const allItems = [...snapshotCohort.passed, ...snapshotCohort.failed];
 
     try {
@@ -303,12 +363,20 @@ export function ThermodynamicGainsModal({
         })
       );
 
-      // Refresh FRED M2 + Yahoo S&P500 / Gold / BTC / KAS benchmark alongside cohort spots
-      void fetch('/api/m2-benchmark?refresh=1')
+      // Refresh FRED M2 + Yahoo S&P500 / Gold / BTC / KAS / ETH benchmark alongside cohort spots
+      void fetch('/api/m2-benchmark?refresh=1', { cache: 'no-store' })
         .then((res) => (res.ok ? res.json() : null))
         .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
           if (payload?.dataset?.seriesByHorizon) {
             setRawM2Dataset(payload.dataset);
+            const dsSpots = extractSpotsFromM2Dataset(payload.dataset);
+            if (Object.keys(dsSpots).length > 0) {
+              setLiveSpots((prev) => ({
+                ...dsSpots,
+                ...prev,
+                ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {})
+              }));
+            }
           }
         })
         .catch(() => {});
@@ -363,7 +431,7 @@ export function ThermodynamicGainsModal({
             syncJson.extraResolvedEntries
           );
           lastAutoSyncedSigRef.current = getCohortSyncSignature(
-            buildBasketSyncedCohortRecord(auditsMapRef.current, updatedRecord)
+            buildBasketSyncedCohortRecord(canonicalAuditsMapRef.current, updatedRecord)
           );
           setPersistedCohortRecord(updatedRecord);
           onCohortSyncedRef.current?.(updatedRecord, mergedSpots);
@@ -414,8 +482,10 @@ export function ThermodynamicGainsModal({
     [rawM2Dataset, feedMode, liveSpots]
   );
 
-  const baselineMode: GainsBaselineMode =
-    horizon === 'ALL_TIME' ? 'RELEASE' : horizon;
+  const baselineMode: GainsBaselineMode = resolveTimelineBaselineMode(
+    activeTimelineYear,
+    horizon
+  );
 
   const { passedEnriched, failedEnriched, passedLiquid, failedLiquid } = useMemo(() => {
     const enrichAsset = (item: CohortAssetEntry): EnrichedCohortAsset => {
@@ -524,20 +594,33 @@ export function ThermodynamicGainsModal({
   const passInvested = passedLiquid.length * allocPerAsset;
   const failInvested = failedLiquid.length * allocPerAsset;
 
+  const hasLiquidFailed = failedLiquid.length > 0;
+
   const rawSeries = useMemo(() => {
-    const baseTraj =
-      horizon === 'ALL_TIME'
-        ? RELEASE_COHORT_TRAJECTORY
-        : windowTrajectories[horizon] && windowTrajectories[horizon]!.length >= 2
-        ? windowTrajectories[horizon]!
-        : buildFallbackWindowTrajectory(horizon, summary);
+    const baseTraj = isHistoricalStop
+      ? buildHistoricalTimelineCohortTrajectory(
+          baselineMode as GainsHistoricalStopKey,
+          summary,
+          hasLiquidFailed
+        )
+      : horizon === 'ALL_TIME'
+      ? RELEASE_COHORT_TRAJECTORY
+      : windowTrajectories[horizon] && windowTrajectories[horizon]!.length >= 2
+      ? windowTrajectories[horizon]!
+      : buildFallbackWindowTrajectory(horizon, summary);
 
     return baseTraj.map((pt, idx, arr) => {
       const isLast = idx === arr.length - 1;
       const livePassMult = isLast ? Math.max(0.05, 1 + passCycleAvg / 100) : pt.passAll;
       const livePassExMult = isLast ? Math.max(0.05, 1 + passExOutlierAvg / 100) : pt.passEx;
-      const liveFailMult = isLast ? Math.max(0.05, 1 + failCycleAvg / 100) : pt.failAll;
-      const liveFailExMult = isLast
+      const liveFailMult = !hasLiquidFailed
+        ? 1.0
+        : isLast
+        ? Math.max(0.05, 1 + failCycleAvg / 100)
+        : pt.failAll;
+      const liveFailExMult = !hasLiquidFailed
+        ? null
+        : isLast
         ? Math.max(0.05, 1 + failExOutlierAvg / 100)
         : pt.failEx;
 
@@ -545,12 +628,17 @@ export function ThermodynamicGainsModal({
         label: pt.label,
         event: pt.event,
         passPrimary: livePassMult,
-        passSecondary: livePassExMult as number | null,
+        passSecondary: passedLiquid.length > 1 ? (livePassExMult as number | null) : null,
         failPrimary: liveFailMult,
-        failSecondary: liveFailExMult as number | null
+        failSecondary: failedLiquid.length > 1 ? (liveFailExMult as number | null) : null
       };
     });
   }, [
+    isHistoricalStop,
+    baselineMode,
+    hasLiquidFailed,
+    passedLiquid.length,
+    failedLiquid.length,
     horizon,
     windowTrajectories,
     summary,
@@ -631,16 +719,22 @@ export function ThermodynamicGainsModal({
 
   const buildShareableGainsReport = () => {
     if (chartView === 'BTC_BENCHMARK') {
-      const pts = m2Dataset.seriesByHorizon[horizon] || m2Dataset.seriesByHorizon.ALL_TIME;
+      const pts = resolveBenchmarkSeriesForTimeline(m2Dataset, activeTimelineYear, horizon);
       const btcSum = computeBtcHorizonSummary({
         points: pts,
         horizon,
+        timelineYear: activeTimelineYear,
         cohortRecord,
         liveSpots,
         feedMode
       });
       const horizonTitle =
-        horizon === 'ALL_TIME' ? "MAY '22 COMMON LAUNCH" : HORIZON_META[horizon].heading;
+        btcSum.headingLabel ||
+        (isHistoricalStop
+          ? `${activeTimelineYear} EPOCH OPEN → LIVE SPOT`
+          : horizon === 'ALL_TIME'
+          ? "ALL-TIME GENESIS (JUL '10) → LIVE SPOT"
+          : HORIZON_META[horizon].heading);
       const assetLines = btcSum.assets
         .map(
           (a) =>
@@ -650,7 +744,7 @@ export function ThermodynamicGainsModal({
       const beatCount = btcSum.cohortMatrix.filter((r) => r.beatsBtc).length;
       return `THE TRUTH — PERFORMANCE & PURCHASING POWER VS BITCOIN ($BTC) (${horizonTitle})
 
-BITCOIN ($BTC) BENCHMARK: ${formatUsdPrice(btcSum.btcStartPrice)} → ${formatUsdPrice(btcSum.btcEndPrice)} (${formatPctSigned(btcSum.btcPct)} • ${btcSum.btcMult.toFixed(2)}x)
+BITCOIN ($BTC) BENCHMARK (${btcSum.windowTag || 'Genesis'} → Spot): ${formatUsdPrice(btcSum.btcStartPrice)} → ${formatUsdPrice(btcSum.btcEndPrice)} (${formatPctSigned(btcSum.btcPct)} • ${btcSum.btcMult.toFixed(2)}x)
 
 ${assetLines}
 
@@ -658,10 +752,15 @@ BASKET BREADTH VS BTC: ${beatCount} of ${btcSum.cohortMatrix.length} liquid audi
     }
 
     if (chartView === 'M2_BENCHMARK') {
-      const pts = m2Dataset.seriesByHorizon[horizon] || m2Dataset.seriesByHorizon.ALL_TIME;
-      const m2Sum = computeM2AssetSummaries(pts);
+      const pts = resolveBenchmarkSeriesForTimeline(m2Dataset, activeTimelineYear, horizon);
+      const m2Sum = computeM2AssetSummaries(pts, activeTimelineYear, horizon);
       const horizonTitle =
-        horizon === 'ALL_TIME' ? "MAY '22 COMMON LAUNCH" : HORIZON_META[horizon].heading;
+        m2Sum.headingLabel ||
+        (isHistoricalStop
+          ? `${activeTimelineYear} EPOCH OPEN → LIVE SPOT`
+          : horizon === 'ALL_TIME'
+          ? "ALL-TIME GENESIS (JUL '10) → LIVE SPOT"
+          : HORIZON_META[horizon].heading);
       const assetLines = m2Sum.assets
         .map(
           (a) =>
@@ -670,7 +769,7 @@ BASKET BREADTH VS BTC: ${beatCount} of ${btcSum.cohortMatrix.length} liquid audi
         .join('\n');
       return `THE TRUTH — MACRO PURCHASING POWER VS US M2 (${horizonTitle})
 
-US M2 MONEY SUPPLY (FRED M2SL): $${m2Sum.m2StartTrillions.toFixed(2)}T → $${m2Sum.m2EndTrillions.toFixed(2)}T (${formatPctSigned(m2Sum.m2Pct)})
+US M2 MONEY SUPPLY (${m2Sum.windowTag || 'Open'} → Spot): ${formatM2SupplyLabel(m2Sum.m2StartTrillions)} → ${formatM2SupplyLabel(m2Sum.m2EndTrillions)} (${formatPctSigned(m2Sum.m2Pct)})
 
 ${assetLines}
 
@@ -689,18 +788,23 @@ BENCHMARK: Assets above ${formatPctSigned(m2Sum.m2Pct)} expanded real purchasing
       .map((a) => `$${a.ticker} ${formatPctSigned(a.cyclePct)}`)
       .join(', ');
 
-    const horizonHeading = HORIZON_META[horizon].heading;
+    const horizonHeading = isHistoricalStop
+      ? `${activeTimelineYear} EPOCH OPEN → LIVE SPOT`
+      : HORIZON_META[horizon].heading;
+    const windowShortLabel = isHistoricalStop
+      ? `${activeTimelineYear} → Spot`
+      : HORIZON_META[horizon].tabLabel;
 
     return `THE TRUTH — THERMODYNAMIC GAINS AUDIT (${horizonHeading} • ${cohortRecord.updatedAtLabel.toUpperCase()})
 
 PASSED // E > 0 (${cohortRecord.passed.length} Harmonic — PoW & Physical Commodities):
-• ${HORIZON_META[horizon].tabLabel} Equal-Weight Avg: ${formatPctSigned(passCycleAvg)} (${formatPctSigned(passExOutlierAvg)} ${passExLabel})
+• ${windowShortLabel} Equal-Weight Avg: ${formatPctSigned(passCycleAvg)} (${formatPctSigned(passExOutlierAvg)} ${passExLabel})
 • $${allocPerAsset.toLocaleString()}/Asset Basket (${passedLiquid.length} Active): $${passInvested.toLocaleString()} → ~${formatBasketUsd(passEndDollars)}
 • Breadth: ${passPositiveCount} of ${passedLiquid.length} Active Assets Positive
 • Top Performers: ${topPassAnchors}
 
 FAILED // E = 0 (${cohortRecord.failed.length} Flatlined — PoS & Premined):
-• ${HORIZON_META[horizon].tabLabel} Equal-Weight Avg: ${formatPctSigned(failCycleAvg)} (${formatPctSigned(failExOutlierAvg)} ${failExLabel})
+• ${windowShortLabel} Equal-Weight Avg: ${formatPctSigned(failCycleAvg)} (${formatPctSigned(failExOutlierAvg)} ${failExLabel})
 • $${allocPerAsset.toLocaleString()}/Asset Basket (${failedLiquid.length} Active): $${failInvested.toLocaleString()} → ~${formatBasketUsd(failEndDollars)}
 • Drawdown Breadth: ${failNegativeCount} of ${failedLiquid.length} Negative${bleedAssets ? ` (${bleedAssets})` : ''}
 
@@ -708,6 +812,13 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
   };
 
   const yGridTicks = buildNiceYGridTicks(minVal, maxVal, effectiveLog);
+  const modalSliderAccent = useMemo(
+    () => getGradeAccent(chartView === 'BTC_BENCHMARK' ? 'B+' : 'A+'),
+    [chartView]
+  );
+  const activeWindowLabel = isHistoricalStop
+    ? `${activeTimelineYear} → Spot`
+    : HORIZON_META[horizon].tabLabel;
 
   return (
     <div
@@ -878,24 +989,84 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
         </div>
 
         <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
+          {onChangeTimelineYear && (
+            <div
+              className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] px-3.5 py-2.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5"
+              data-testid="gains-modal-timeline-bar"
+            >
+              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-300 shrink-0">
+                  <Clock
+                    className="w-3.5 h-3.5 shrink-0"
+                    style={{ color: modalSliderAccent.primary }}
+                  />
+                  <span>Time Machine Baseline:</span>
+                </span>
+                <span
+                  className="font-mono text-[10.5px] font-semibold truncate"
+                  style={{ color: modalSliderAccent.primary }}
+                >
+                  {activeStopMeta.buttonLabel} &middot; {activeStopMeta.epochTitle}
+                </span>
+                {isHistoricalStop && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onInteractTimeMachine?.();
+                      onChangeTimelineYear('PRESENT');
+                    }}
+                    className="px-2 py-0.5 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 font-mono text-[9.5px] text-neutral-300 hover:text-white transition-colors duration-150 shrink-0"
+                  >
+                    Reset to Present
+                  </button>
+                )}
+              </div>
+
+              <div className="flex justify-center lg:justify-end w-full lg:w-auto">
+                <GlobalTimeMachineSlider
+                  value={activeTimelineYear}
+                  onChange={(nextYr) => {
+                    setHoverPointIdx(null);
+                    setHorizon('ALL_TIME');
+                    setUseLogScale(true);
+                    onChangeTimelineYear(nextYr);
+                  }}
+                  onInteract={onInteractTimeMachine}
+                  accent={modalSliderAccent}
+                  testIdPrefix="modal-time-machine"
+                  omitTutorialId
+                />
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="p-1 rounded-2xl sm:rounded-full bg-[#0B0C0E] border border-white/[0.08] flex flex-wrap items-center gap-1 font-mono text-xs">
               {(
                 [
-                  { id: 'ALL_TIME', label: 'All Time' },
+                  {
+                    id: 'ALL_TIME',
+                    label: isHistoricalStop ? `${activeTimelineYear} → Spot` : 'All Time'
+                  },
                   { id: 'D180', label: '180 Days' },
                   { id: 'Y1', label: '1 Year' },
                   { id: 'Y2', label: '2 Years' },
                   { id: 'Y4', label: '4 Years' }
                 ] as const
               ).map((tab) => {
-                const active = horizon === tab.id;
+                const active =
+                  tab.id === 'ALL_TIME'
+                    ? horizon === 'ALL_TIME'
+                    : !isHistoricalStop && horizon === tab.id;
                 return (
                   <button
                     key={tab.id}
                     type="button"
                     onClick={() => {
                       setHoverPointIdx(null);
+                      if (tab.id !== 'ALL_TIME' && isHistoricalStop) {
+                        onChangeTimelineYear?.('PRESENT');
+                      }
                       setHorizon(tab.id);
                       setUseLogScale(tab.id === 'ALL_TIME');
                     }}
@@ -938,6 +1109,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
           {chartView === 'BTC_BENCHMARK' ? (
             <BtcBenchmarkPanel
               horizon={horizon}
+              timelineYear={activeTimelineYear}
               useLogScale={useLogScale}
               onChangeLogScale={setUseLogScale}
               dataset={m2Dataset}
@@ -950,6 +1122,8 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
           ) : chartView === 'M2_BENCHMARK' ? (
             <M2BenchmarkPanel
               horizon={horizon}
+              timelineYear={activeTimelineYear}
+              cohortRecord={cohortRecord}
               useLogScale={useLogScale}
               onChangeLogScale={setUseLogScale}
               dataset={m2Dataset}
@@ -984,19 +1158,32 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 <span>FAILED // E = 0 ({cohortRecord.failed.length})</span>
                 <span className="shrink-0 opacity-85">PoS + Premine</span>
               </div>
-              <div
-                className="font-display text-2xl sm:text-3xl font-bold"
-                style={{
-                  backgroundImage: 'linear-gradient(135deg, #EF4444 0%, #F97316 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent'
-                }}
-              >
-                {formatPctSigned(failCycleAvg)}
-              </div>
-              <div className="font-mono text-[11px] text-neutral-400">
-                {formatPctSigned(failExOutlierAvg)} {failExLabel} • {failNegativeCount}/{failedLiquid.length} Negative
-              </div>
+              {hasLiquidFailed ? (
+                <>
+                  <div
+                    className="font-display text-2xl sm:text-3xl font-bold"
+                    style={{
+                      backgroundImage: 'linear-gradient(135deg, #EF4444 0%, #F97316 100%)',
+                      WebkitBackgroundClip: 'text',
+                      WebkitTextFillColor: 'transparent'
+                    }}
+                  >
+                    {formatPctSigned(failCycleAvg)}
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-400">
+                    {formatPctSigned(failExOutlierAvg)} {failExLabel} • {failNegativeCount}/{failedLiquid.length} Negative
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="font-display text-xl sm:text-2xl font-bold text-neutral-400">
+                    Fiat Numeraire
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-500">
+                    No liquid 0-Joule tokens in {activeTimelineYear} ($USD unit)
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1 min-w-0 overflow-hidden">
@@ -1012,11 +1199,13 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </span>
                 <span className="text-xs font-mono text-neutral-500">vs</span>
                 <span className="text-[#F97316] whitespace-nowrap">
-                  ~{formatBasketUsd(failEndDollars)}
+                  {hasLiquidFailed ? `~${formatBasketUsd(failEndDollars)}` : `$${allocPerAsset.toLocaleString()} Fiat`}
                 </span>
               </div>
               <div className="font-mono text-[11px] text-[#34D399] font-semibold">
-                {passedLiquid.length === failedLiquid.length
+                {!hasLiquidFailed
+                  ? `E > 0 Hard Assets (${activeWindowLabel})`
+                  : passedLiquid.length === failedLiquid.length
                   ? `${portfolioVictoryMultiple}x Total Portfolio Victory for E > 0`
                   : `${portfolioVictoryMultiple}x Equal-Cap Victory (${formatBasketUsd(passInvested)} vs ${formatBasketUsd(failInvested)} basis)`}
               </div>
@@ -1041,17 +1230,19 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                     {topPassAsset ? `$${topPassAsset.ticker}` : 'Top E>0'}
                   </span>
                 </span>
-                <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
-                  <span className="text-[#EF4444]">
-                    {formatPctSigned(minFailCyclePct)}
+                {hasLiquidFailed && (
+                  <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+                    <span className="text-[#EF4444]">
+                      {formatPctSigned(minFailCyclePct)}
+                    </span>
+                    <span className="font-mono text-xs text-neutral-500">
+                      {worstFailAsset ? `$${worstFailAsset.ticker}` : 'Low E=0'}
+                    </span>
                   </span>
-                  <span className="font-mono text-xs text-neutral-500">
-                    {worstFailAsset ? `$${worstFailAsset.ticker}` : 'Low E=0'}
-                  </span>
-                </span>
+                )}
               </div>
               <div className="font-mono text-[11px] text-neutral-400 leading-snug">
-                {HORIZON_META[horizon].tabLabel} top gainers trimmed from both lists above
+                {activeWindowLabel} top gainers trimmed from both lists above
               </div>
             </div>
           </div>
@@ -1060,7 +1251,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3 min-h-[28px]">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 min-w-0 truncate">
-                  {horizon === 'ALL_TIME'
+                  {isHistoricalStop
+                    ? `${activeTimelineYear} EPOCH EQUITY CURVE (${activeTimelineYear} OPEN → LIVE) // SCRUB TIMELINE`
+                    : horizon === 'ALL_TIME'
                     ? 'ALL-TIME EQUITY CURVE (SINCE RELEASE → LIVE) // SCRUB TIMELINE'
                     : `${HORIZON_META[horizon].heading} EQUITY CURVE // SCRUB TIMELINE TO INSPECT`}
                 </div>
@@ -1584,9 +1777,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 01 // ASYMMETRIC RIGHT-TAIL COMPOUNDING
               </div>
               <p className="text-xs text-neutral-300 leading-relaxed">
-                {horizon === 'ALL_TIME'
+                {!isHistoricalStop && horizon === 'ALL_TIME'
                   ? `Measured from initial public release open to live spot, unforgeable Proof-of-Work leaders like $BTC ($0.05) and $KAS ($0.0001859) turn $${allocPerAsset.toLocaleString()}/asset into ~${formatBasketUsd(passEndDollars)} vs ~${formatBasketUsd(failEndDollars)} on E = 0 (${portfolioVictoryMultiple}x portfolio victory).`
-                  : `Over the ${HORIZON_META[horizon].tabLabel.toLowerCase()} horizon, the E > 0 basket turns $${passInvested.toLocaleString()} into ~${formatBasketUsd(passEndDollars)} vs ~${formatBasketUsd(failEndDollars)} on E = 0 (${portfolioVictoryMultiple}x portfolio spread), led by $${topPassAsset?.ticker || 'BTC'} (${formatPctSigned(topPassAsset?.cyclePct ?? 0)}).`}
+                  : `Over the ${activeWindowLabel} horizon, the E > 0 basket turns $${passInvested.toLocaleString()} into ~${formatBasketUsd(passEndDollars)}${hasLiquidFailed ? ` vs ~${formatBasketUsd(failEndDollars)} on E = 0 (${portfolioVictoryMultiple}x portfolio spread)` : ''}, led by $${topPassAsset?.ticker || 'BTC'} (${formatPctSigned(topPassAsset?.cyclePct ?? 0)}).`}
               </p>
             </div>
 
@@ -1595,11 +1788,13 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 02 // ELIMINATING THE &ldquo;VC BLEED-TO-ZERO&rdquo; LEFT TAIL
               </div>
               <p className="text-xs text-neutral-300 leading-relaxed">
-                {failNegativeCount} of {failedLiquid.length} active E = 0 tokens remain underwater
-                in the {HORIZON_META[horizon].tabLabel.toLowerCase()} window
-                {worstFailAsset
-                  ? `, led on the downside by $${worstFailAsset.ticker} (${formatPctSigned(worstFailAsset.cyclePct)}) as zero-joule supply dilution weighs on price discovery.`
-                  : ' as zero-joule insider unlocks weigh on price discovery.'}
+                {hasLiquidFailed
+                  ? `${failNegativeCount} of ${failedLiquid.length} active E = 0 tokens remain underwater in the ${activeWindowLabel} window${
+                      worstFailAsset
+                        ? `, led on the downside by $${worstFailAsset.ticker} (${formatPctSigned(worstFailAsset.cyclePct)}) as zero-joule supply dilution weighs on price discovery.`
+                        : ' as zero-joule insider unlocks weigh on price discovery.'
+                    }`
+                  : `In the ${activeTimelineYear} epoch, unbacked fiat credit ($USD) served as the sole 0-Joule ledger while physical bullion and Proof-of-Work preserved long-horizon purchasing power.`}
               </p>
             </div>
 

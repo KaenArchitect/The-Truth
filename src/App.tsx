@@ -147,6 +147,7 @@ import {
   computeCohortLiquidMetricsList,
   formatPctSigned,
   mergeResolvedEntriesIntoCohortRecord,
+  resolveTimelineBaselineMode,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
   type GainsCohortRecord
@@ -162,6 +163,7 @@ import {
   MOBILE_TUTORIAL_STEPS,
   TUTORIAL_STEPS,
   TUTORIAL_STORAGE_KEY,
+  buildCleanHomeUrl,
   clampTutorialStepIndex,
   isBottomChromeInAppBrowser,
   type TutorialActionId
@@ -1146,13 +1148,14 @@ function ThermodynamicAuditApp() {
 
   const basketGainsSummary = useMemo(() => {
     const synced = buildBasketSyncedCohortRecord(displayAudits, gainsCohortRecord);
+    const activeBaselineMode = resolveTimelineBaselineMode(timelineYear, 'ALL_TIME');
     return computeCohortAggregateSummary(
-      computeCohortLiquidMetricsList(synced.passed, 'RELEASE', gainsLiveSpots),
-      computeCohortLiquidMetricsList(synced.failed, 'RELEASE', gainsLiveSpots),
+      computeCohortLiquidMetricsList(synced.passed, activeBaselineMode, gainsLiveSpots),
+      computeCohortLiquidMetricsList(synced.failed, activeBaselineMode, gainsLiveSpots),
       1000,
       false
     );
-  }, [displayAudits, gainsCohortRecord, gainsLiveSpots]);
+  }, [displayAudits, timelineYear, gainsCohortRecord, gainsLiveSpots]);
 
   const flashArchiveToast = (text: string, tone: ArchiveToastState['tone'] = 'hit') => {
     setArchiveToast({ text, tone });
@@ -3698,16 +3701,54 @@ function ThermodynamicAuditApp() {
     });
   }, []);
 
-  const closeTutorial = useCallback((markSeen = true) => {
-    if (markSeen && typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
-      } catch {
-        // Ignore storage errors in restricted environments
+  const closeTutorial = useCallback(
+    (markSeen = true, options?: { resetToHome?: boolean }) => {
+      if (markSeen && typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
+        } catch {
+          // Ignore storage errors in restricted environments
+        }
       }
-    }
-    setIsTutorialOpen(false);
-  }, []);
+      setIsTutorialOpen(false);
+
+      if (options?.resetToHome !== false) {
+        pendingDeepLinkRef.current = null;
+        setActiveKey(null);
+        setPinnedKeys([]);
+        setExitingPins([]);
+        setHoveredInvId(null);
+        setHoveredPinTicker(null);
+        setIsArenaHovered(false);
+        setExpandAllOrbits(false);
+        setExpandedSyncInvId(null);
+        setConfirmFullReauditKey(null);
+        setSelectedEpochIdx(null);
+        setAuditError(null);
+        setSearchInput('');
+        setIsGeniusMode(false);
+        setTimelineYear('PRESENT');
+        setModalInvId(null);
+        setIsRubricOpen(false);
+        setIsArchiveModalOpen(false);
+        setIsGainsModalOpen(false);
+        setIsDonateModalOpen(false);
+        setIsGenesisModalOpen(false);
+
+        if (typeof window !== 'undefined') {
+          document.title = 'The Truth — Thermodynamic Audit';
+          const cleanUrl = buildCleanHomeUrl(window.location.pathname, window.location.search);
+          if (`${window.location.pathname}${window.location.search}` !== cleanUrl) {
+            window.history.replaceState(null, '', cleanUrl);
+          }
+          if (window.scrollY > 0) {
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }
+        }
+      }
+    },
+    []
+  );
 
   const handleTutorialStepChange = useCallback(
     (nextRawIdx: number) => {
@@ -3792,7 +3833,7 @@ function ThermodynamicAuditApp() {
         }
         case 'open-wartime-sim': {
           trackDotDiscovery('hands_on_tool');
-          closeTutorial(true);
+          closeTutorial(true, { resetToHome: false });
           if (!activeKey) setActiveKey('BTC');
           openWartimeSimTab();
           break;
@@ -5104,7 +5145,7 @@ function ThermodynamicAuditApp() {
               data-pulse-dur={pulseDur}
               className={`pointer-events-none fixed inset-0 overflow-hidden z-0 transition-opacity duration-700 ${
                 isGeniusMode ? 'opacity-0 bg-anim-paused' : 'opacity-100'
-              } ${isAnyModalOpen ? 'bg-anim-paused' : ''}`}
+              } ${isAnyModalOpen || isTutorialOpen ? 'bg-anim-paused' : ''}`}
               style={{
                 ['--bg-pulse-dur' as string]: pulseDur,
                 contain: 'strict'
@@ -5292,7 +5333,7 @@ function ThermodynamicAuditApp() {
         {/* HERO LOCKUP + SPOKEN QUOTE STAGE + SEARCH BAR */}
         <div
           ref={heroDockRef}
-          className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-1 md:mt-3 lg:-mt-9 pointer-events-none"
+          className="hero-search-dock relative z-[25] w-full flex flex-col items-center gap-2 mt-1 md:mt-3 lg:-mt-7 pointer-events-none"
           style={{
             transform: isLandingIdle
               ? 'translate3d(0, var(--hero-landing-y, 12vh), 0)'
@@ -5571,7 +5612,7 @@ function ThermodynamicAuditApp() {
                   setConfirmFullReauditKey(null);
                 }
               }}
-              className={`color-glide mt-1 font-mono text-[11px] sm:text-xs lowercase tracking-[0.24em] font-medium bg-transparent focus:outline-none ${
+              className={`color-glide mt-2 font-mono text-[11px] sm:text-xs lowercase tracking-[0.24em] font-medium bg-transparent focus:outline-none ${
                 !isLandingIdle && !isAuditing ? 'cursor-pointer' : 'cursor-default'
               }`}
               style={{
@@ -5690,7 +5731,7 @@ function ThermodynamicAuditApp() {
               className="pointer-events-auto w-full transition-all duration-700 relative"
             >
               <GeniusSearchWaveRings
-                active={isGeniusMode}
+                active={isGeniusMode && !isTutorialOpen && !isAnyModalOpen}
                 isAuditing={isAuditing}
                 targetRef={searchPillRef}
                 compact={!isLandingIdle && isCompactHeight}
@@ -9722,7 +9763,16 @@ function ThermodynamicAuditApp() {
         <Suspense fallback={null}>
           <ThermodynamicGainsModal
             onClose={() => setIsGainsModalOpen(false)}
-            auditsMap={audits}
+            auditsMap={displayAudits}
+            fullAuditsMap={audits}
+            timelineYear={timelineYear}
+            onChangeTimelineYear={(nextYr) => {
+              setSelectedEpochIdx(null);
+              setTimelineYear(nextYr);
+            }}
+            onInteractTimeMachine={() => {
+              trackDotDiscovery('use_time_machine');
+            }}
             onSelectOrAuditTicker={(tk) => {
               setIsGainsModalOpen(false);
               if (audits[tk]) {

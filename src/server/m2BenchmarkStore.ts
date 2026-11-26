@@ -156,6 +156,7 @@ export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M
       isLive: true,
       latestM2Trillions: Number((latestM2.billions / 1000).toFixed(2)),
       latestM2Date: latestM2.dateStr,
+      spots,
       seriesByHorizon
     };
 

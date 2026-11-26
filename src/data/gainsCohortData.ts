@@ -27,7 +27,19 @@ export interface CohortAssetEntry {
 
 export type CohortGainAsset = CohortAssetEntry;
 export type GainsWindowHorizonKey = 'D180' | 'Y1' | 'Y2' | 'Y4';
-export type GainsBaselineMode = 'RELEASE' | 'CYCLE' | GainsWindowHorizonKey;
+export type GainsHistoricalStopKey =
+  | 'Y1913'
+  | 'Y1971'
+  | 'Y2000'
+  | 'Y2008'
+  | 'Y2016'
+  | 'Y2020'
+  | 'Y2024';
+export type GainsBaselineMode =
+  | 'RELEASE'
+  | 'CYCLE'
+  | GainsWindowHorizonKey
+  | GainsHistoricalStopKey;
 export type WindowTrajectoriesMap = Partial<Record<GainsWindowHorizonKey, MacroTrajectoryPoint[]>>;
 
 export interface MacroTrajectoryPoint {
@@ -685,7 +697,11 @@ export function formatUsdPrice(val: unknown): string {
   const n = Number(val);
   if (!Number.isFinite(n)) return '—';
   if (n >= 1000) {
-    return `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+    const hasCents = Math.abs(n - Math.round(n)) >= 0.005;
+    return `$${n.toLocaleString(undefined, {
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: 2
+    })}`;
   }
   if (n >= 1) {
     return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -711,6 +727,9 @@ export function formatBasketUsd(val: unknown): string {
   if (abs >= 10_000) {
     return `${sign}$${(abs / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
   }
+  if (abs > 0 && abs < 0.5) {
+    return `${sign}<$1`;
+  }
   return `${sign}$${Math.round(abs).toLocaleString()}`;
 }
 
@@ -724,6 +743,9 @@ export function formatPctSigned(val: unknown): string {
   }
   if (Math.abs(n) >= 1000) {
     return `${sign}${Math.round(n).toLocaleString()}%`;
+  }
+  if (n > -100 && n <= -99.95) {
+    return '-99.99%';
   }
   return `${sign}${n.toFixed(1)}%`;
 }
@@ -1335,6 +1357,133 @@ export function computeCohortAggregateSummary(
   };
 }
 
+const HISTORICAL_STOP_YEAR_BY_MODE: Record<GainsHistoricalStopKey, number> = {
+  Y1913: 1913,
+  Y1971: 1971,
+  Y2000: 2000,
+  Y2008: 2008,
+  Y2016: 2016,
+  Y2020: 2020,
+  Y2024: 2024
+};
+
+export const HISTORICAL_STOP_BASELINES_BY_MODE: Record<
+  GainsHistoricalStopKey,
+  Record<string, { price: number; label: string }>
+> = {
+  Y1913: {
+    XAU: { price: 20.67, label: '$20.67 (1913 Specie)' },
+    XAG: { price: 0.6, label: '$0.6000 (1913 Open)' }
+  },
+  Y1971: {
+    XAU: { price: 35.0, label: '$35.00 (1971 Window)' },
+    XAG: { price: 1.63, label: '$1.63 (1971 Open)' }
+  },
+  Y2000: {
+    XAU: { price: 277.0, label: '$277.00 (2000 Open)' },
+    XAG: { price: 5.035, label: '$5.04 (2000 Open)' }
+  },
+  Y2008: {
+    BTC: { price: 0.05, label: '$0.0500 (Genesis Open)' },
+    XAU: { price: 865.0, label: '$865.00 (2008 Open)' },
+    XAG: { price: 14.9, label: '$14.90 (2008 Open)' }
+  },
+  Y2016: {
+    BTC: { price: 434.0, label: '$434.00 (2016 Open)' },
+    ETH: { price: 0.95, label: '$0.9500 (2016 Open)' },
+    LTC: { price: 3.48, label: '$3.48 (2016 Open)' },
+    XMR: { price: 0.5, label: '$0.5000 (2016 Open)' },
+    ZEC: { price: 250.55, label: "$250.55 (Oct '16)" },
+    XAU: { price: 1061.0, label: '$1,061 (2016 Open)' },
+    XAG: { price: 13.85, label: '$13.85 (2016 Open)' },
+    XRP: { price: 0.006, label: '$0.0060 (2016 Open)' },
+    XLM: { price: 0.0018, label: '$0.0018 (2016 Open)' },
+    DOGE: { price: 0.00015, label: '$0.00015 (2016 Open)' }
+  },
+  Y2020: {
+    BTC: { price: 7200.0, label: '$7,200 (2020 Open)' },
+    ETH: { price: 129.6, label: '$129.60 (2020 Open)' },
+    LTC: { price: 41.3, label: '$41.30 (2020 Open)' },
+    XMR: { price: 44.5, label: '$44.50 (2020 Open)' },
+    ZEC: { price: 27.6, label: '$27.60 (2020 Open)' },
+    BCH: { price: 204.6, label: '$204.60 (2020 Open)' },
+    RVN: { price: 0.0225, label: '$0.0225 (2020 Open)' },
+    ERG: { price: 0.185, label: '$0.1850 (2020 Open)' },
+    XAU: { price: 1517.0, label: '$1,517 (2020 Open)' },
+    XAG: { price: 17.85, label: '$17.85 (2020 Open)' },
+    XRP: { price: 0.193, label: '$0.1930 (2020 Open)' },
+    XLM: { price: 0.045, label: '$0.0450 (2020 Open)' },
+    ADA: { price: 0.0328, label: '$0.0328 (2020 Open)' },
+    QNT: { price: 3.15, label: '$3.15 (2020 Open)' },
+    STX: { price: 0.105, label: '$0.1050 (2020 Open)' },
+    ALGO: { price: 0.218, label: '$0.2180 (2020 Open)' },
+    SOL: { price: 0.832, label: "$0.8320 (Apr '20)" },
+    AVAX: { price: 4.61, label: "$4.61 (Sep '20)" },
+    NEAR: { price: 1.69, label: "$1.69 (Oct '20)" },
+    DOGE: { price: 0.002, label: '$0.0020 (2020 Open)' }
+  },
+  Y2024: {
+    KAS: { price: 0.1118, label: '$0.1118 (2024 Open)' },
+    BTC: { price: 42265.0, label: '$42,265 (2024 Open)' },
+    ETH: { price: 2282.0, label: '$2,282 (2024 Open)' },
+    ZEC: { price: 26.9, label: '$26.90 (2024 Open)' },
+    XMR: { price: 165.4, label: '$165.40 (2024 Open)' },
+    XAU: { price: 2063.0, label: '$2,063 (2024 Open)' },
+    XAG: { price: 23.8, label: '$23.80 (2024 Open)' },
+    BCH: { price: 259.4, label: '$259.40 (2024 Open)' },
+    LTC: { price: 72.8, label: '$72.80 (2024 Open)' },
+    RVN: { price: 0.0205, label: '$0.0205 (2024 Open)' },
+    ERG: { price: 1.52, label: '$1.52 (2024 Open)' },
+    GEEK: { price: 0.0000075, label: "$0.0000075 (Jun '24)" },
+    TAO: { price: 267.0, label: '$267.00 (2024 Open)' },
+    XRP: { price: 0.615, label: '$0.6150 (2024 Open)' },
+    SOL: { price: 101.5, label: '$101.50 (2024 Open)' },
+    QNT: { price: 137.8, label: '$137.80 (2024 Open)' },
+    STX: { price: 1.5, label: '$1.50 (2024 Open)' },
+    XLM: { price: 0.129, label: '$0.1290 (2024 Open)' },
+    NEAR: { price: 3.65, label: '$3.65 (2024 Open)' },
+    SUI: { price: 0.778, label: '$0.7780 (2024 Open)' },
+    ICP: { price: 13.32, label: '$13.32 (2024 Open)' },
+    AVAX: { price: 38.55, label: '$38.55 (2024 Open)' },
+    ADA: { price: 0.594, label: '$0.5940 (2024 Open)' },
+    ALGO: { price: 0.223, label: '$0.2230 (2024 Open)' },
+    DOGE: { price: 0.0895, label: '$0.0895 (2024 Open)' }
+  }
+};
+
+export function resolveTimelineBaselineMode(
+  timelineYear: string | null | undefined,
+  horizon: 'ALL_TIME' | GainsWindowHorizonKey = 'ALL_TIME'
+): GainsBaselineMode {
+  const cleaned = String(timelineYear || 'PRESENT')
+    .trim()
+    .toUpperCase();
+  if (cleaned === '1913') return 'Y1913';
+  if (cleaned === '1971') return 'Y1971';
+  if (cleaned === '2000') return 'Y2000';
+  if (cleaned === '2008') return 'Y2008';
+  if (cleaned === '2016') return 'Y2016';
+  if (cleaned === '2020') return 'Y2020';
+  if (cleaned === '2024') return 'Y2024';
+  return horizon === 'ALL_TIME' ? 'RELEASE' : horizon;
+}
+
+function extractReleaseYearFromLabel(label?: string | null): number | null {
+  if (!label) return null;
+  const shortMatch = label.match(/'(\d{2})\b/);
+  if (shortMatch) {
+    const twoDigit = Number(shortMatch[1]);
+    if (Number.isFinite(twoDigit)) {
+      return twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
+    }
+  }
+  const fullMatch = label.match(/\b(19\d{2}|20[0-2]\d)\b/);
+  if (fullMatch) {
+    return Number(fullMatch[1]);
+  }
+  return null;
+}
+
 export function resolveCohortBaselinePrice(
   entry: Pick<
     CohortAssetEntry,
@@ -1346,9 +1495,37 @@ export function resolveCohortBaselinePrice(
     | 'price4y'
     | 'baselineLabel'
     | 'releaseLabel'
-  >,
+  > & { ticker?: string },
   mode: GainsBaselineMode = 'RELEASE'
 ): { price: number | null; label: string } {
+  if (mode in HISTORICAL_STOP_YEAR_BY_MODE) {
+    const stopMode = mode as GainsHistoricalStopKey;
+    const stopYear = HISTORICAL_STOP_YEAR_BY_MODE[stopMode];
+    const cleanTicker = entry.ticker ? normalizeCohortTicker(entry.ticker) : '';
+    const curated = cleanTicker ? HISTORICAL_STOP_BASELINES_BY_MODE[stopMode]?.[cleanTicker] : undefined;
+    if (curated) {
+      return curated;
+    }
+
+    // Fallback for dynamically synced custom assets if their recorded release was on/before stopYear
+    const relYear = extractReleaseYearFromLabel(entry.releaseLabel);
+    if (relYear !== null && relYear > stopYear) {
+      return { price: null, label: `Pre-Launch (${stopYear})` };
+    }
+    if (stopMode === 'Y2024' && entry.price2y && entry.price2y > 0) {
+      return {
+        price: entry.price2y,
+        label: `${formatUsdPrice(entry.price2y)} (2024 Est.)`
+      };
+    }
+    if (relYear !== null && relYear === stopYear && entry.releasePrice && entry.releasePrice > 0) {
+      return {
+        price: entry.releasePrice,
+        label: entry.releaseLabel || `${formatUsdPrice(entry.releasePrice)} (${stopYear})`
+      };
+    }
+    return { price: null, label: `Unpriced (${stopYear})` };
+  }
   if (mode === 'RELEASE') {
     const price =
       entry.releasePrice !== undefined && entry.releasePrice !== null
@@ -1855,4 +2032,109 @@ export function buildFallbackWindowTrajectory(
   });
 }
 
+const HISTORICAL_TIMELINE_CHECKPOINTS: Record<
+  GainsHistoricalStopKey,
+  Array<{ label: string; event: string }>
+> = {
+  Y1913: [
+    { label: '1913', event: 'Pre-Fed Classical Gold Standard Open' },
+    { label: '1944', event: 'Bretton Woods $35/oz Accord' },
+    { label: '1971', event: 'Nixon Shock Gold Window Severance' },
+    { label: '2000', event: 'Unbacked Fiat Credit Era' },
+    { label: '2008', event: 'GFC & Satoshi PoW Breakthrough' },
+    { label: '2020', event: 'Pandemic QE Expansion' },
+    { label: 'Now', event: 'Live 1913 → Today Spot' }
+  ],
+  Y1971: [
+    { label: '1971', event: 'Bretton Woods $35/oz Severance Open' },
+    { label: '1980', event: 'Stagflation Bullion Repricing' },
+    { label: '2000', event: 'Y2K Fiat Credit Expansion' },
+    { label: '2008', event: 'GFC Bank Bailouts' },
+    { label: '2016', event: 'Post-QE Bullion Accumulation' },
+    { label: '2022', event: 'Sovereign Bullion Bid' },
+    { label: 'Now', event: 'Live 1971 → Today Spot' }
+  ],
+  Y2000: [
+    { label: '2000', event: '2000 Unbacked Fiat Era Open' },
+    { label: '2004', event: 'Gold Monetization Wave' },
+    { label: '2008', event: 'Global Financial Crisis' },
+    { label: '2012', event: 'QE3 Zero-Rate Regime' },
+    { label: '2020', event: 'Pandemic Monetary Surge' },
+    { label: '2024', event: 'Central Bank Bullion Record' },
+    { label: 'Now', event: 'Live 2000 → Today Spot' }
+  ],
+  Y2008: [
+    { label: '2008', event: '2008 GFC & Bitcoin Genesis Open' },
+    { label: '2012', event: 'First BTC Halving Cycle' },
+    { label: '2016', event: 'Second BTC Halving Era' },
+    { label: '2020', event: 'Third Halving & QE Surge' },
+    { label: '2022', event: 'QT Tightening Stress Test' },
+    { label: '2024', event: 'Fourth Halving & Bullion Breakout' },
+    { label: 'Now', event: 'Live 2008 → Today Spot' }
+  ],
+  Y2016: [
+    { label: '2016', event: '2016 Sequential PoW & DAO Era Open' },
+    { label: '2017', event: 'SegWit & Cycle Peak' },
+    { label: '2019', event: 'RandomX & Hashrate Expansion' },
+    { label: '2021', event: 'Liquidity Cycle Highs' },
+    { label: '2022', event: 'ETH Merge (PoW → PoS)' },
+    { label: '2024', event: 'Spot ETF & Bullion Surge' },
+    { label: 'Now', event: 'Live 2016 → Today Spot' }
+  ],
+  Y2020: [
+    { label: '2020', event: '2020 DeFi & PoS Launch Era Open' },
+    { label: '2021', event: 'Zero-Rate Liquidity Peak' },
+    { label: '2022', event: 'FTX / LUNA Unwind & ETH Merge' },
+    { label: '2023', event: 'VC Cliff Unlock Pressure' },
+    { label: '2024', event: 'Halving & Hard-Asset Divergence' },
+    { label: '2025', event: 'PoW + Gold Outperformance' },
+    { label: 'Now', event: 'Live 2020 → Today Spot' }
+  ],
+  Y2024: [
+    { label: '2024', event: '2024 Post-Merge & 1-BPS Era Open' },
+    { label: "May '24", event: 'Post-Halving Repricing' },
+    { label: "Nov '24", event: 'M2 Re-Expansion Bid' },
+    { label: "May '25", event: 'Crescendo 10 BPS & Bullion Surge' },
+    { label: "Nov '25", event: 'PoS Supply Dilution Test' },
+    { label: "May '26", event: 'Hard-Asset Leadership' },
+    { label: 'Now', event: 'Live 2024 → Today Spot' }
+  ]
+};
 
+export function buildHistoricalTimelineCohortTrajectory(
+  mode: GainsHistoricalStopKey,
+  summary: Pick<
+    CohortAggregateSummary,
+    'passCycleAvg' | 'passExOutlierAvg' | 'failCycleAvg' | 'failExOutlierAvg'
+  >,
+  hasFailedAssets = true
+): MacroTrajectoryPoint[] {
+  const defs = HISTORICAL_TIMELINE_CHECKPOINTS[mode];
+  const targetPass = Math.max(0.05, 1 + summary.passCycleAvg / 100);
+  const targetPassEx = Math.max(0.05, 1 + summary.passExOutlierAvg / 100);
+  const targetFail = hasFailedAssets ? Math.max(0.05, 1 + summary.failCycleAvg / 100) : 1.0;
+  const targetFailEx = hasFailedAssets ? Math.max(0.05, 1 + summary.failExOutlierAvg / 100) : 1.0;
+
+  const interpolate = (target: number, t: number, waveOffset: number) => {
+    if (t <= 0) return 1.0;
+    if (t >= 1) return target;
+    if (target >= 8) {
+      // Geometric interpolation for multi-decade / exponential PoW trajectories
+      return Math.max(0.05, Math.pow(target, t) * (1 + waveOffset));
+    }
+    return Math.max(0.05, 1 + (target - 1) * t + waveOffset);
+  };
+
+  return defs.map((def, idx) => {
+    const t = idx / Math.max(1, defs.length - 1);
+    const wave = idx === 0 || idx === defs.length - 1 ? 0 : Math.sin(t * Math.PI * 1.5) * 0.04;
+    return {
+      label: def.label,
+      event: def.event,
+      passAll: interpolate(targetPass, t, wave),
+      passEx: interpolate(targetPassEx, t, wave * 0.7),
+      failAll: hasFailedAssets ? interpolate(targetFail, t, -wave * 0.7) : 1.0,
+      failEx: hasFailedAssets ? interpolate(targetFailEx, t, -wave * 0.85) : 1.0
+    };
+  });
+}

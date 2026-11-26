@@ -1,24 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildNiceYGridTicks,
-  formatBasketUsd,
   formatPctSigned,
   formatUsdPrice,
-  type GainsCohortRecord,
-  type GainsWindowHorizonKey
+  type GainsCohortRecord
 } from '../data/gainsCohortData.ts';
 import {
   BTC_SERIES_META,
   computeBtcHorizonSummary,
-  transformBtcPointForMode,
+  transformBtcPointNullable,
   type BtcComparisonMode,
   type BtcMatrixAssetItem,
   type BtcSeriesKey
 } from '../data/btcBenchmarkData.ts';
-import type { M2BenchmarkDataset, MacroM2HorizonKey } from '../data/m2BenchmarkData.ts';
+import {
+  resolveBenchmarkSeriesForTimeline,
+  type M2BenchmarkDataset,
+  type MacroM2HorizonKey
+} from '../data/m2BenchmarkData.ts';
+import type { GlobalTimelineYear } from '../data/globalTimeMachine.ts';
+import { formatScore } from '../data/rubricSpec.ts';
 
 export interface BtcBenchmarkPanelProps {
   horizon: MacroM2HorizonKey;
+  timelineYear?: GlobalTimelineYear;
   useLogScale: boolean;
   onChangeLogScale: (next: boolean) => void;
   dataset: M2BenchmarkDataset;
@@ -29,39 +34,59 @@ export interface BtcBenchmarkPanelProps {
   onSelectOrAuditTicker: (ticker: string) => void;
 }
 
-const HORIZON_BTC_HEADING: Record<MacroM2HorizonKey, string> = {
-  ALL_TIME: "MAY '22 COMMON LAUNCH → LIVE SPOT",
-  D180: '180-DAY ROLLING WINDOW → LIVE SPOT',
-  Y1: '1-YEAR ROLLING WINDOW → LIVE SPOT',
-  Y2: '2-YEAR ROLLING WINDOW → LIVE SPOT',
-  Y4: '4-YEAR CYCLE WINDOW → LIVE SPOT'
-};
-
 const ALL_SERIES_KEYS: BtcSeriesKey[] = ['KAS', 'ETH', 'GOLD', 'SPX', 'BTC'];
 
 function formatMultipleCompact(mult: number): string {
   if (!Number.isFinite(mult) || mult <= 0) return '—';
+  if (mult >= 1_000_000) return `${(mult / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}Mx`;
   if (mult >= 1000) return `${(mult / 1000).toFixed(1).replace(/\.0$/, '')}Kx`;
   if (mult >= 100) return `${Math.round(mult).toLocaleString()}x`;
   if (mult >= 10) return `${mult.toFixed(1)}x`;
-  return `${mult.toFixed(2)}x`;
+  if (mult >= 0.01) return `${mult.toFixed(2)}x`;
+  if (mult < 0.0001) return '<0.0001x';
+  return `${mult.toFixed(4)}x`;
 }
 
-function formatCompactBtcUsd(val: number): string {
-  if (!Number.isFinite(val) || val <= 0) return '—';
-  if (val >= 1000) return `$${(val / 1000).toFixed(1).replace(/\.0$/, '')}K`;
-  return formatUsdPrice(val);
+function formatSimOutcomeUsd(val: number): string {
+  if (!Number.isFinite(val) || val < 0) return '—';
+  if (val === 0) return '$0';
+  if (val >= 1_000_000_000_000) {
+    return `$${(val / 1_000_000_000_000).toFixed(2).replace(/\.?0+$/, '')}T`;
+  }
+  if (val >= 1_000_000_000) {
+    return `$${(val / 1_000_000_000).toFixed(2).replace(/\.?0+$/, '')}B`;
+  }
+  if (val >= 1_000_000) {
+    return `$${(val / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  }
+  if (val >= 10_000) {
+    return `$${(val / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  if (val >= 1) {
+    return `$${Math.round(val).toLocaleString()}`;
+  }
+  if (val >= 0.1) {
+    return `$${val.toFixed(2)}`;
+  }
+  if (val >= 0.01) {
+    return `$${val.toFixed(3)}`;
+  }
+  if (val >= 0.0001) {
+    return `$${val.toFixed(4)}`;
+  }
+  return '<$0.0001';
 }
 
 function formatMatrixPrice(val: number, isIndexPoints?: boolean): string {
   if (isIndexPoints) {
-    return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    return val.toLocaleString(undefined, { maximumFractionDigits: val < 100 ? 1 : 0 });
   }
   return formatUsdPrice(val);
 }
 
 export function BtcBenchmarkPanel({
   horizon,
+  timelineYear = 'PRESENT',
   useLogScale,
   onChangeLogScale,
   dataset,
@@ -71,7 +96,7 @@ export function BtcBenchmarkPanel({
   allocPerAsset,
   onSelectOrAuditTicker
 }: BtcBenchmarkPanelProps) {
-  const [comparisonMode, setComparisonMode] = useState<BtcComparisonMode>('INDEXED');
+  const [comparisonMode, setComparisonMode] = useState<BtcComparisonMode>('PRICED_IN_BTC');
   const [matrixScope, setMatrixScope] = useState<'CORE' | 'ALL'>('CORE');
   const [visibleSeries, setVisibleSeries] = useState<Record<BtcSeriesKey, boolean>>({
     KAS: true,
@@ -86,7 +111,7 @@ export function BtcBenchmarkPanel({
 
   useEffect(() => {
     setHoverIdx(null);
-  }, [horizon, comparisonMode]);
+  }, [horizon, timelineYear, comparisonMode]);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -106,8 +131,8 @@ export function BtcBenchmarkPanel({
   }, []);
 
   const rawPoints = useMemo(
-    () => dataset.seriesByHorizon[horizon] || dataset.seriesByHorizon.ALL_TIME,
-    [dataset, horizon]
+    () => resolveBenchmarkSeriesForTimeline(dataset, timelineYear, horizon),
+    [dataset, timelineYear, horizon]
   );
 
   const summary = useMemo(
@@ -115,18 +140,19 @@ export function BtcBenchmarkPanel({
       computeBtcHorizonSummary({
         points: rawPoints,
         horizon,
+        timelineYear,
         cohortRecord,
         liveSpots,
         feedMode
       }),
-    [rawPoints, horizon, cohortRecord, liveSpots, feedMode]
+    [rawPoints, horizon, timelineYear, cohortRecord, liveSpots, feedMode]
   );
 
   const seriesData = useMemo(
     () =>
       rawPoints.map((pt) => ({
         raw: pt,
-        vals: transformBtcPointForMode(pt, comparisonMode)
+        vals: transformBtcPointNullable(pt, comparisonMode)
       })),
     [rawPoints, comparisonMode]
   );
@@ -138,7 +164,7 @@ export function BtcBenchmarkPanel({
   const activePoint = seriesData[activeIdx] || seriesData[0];
 
   const svgH = 264;
-  const padL = horizon === 'ALL_TIME' && visibleSeries.KAS && useLogScale ? 58 : 56;
+  const padL = (horizon === 'ALL_TIME' || timelineYear !== 'PRESENT') && useLogScale ? 64 : 58;
   const padR = 20;
   const padT = 20;
   const padB = 34;
@@ -146,11 +172,15 @@ export function BtcBenchmarkPanel({
   const plotH = svgH - padT - padB;
 
   const activeKeys = ALL_SERIES_KEYS.filter((k) => visibleSeries[k]);
+  const floorClamp = comparisonMode === 'PRICED_IN_BTC' ? 1e-7 : 0.04;
   const allPlotVals = seriesData.flatMap((d) =>
-    activeKeys.map((k) => d.vals[k]).concat([1.0])
+    activeKeys
+      .map((k) => d.vals[k])
+      .filter((v): v is number => v !== null && Number.isFinite(v))
+      .concat([1.0])
   );
-  const minVal = Math.max(0.04, Math.min(...allPlotVals) * 0.9);
-  const maxVal = Math.max(1.05, ...allPlotVals) * 1.1;
+  const minVal = Math.max(floorClamp, Math.min(...allPlotVals) * 0.88);
+  const maxVal = Math.max(1.05, ...allPlotVals) * 1.12;
 
   const mapX = (idx: number) => {
     if (seriesData.length <= 1) return padL + plotW / 2;
@@ -158,25 +188,42 @@ export function BtcBenchmarkPanel({
   };
 
   const mapY = (mult: number) => {
-    const safeMult = Number.isFinite(mult) ? Math.max(0.01, mult) : 1.0;
+    const safeMult = Number.isFinite(mult) ? Math.max(floorClamp, mult) : 1.0;
     if (useLogScale) {
-      const lo = Math.log10(Math.max(0.04, minVal));
+      const lo = Math.log10(Math.max(floorClamp, minVal));
       const hi = Math.log10(Math.max(minVal * 1.15, maxVal));
-      const v = Math.log10(Math.max(0.04, safeMult));
+      const v = Math.log10(Math.max(floorClamp, safeMult));
       const frac = (v - lo) / Math.max(0.0001, hi - lo);
       return padT + plotH - frac * plotH;
     }
-    const frac = (safeMult - minVal) / Math.max(0.01, maxVal - minVal);
+    const frac = (safeMult - minVal) / Math.max(0.0001, maxVal - minVal);
     return padT + plotH - frac * plotH;
   };
 
-  const buildPolyline = (key: BtcSeriesKey) =>
-    seriesData
-      .map((d, i) => `${i === 0 ? 'M' : 'L'} ${mapX(i).toFixed(1)} ${mapY(d.vals[key]).toFixed(1)}`)
-      .join(' ');
+  const buildPolyline = (key: BtcSeriesKey) => {
+    let started = false;
+    const cmds: string[] = [];
+    seriesData.forEach((d, i) => {
+      const v = d.vals[key];
+      if (v === null || !Number.isFinite(v)) {
+        started = false;
+        return;
+      }
+      cmds.push(`${started ? 'L' : 'M'} ${mapX(i).toFixed(1)} ${mapY(v).toFixed(1)}`);
+      started = true;
+    });
+    return cmds.join(' ');
+  };
 
   const yGridTicks = useMemo(() => {
-    const raw = buildNiceYGridTicks(minVal, maxVal, useLogScale);
+    let raw: number[];
+    if (useLogScale && minVal < 0.04) {
+      const widePowers = [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 0.1, 1, 10, 100, 1000];
+      raw = widePowers.filter((t) => t >= minVal * 0.75 && t <= maxVal * 1.15);
+      if (raw.length < 2) raw = [minVal, 1.0, maxVal];
+    } else {
+      raw = buildNiceYGridTicks(minVal, maxVal, useLogScale);
+    }
     if (raw.length <= 6) return raw;
     const breakeven = raw.find((t) => Math.abs(t - 1.0) < 0.001);
     const kept: number[] = [];
@@ -189,7 +236,7 @@ export function BtcBenchmarkPanel({
       }
     }
     return kept.sort((a, b) => a - b);
-  }, [minVal, maxVal, useLogScale, plotH]);
+  }, [minVal, maxVal, useLogScale, plotH, floorClamp]);
 
   const toggleSeries = (key: BtcSeriesKey) => {
     setVisibleSeries((prev) => {
@@ -206,110 +253,168 @@ export function BtcBenchmarkPanel({
       ? 2
       : 1;
 
-  const kasSummary = summary.assets.find((a) => a.key === 'KAS');
-  const ethSummary = summary.assets.find((a) => a.key === 'ETH');
-  const goldSummary = summary.assets.find((a) => a.key === 'GOLD');
-  const spxSummary = summary.assets.find((a) => a.key === 'SPX');
+  const cohortLookup = useMemo(() => {
+    const map = new Map<string, { grade: string; score: number; side: 'PASSED' | 'FAILED' }>();
+    for (const p of cohortRecord.passed) {
+      map.set(p.ticker, { grade: p.grade, score: p.auditScore, side: 'PASSED' });
+    }
+    for (const f of cohortRecord.failed) {
+      map.set(f.ticker, { grade: f.grade, score: f.auditScore, side: 'FAILED' });
+    }
+    return map;
+  }, [cohortRecord]);
+
+  const cardsSource = summary.coreCards || summary.assets;
+  const kasSummary = cardsSource.find((a) => a.key === 'KAS');
+  const ethSummary = cardsSource.find((a) => a.key === 'ETH');
+  const goldSummary = cardsSource.find((a) => a.key === 'GOLD');
+  const spxSummary = cardsSource.find((a) => a.key === 'SPX');
+
+  const kasMeta = cohortLookup.get('KAS');
+  const ethMeta = cohortLookup.get('ETH');
+  const goldMeta = cohortLookup.get('XAU');
 
   const coreMatrixRows: BtcMatrixAssetItem[] = useMemo(
     () =>
-      summary.assets.map((a) => ({
-        id: `CORE:${a.key}`,
-        ticker: a.ticker,
-        auditTicker: a.key === 'SPX' ? null : a.key === 'GOLD' ? 'XAU' : a.ticker,
-        name: a.name,
-        grade: a.key === 'KAS' ? 'A+' : a.key === 'GOLD' ? 'B' : a.key === 'ETH' ? 'F' : 'INDEX',
-        side: a.key === 'ETH' ? 'FAILED' : a.key === 'SPX' ? 'MACRO' : 'PASSED',
-        color: a.color,
-        isIndexPoints: a.key === 'SPX',
-        startPrice: a.startPrice,
-        currentPrice: a.currentPrice,
-        nominalMult: a.nominalMult,
-        nominalPct: a.nominalPct,
-        btcAdjustedMult: a.btcAdjustedMult,
-        btcAdjustedPct: a.btcAdjustedPct,
-        beatsBtc: a.beatsBtc
-      })),
-    [summary.assets]
+      summary.assets.map((a) => {
+        const auditTk = a.key === 'SPX' ? null : a.key === 'GOLD' ? 'XAU' : a.ticker;
+        const found = auditTk ? cohortLookup.get(auditTk) : undefined;
+        return {
+          id: `CORE:${a.key}`,
+          ticker: a.ticker,
+          auditTicker: auditTk,
+          name: a.name,
+          grade:
+            found?.grade ??
+            (a.key === 'KAS' ? 'A+' : a.key === 'GOLD' ? 'B' : a.key === 'ETH' ? 'F' : 'INDEX'),
+          side:
+            found?.side ??
+            (a.key === 'ETH' ? 'FAILED' : a.key === 'SPX' ? 'MACRO' : 'PASSED'),
+          color: a.color,
+          isIndexPoints: a.key === 'SPX',
+          windowNote: a.windowNote,
+          startPrice: a.startPrice,
+          currentPrice: a.currentPrice,
+          nominalMult: a.nominalMult,
+          nominalPct: a.nominalPct,
+          btcAdjustedMult: a.btcAdjustedMult,
+          btcAdjustedPct: a.btcAdjustedPct,
+          beatsBtc: a.beatsBtc
+        };
+      }),
+    [summary.assets, cohortLookup]
   );
 
   const visibleMatrixRows = matrixScope === 'ALL' ? summary.cohortMatrix : coreMatrixRows;
   const beatsBtcCount = summary.cohortMatrix.filter((r) => r.beatsBtc).length;
-  const windowTag =
-    horizon === 'ALL_TIME'
-      ? "May '22 Open"
-      : ({
-          D180: '180D Open',
-          Y1: '1Y Open',
-          Y2: '2Y Open',
-          Y4: '4Y Open'
-        } as Record<GainsWindowHorizonKey, string>)[horizon];
+  const windowTag = summary.windowTag || "Jul '10 Genesis";
+  const headingLabel = summary.headingLabel || "ALL-TIME GENESIS (JUL '10) → LIVE SPOT";
 
   return (
-    <div className="space-y-5" data-testid="btc-benchmark-panel">
+    <div className="space-y-5" data-testid="btc-benchmark-panel" data-timeline-year={timelineYear}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           {
             title: 'KASPA ($KAS) VS. BTC',
-            badge: 'A+ • 6.0',
+            badge: kasMeta ? `${kasMeta.grade} • ${formatScore(kasMeta.score)}` : 'Pre-Genesis',
             item: kasSummary,
             accent: '#49EACB',
             grad: 'linear-gradient(135deg, #49EACB 0%, #34D399 100%)'
           },
           {
             title: 'ETHEREUM ($ETH) VS. BTC',
-            badge: 'F • 0.0',
+            badge: ethMeta ? `${ethMeta.grade} • ${formatScore(ethMeta.score)}` : 'Pre-Genesis',
             item: ethSummary,
             accent: '#A78BFA',
             grad: 'linear-gradient(135deg, #C4B5FD 0%, #A78BFA 100%)'
           },
           {
             title: 'GOLD ($XAU) VS. BTC',
-            badge: 'B • 4.1',
+            badge: goldMeta ? `${goldMeta.grade} • ${formatScore(goldMeta.score)}` : 'B • 4.1',
             item: goldSummary,
             accent: '#FACC15',
             grad: 'linear-gradient(135deg, #FEF08A 0%, #EAB308 100%)'
           }
         ].map((card) => {
           const item = card.item;
+          const isUnavailable = item?.available === false;
           return (
             <div
               key={card.title}
-              className="rounded-2xl bg-[#0B0C0E] p-4 space-y-1 min-w-0 overflow-hidden border"
-              style={{ borderColor: `${card.accent}40` }}
+              className={`rounded-2xl bg-[#0B0C0E] p-4 space-y-1 min-w-0 overflow-hidden border ${
+                isUnavailable ? 'opacity-70' : ''
+              }`}
+              style={{ borderColor: isUnavailable ? 'rgba(255,255,255,0.08)' : `${card.accent}40` }}
             >
               <div
                 className="font-mono text-[10px] uppercase tracking-wider flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5"
-                style={{ color: card.accent }}
+                style={{ color: isUnavailable ? '#9CA3AF' : card.accent }}
               >
                 <span>{card.title}</span>
-                <span className="shrink-0 opacity-85">{card.badge}</span>
-              </div>
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span
-                  className="font-display text-2xl sm:text-3xl font-bold leading-tight tabular-nums"
-                  style={{
-                    backgroundImage: card.grad,
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent'
-                  }}
-                >
-                  {formatPctSigned(item?.nominalPct ?? null)}
-                </span>
-                <span className="font-mono text-xs text-neutral-400 whitespace-nowrap tabular-nums">
-                  ({formatMultipleCompact(item?.nominalMult ?? 0)})
+                <span className="shrink-0 opacity-85">
+                  {isUnavailable ? 'N/A' : card.badge}
                 </span>
               </div>
-              <div className="font-mono text-[11px] text-neutral-300 leading-snug tabular-nums">
-                <span
-                  className={
-                    item?.beatsBtc ? 'text-[#34D399] font-semibold' : 'text-[#F97316] font-semibold'
-                  }
-                >
-                  {formatPctSigned(item?.btcAdjustedPct ?? null)} vs BTC
-                </span>{' '}
-                • ₿ {formatMultipleCompact(item?.btcAdjustedMult ?? 0)}
-              </div>
+              {isUnavailable ? (
+                <>
+                  <div className="font-display text-xl sm:text-2xl font-bold text-neutral-500 leading-tight">
+                    Pre-Genesis
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-500 leading-snug">
+                    {item?.launchNote || `Not yet launched in ${timelineYear}`}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span
+                      className="font-display text-2xl sm:text-3xl font-bold leading-tight tabular-nums"
+                      style={{
+                        backgroundImage: card.grad,
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent'
+                      }}
+                    >
+                      {formatPctSigned(item?.btcAdjustedPct ?? null)}
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-semibold whitespace-nowrap tabular-nums ${
+                        item?.beatsBtc ? 'text-[#34D399]' : 'text-[#F97316]'
+                      }`}
+                    >
+                      (₿ {formatMultipleCompact(item?.btcAdjustedMult ?? 0)})
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-400 leading-snug tabular-nums">
+                    <span className="text-neutral-200 font-semibold">
+                      {formatPctSigned(item?.nominalPct ?? null)} in USD
+                    </span>{' '}
+                    • {formatMultipleCompact(item?.nominalMult ?? 0)}
+                    {item?.windowNote ? (
+                      <span className="whitespace-nowrap">
+                        {' '}
+                        · {item.windowNote.replace(/^Since\s+/i, '')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div
+                    className="pt-1.5 mt-1 border-t border-white/[0.06] font-mono text-[10.5px] xl:text-[11px] flex flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 tabular-nums"
+                    data-testid="btc-kpi-sim-outcome"
+                  >
+                    <span className="text-neutral-200 font-semibold whitespace-nowrap">
+                      ${allocPerAsset.toLocaleString()} →{' '}
+                      {formatSimOutcomeUsd(allocPerAsset * (item?.nominalMult ?? 0))}
+                    </span>
+                    <span
+                      className={`font-semibold whitespace-nowrap ${
+                        item?.beatsBtc ? 'text-[#34D399]' : 'text-[#F97316]'
+                      }`}
+                    >
+                      ({formatSimOutcomeUsd(allocPerAsset * (item?.btcAdjustedMult ?? 0))} vs BTC)
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
@@ -330,23 +435,43 @@ export function BtcBenchmarkPanel({
                 WebkitTextFillColor: 'transparent'
               }}
             >
-              {formatPctSigned(spxSummary?.nominalPct ?? null)}
+              {formatPctSigned(spxSummary?.btcAdjustedPct ?? null)}
             </span>
-            <span className="font-mono text-xs text-neutral-400 whitespace-nowrap tabular-nums">
-              ({formatCompactBtcUsd(summary.btcStartPrice)}→{formatCompactBtcUsd(summary.btcEndPrice)} BTC)
+            <span
+              className={`font-mono text-xs font-semibold whitespace-nowrap tabular-nums ${
+                spxSummary?.beatsBtc ? 'text-[#34D399]' : 'text-[#F97316]'
+              }`}
+            >
+              (₿ {formatMultipleCompact(spxSummary?.btcAdjustedMult ?? 0)})
             </span>
           </div>
-          <div className="font-mono text-[11px] text-neutral-300 leading-snug tabular-nums">
-            <span
-              className={
-                spxSummary?.beatsBtc
-                  ? 'text-[#34D399] font-semibold'
-                  : 'text-[#F97316] font-semibold'
-              }
-            >
-              {formatPctSigned(spxSummary?.btcAdjustedPct ?? null)} vs BTC
+          <div className="font-mono text-[11px] text-neutral-400 leading-snug tabular-nums">
+            <span className="text-neutral-200 font-semibold">
+              {formatPctSigned(spxSummary?.nominalPct ?? null)} in USD
             </span>{' '}
-            • ₿ {formatMultipleCompact(spxSummary?.btcAdjustedMult ?? 0)}
+            • {formatMultipleCompact(spxSummary?.nominalMult ?? 0)}
+            {spxSummary?.windowNote ? (
+              <span className="whitespace-nowrap">
+                {' '}
+                · {spxSummary.windowNote.replace(/^Since\s+/i, '')}
+              </span>
+            ) : null}
+          </div>
+          <div
+            className="pt-1.5 mt-1 border-t border-white/[0.06] font-mono text-[10.5px] xl:text-[11px] flex flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 tabular-nums"
+            data-testid="btc-kpi-sim-outcome"
+          >
+            <span className="text-neutral-200 font-semibold whitespace-nowrap">
+              ${allocPerAsset.toLocaleString()} →{' '}
+              {formatSimOutcomeUsd(allocPerAsset * (spxSummary?.nominalMult ?? 0))}
+            </span>
+            <span
+              className={`font-semibold whitespace-nowrap ${
+                spxSummary?.beatsBtc ? 'text-[#34D399]' : 'text-[#F97316]'
+              }`}
+            >
+              ({formatSimOutcomeUsd(allocPerAsset * (spxSummary?.btcAdjustedMult ?? 0))} vs BTC)
+            </span>
           </div>
         </div>
       </div>
@@ -355,22 +480,11 @@ export function BtcBenchmarkPanel({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 min-h-[28px]">
             <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 leading-tight">
-              KAS • ETH • S&amp;P 500 • GOLD VS. BITCOIN ($BTC) ({HORIZON_BTC_HEADING[horizon]})
+              KAS • ETH • S&amp;P 500 • GOLD VS. BITCOIN ($BTC) ({headingLabel})
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
               <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px]">
-                <button
-                  type="button"
-                  onClick={() => setComparisonMode('INDEXED')}
-                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
-                    comparisonMode === 'INDEXED'
-                      ? 'bg-[#1D212A] text-white border-white/15'
-                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                  }`}
-                >
-                  Indexed vs BTC
-                </button>
                 <button
                   type="button"
                   onClick={() => setComparisonMode('PRICED_IN_BTC')}
@@ -381,6 +495,17 @@ export function BtcBenchmarkPanel({
                   }`}
                 >
                   Priced in BTC (÷ BTC)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComparisonMode('INDEXED')}
+                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
+                    comparisonMode === 'INDEXED'
+                      ? 'bg-[#1D212A] text-white border-white/15'
+                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                  }`}
+                >
+                  Indexed in USD
                 </button>
               </div>
 
@@ -414,29 +539,38 @@ export function BtcBenchmarkPanel({
           {activePoint && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums min-h-[20px]">
               <span className="text-white font-bold">
-                [{activePoint.raw.label} — {activePoint.raw.event.replace('vs FRED US M2', 'vs BTC').replace('vs US M2', 'vs BTC')}]
+                [
+                {activePoint.raw.label} —{' '}
+                {activePoint.raw.event
+                  .replace('vs FRED US M2', 'vs BTC')
+                  .replace('vs US M2', 'vs BTC')}
+                ]
               </span>
-              {visibleSeries.KAS && (
+              {visibleSeries.KAS && activePoint.vals.KAS !== null && (
                 <span className="text-[#49EACB] font-semibold">
-                  KAS: {formatPctSigned((activePoint.vals.KAS - 1) * 100)} ({formatMultipleCompact(activePoint.vals.KAS)})
+                  KAS: {formatPctSigned((activePoint.vals.KAS - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.KAS)})
                 </span>
               )}
-              {visibleSeries.ETH && (
+              {visibleSeries.ETH && activePoint.vals.ETH !== null && (
                 <span className="text-[#A78BFA] font-semibold">
-                  ETH: {formatPctSigned((activePoint.vals.ETH - 1) * 100)} ({formatMultipleCompact(activePoint.vals.ETH)})
+                  ETH: {formatPctSigned((activePoint.vals.ETH - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.ETH)})
                 </span>
               )}
-              {visibleSeries.GOLD && (
+              {visibleSeries.GOLD && activePoint.vals.GOLD !== null && (
                 <span className="text-[#FACC15] font-semibold">
-                  Gold: {formatPctSigned((activePoint.vals.GOLD - 1) * 100)} ({formatMultipleCompact(activePoint.vals.GOLD)})
+                  Gold: {formatPctSigned((activePoint.vals.GOLD - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.GOLD)})
                 </span>
               )}
-              {visibleSeries.SPX && (
+              {visibleSeries.SPX && activePoint.vals.SPX !== null && (
                 <span className="text-[#60A5FA] font-semibold">
-                  S&amp;P 500: {formatPctSigned((activePoint.vals.SPX - 1) * 100)} ({formatMultipleCompact(activePoint.vals.SPX)})
+                  S&amp;P 500: {formatPctSigned((activePoint.vals.SPX - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.SPX)})
                 </span>
               )}
-              {visibleSeries.BTC && (
+              {visibleSeries.BTC && activePoint.vals.BTC !== null && (
                 <span className="text-[#F59E0B] font-semibold">
                   {comparisonMode === 'PRICED_IN_BTC'
                     ? `BTC Base: 1.00x (${formatUsdPrice(activePoint.raw.btcPrice)})`
@@ -481,17 +615,21 @@ export function BtcBenchmarkPanel({
                     fontSize="9.5"
                     fontFamily="JetBrains Mono, monospace"
                   >
-                    {tickVal >= 1_000
+                    {tickVal >= 1_000_000
+                      ? `${(tickVal / 1_000_000).toFixed(tickVal % 1_000_000 === 0 ? 0 : 1)}Mx`
+                      : tickVal >= 1_000
                       ? `${(tickVal / 1_000).toFixed(0)}Kx`
                       : tickVal >= 2
                       ? `${Number(tickVal.toFixed(1)).toString().replace(/\.0$/, '')}x`
+                      : tickVal < 0.01
+                      ? `${tickVal.toExponential(0)}x`
                       : formatPctSigned((tickVal - 1) * 100)}
                   </text>
                 </g>
               );
             })}
 
-            {visibleSeries.BTC && (
+            {visibleSeries.BTC && buildPolyline('BTC') && (
               <path
                 d={buildPolyline('BTC')}
                 fill="none"
@@ -502,7 +640,7 @@ export function BtcBenchmarkPanel({
               />
             )}
 
-            {visibleSeries.SPX && (
+            {visibleSeries.SPX && buildPolyline('SPX') && (
               <path
                 d={buildPolyline('SPX')}
                 fill="none"
@@ -512,7 +650,7 @@ export function BtcBenchmarkPanel({
               />
             )}
 
-            {visibleSeries.GOLD && (
+            {visibleSeries.GOLD && buildPolyline('GOLD') && (
               <path
                 d={buildPolyline('GOLD')}
                 fill="none"
@@ -522,7 +660,7 @@ export function BtcBenchmarkPanel({
               />
             )}
 
-            {visibleSeries.ETH && (
+            {visibleSeries.ETH && buildPolyline('ETH') && (
               <path
                 d={buildPolyline('ETH')}
                 fill="none"
@@ -532,7 +670,7 @@ export function BtcBenchmarkPanel({
               />
             )}
 
-            {visibleSeries.KAS && (
+            {visibleSeries.KAS && buildPolyline('KAS') && (
               <path
                 d={buildPolyline('KAS')}
                 fill="none"
@@ -565,12 +703,13 @@ export function BtcBenchmarkPanel({
 
                   {(isActive || isLast) &&
                     (['BTC', 'SPX', 'GOLD', 'ETH', 'KAS'] as BtcSeriesKey[]).map((key) => {
-                      if (!visibleSeries[key]) return null;
+                      const val = pt.vals[key];
+                      if (!visibleSeries[key] || val === null || !Number.isFinite(val)) return null;
                       return (
                         <circle
                           key={key}
                           cx={x}
-                          cy={mapY(pt.vals[key])}
+                          cy={mapY(val)}
                           r={isActive ? 4.5 : 3}
                           fill="#0B0C0E"
                           stroke={BTC_SERIES_META[key].color}
@@ -614,14 +753,18 @@ export function BtcBenchmarkPanel({
             {ALL_SERIES_KEYS.map((key) => {
               const meta = BTC_SERIES_META[key];
               const isOn = visibleSeries[key];
-              const latestVal = seriesData[seriesData.length - 1]?.vals[key] ?? 1;
+              const latestVal = seriesData[seriesData.length - 1]?.vals[key] ?? null;
+              const isPreGenesis = latestVal === null;
               return (
                 <button
                   key={key}
                   type="button"
+                  disabled={isPreGenesis}
                   onClick={() => toggleSeries(key)}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors duration-150 whitespace-nowrap ${
-                    isOn
+                    isPreGenesis
+                      ? 'bg-[#0B0C0E] text-neutral-600 border-white/[0.04] opacity-50 cursor-not-allowed'
+                      : isOn
                       ? 'bg-[#121418] text-neutral-100 border-white/15'
                       : 'bg-[#0B0C0E] text-neutral-500 border-white/[0.06] opacity-60'
                   }`}
@@ -636,9 +779,15 @@ export function BtcBenchmarkPanel({
                         : { backgroundColor: meta.color }
                     }
                   />
-                  <span style={{ color: isOn ? meta.color : undefined }}>{meta.ticker}</span>
+                  <span style={{ color: isOn && !isPreGenesis ? meta.color : undefined }}>
+                    {meta.ticker}
+                  </span>
                   <span className="text-neutral-400 tabular-nums">
-                    ({formatPctSigned((latestVal - 1) * 100)})
+                    {isPreGenesis
+                      ? '(Pre-Genesis)'
+                      : key === 'BTC' && comparisonMode === 'PRICED_IN_BTC'
+                      ? '(1.00x Base)'
+                      : `(${formatPctSigned((latestVal - 1) * 100)})`}
                   </span>
                 </button>
               );
@@ -650,7 +799,10 @@ export function BtcBenchmarkPanel({
         </div>
       </div>
 
-      <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-3">
+      <div
+        className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-3"
+        data-testid="btc-purchasing-power-matrix"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-white/[0.07]">
           <div className="font-mono text-xs font-bold text-white flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#F59E0B] shadow-[0_0_8px_#F59E0B]" />
@@ -660,8 +812,12 @@ export function BtcBenchmarkPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10.5px] text-neutral-400 tabular-nums">
-              BTC ({windowTag} → Spot): {formatUsdPrice(summary.btcStartPrice)} → {formatUsdPrice(summary.btcEndPrice)}
+            <span
+              className="font-mono text-[10.5px] text-neutral-400 tabular-nums"
+              data-testid="btc-matrix-baseline-label"
+            >
+              BTC ({windowTag} → Spot): {formatUsdPrice(summary.btcStartPrice)} →{' '}
+              {formatUsdPrice(summary.btcEndPrice)}
             </span>
             <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px]">
               <button
@@ -673,7 +829,7 @@ export function BtcBenchmarkPanel({
                     : 'text-neutral-400 hover:text-neutral-200 border-transparent'
                 }`}
               >
-                Core (4)
+                Core ({coreMatrixRows.length})
               </button>
               <button
                 type="button"
@@ -697,48 +853,51 @@ export function BtcBenchmarkPanel({
             const btcAdjustedEndUsd = allocPerAsset * asset.btcAdjustedMult;
 
             const inner = (
-              <div className="flex flex-col gap-2 font-mono text-xs">
+              <div className="flex flex-col gap-2.5 font-mono text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
-                      className="w-2 h-2 rounded-full shrink-0"
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: asset.color }}
                     />
-                    <span className="font-bold text-white truncate">{asset.name}</span>
-                    <span className="text-[10.5px] text-neutral-500 shrink-0">
-                      ({asset.ticker}{asset.grade !== 'INDEX' ? ` · ${asset.grade}` : ''})
+                    <span className="text-[13px] font-bold text-white truncate">{asset.name}</span>
+                    <span className="text-[11px] text-neutral-500 shrink-0">
+                      ({asset.ticker}
+                      {asset.grade !== 'INDEX' ? ` · ${asset.grade}` : ''})
                     </span>
                     {asset.windowNote && (
-                      <span className="text-[9.5px] text-neutral-500 hidden sm:inline shrink-0">
+                      <span className="text-[10px] text-neutral-500 hidden sm:inline shrink-0">
                         · {asset.windowNote}
                       </span>
                     )}
                   </div>
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 whitespace-nowrap tabular-nums ${
+                    className={`px-3 py-1 rounded-full text-xs font-bold border shrink-0 whitespace-nowrap tabular-nums ${
                       asset.beatsBtc
                         ? 'bg-[#34D399]/12 text-[#34D399] border-[#34D399]/35'
                         : 'bg-[#F97316]/12 text-[#F97316] border-[#F97316]/35'
                     }`}
                   >
-                    {asset.beatsBtc ? 'Beats BTC' : 'Lags BTC'} ({formatPctSigned(asset.btcAdjustedPct)})
+                    {asset.beatsBtc ? 'Beats BTC' : 'Lags BTC'} (
+                    {formatPctSigned(asset.btcAdjustedPct)})
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
                   <span className="text-neutral-400 tabular-nums">
                     {formatMatrixPrice(asset.startPrice, asset.isIndexPoints)} →{' '}
                     <strong className="text-neutral-200">
                       {formatMatrixPrice(asset.currentPrice, asset.isIndexPoints)}
                     </strong>
                   </span>
-                  <div className="flex items-center gap-2 tabular-nums">
+                  <div className="flex items-center gap-1.5 tabular-nums">
                     <span style={{ color: asset.color }} className="font-bold">
                       Nominal {formatPctSigned(asset.nominalPct)}
                     </span>
                     <span className="text-neutral-500">•</span>
                     <span className="text-neutral-300">
-                      ${allocPerAsset.toLocaleString()} → {formatBasketUsd(nominalEndUsd)} ({formatBasketUsd(btcAdjustedEndUsd)} vs BTC)
+                      ${allocPerAsset.toLocaleString()} → {formatSimOutcomeUsd(nominalEndUsd)} (
+                      {formatSimOutcomeUsd(btcAdjustedEndUsd)} vs BTC)
                     </span>
                   </div>
                 </div>
@@ -750,14 +909,14 @@ export function BtcBenchmarkPanel({
                 key={asset.id}
                 type="button"
                 onClick={() => onSelectOrAuditTicker(asset.auditTicker!)}
-                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.07] hover:border-[#F59E0B]/35 p-3 transition-colors duration-150"
+                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.07] hover:border-[#F59E0B]/35 p-3.5 transition-colors duration-150"
               >
                 {inner}
               </button>
             ) : (
               <div
                 key={asset.id}
-                className="w-full text-left rounded-xl bg-[#121418] border border-white/[0.07] p-3"
+                className="w-full text-left rounded-xl bg-[#121418] border border-white/[0.07] p-3.5"
               >
                 {inner}
               </div>

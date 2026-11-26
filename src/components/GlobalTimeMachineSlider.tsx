@@ -19,6 +19,8 @@ interface GlobalTimeMachineSliderProps {
   onInteract?: () => void;
   accent: GradeAccent;
   disabled?: boolean;
+  testIdPrefix?: string;
+  omitTutorialId?: boolean;
 }
 
 const HOLD_POPUP_DELAY_MS = 220;
@@ -28,7 +30,9 @@ export function GlobalTimeMachineSlider({
   onChange,
   onInteract,
   accent,
-  disabled = false
+  disabled = false,
+  testIdPrefix,
+  omitTutorialId = false
 }: GlobalTimeMachineSliderProps) {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const pointerStartXRef = useRef<number | null>(null);
@@ -96,7 +100,8 @@ export function GlobalTimeMachineSlider({
     if (disabled || e.button !== 0) return;
     onInteract?.();
     const targetEl = e.target as HTMLElement | null;
-    const startedOnThumb = Boolean(targetEl?.closest('[data-testid="time-machine-thumb-btn"]'));
+    const thumbTestId = testIdPrefix ? `${testIdPrefix}-thumb-btn` : 'time-machine-thumb-btn';
+    const startedOnThumb = Boolean(targetEl?.closest(`[data-testid="${thumbTestId}"]`));
 
     e.currentTarget.setPointerCapture?.(e.pointerId);
     pointerStartXRef.current = e.clientX;
@@ -215,10 +220,14 @@ export function GlobalTimeMachineSlider({
   const rawCaretLeftPct = firstSlotCenterPct + thumbLayerShiftPct;
   const popupCaretLeftPct = Math.max(7.5, Math.min(92.5, rawCaretLeftPct));
 
+  const rootTestId = testIdPrefix ? `${testIdPrefix}-slider` : 'global-time-machine-slider';
+  const stopTestIdBase = testIdPrefix ? `${testIdPrefix}-stop` : 'time-machine-stop';
+  const thumbTestId = testIdPrefix ? `${testIdPrefix}-thumb-btn` : 'time-machine-thumb-btn';
+
   return (
     <div
-      data-tutorial-id="time-machine"
-      data-testid="global-time-machine-slider"
+      data-tutorial-id={omitTutorialId ? undefined : 'time-machine'}
+      data-testid={rootTestId}
       data-active-year={value}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -275,7 +284,7 @@ export function GlobalTimeMachineSlider({
                 key={stop.id}
                 type="button"
                 tabIndex={-1}
-                data-testid={`time-machine-stop-${stop.id}`}
+                data-testid={`${stopTestIdBase}-${stop.id}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!disabled) {
@@ -314,7 +323,7 @@ export function GlobalTimeMachineSlider({
           <button
             type="button"
             role="slider"
-            data-testid="time-machine-thumb-btn"
+            data-testid={thumbTestId}
             aria-label="Thermodynamic Time Machine Year"
             aria-valuemin={0}
             aria-valuemax={maxIndex}

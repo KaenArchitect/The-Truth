@@ -7,8 +7,11 @@ import {
   buildM2SeriesFromBars,
   computeM2AssetSummaries,
   findM2BillionsAt,
+  formatM2SupplyLabel,
   parseFredM2Csv,
-  transformM2PointForMode
+  resolveBenchmarkSeriesForTimeline,
+  transformM2PointForMode,
+  transformM2PointNullable
 } from './m2BenchmarkData.ts';
 
 test('parseFredM2Csv parses valid FRED rows, skips missing dots, and sorts chronologically', () => {
@@ -131,3 +134,55 @@ test('DEFAULT_M2_BENCHMARK_DATASET and applyLiveSpotsToM2Dataset maintain valid 
   assert.equal(allTimeLast.kasPrice, 0.05);
   assert.ok(allTimeLast.btcMult > 3.0);
 });
+
+test('resolveBenchmarkSeriesForTimeline and computeM2AssetSummaries sync M2 baselines and Pre-Genesis gates across PRESENT, 2020, 2008, and 1971', () => {
+  assert.equal(formatM2SupplyLabel(0.0158), '$15.8B');
+  assert.equal(formatM2SupplyLabel(0.6329), '$633B');
+  assert.equal(formatM2SupplyLabel(23.41), '$23.41T');
+
+  const ptsPresent = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    'PRESENT',
+    'ALL_TIME'
+  );
+  const sumPresent = computeM2AssetSummaries(ptsPresent, 'PRESENT', 'ALL_TIME');
+  assert.equal(sumPresent.windowTag, "Jul '10 Genesis");
+  assert.ok(Math.abs(sumPresent.m2StartTrillions - 8.6224) < 0.01);
+  assert.equal(sumPresent.coreCards?.find((c) => c.key === 'BTC')?.available, true);
+  assert.equal(sumPresent.coreCards?.find((c) => c.key === 'KAS')?.windowNote, "Since May '22");
+
+  const pts2020 = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    '2020',
+    'ALL_TIME'
+  );
+  const sum2020 = computeM2AssetSummaries(pts2020, '2020', 'ALL_TIME');
+  assert.equal(sum2020.windowTag, '2020 Open');
+  assert.equal(sum2020.coreCards?.find((c) => c.key === 'KAS')?.available, false);
+  assert.equal(sum2020.coreCards?.find((c) => c.key === 'BTC')?.available, true);
+  assert.equal(sum2020.coreCards?.find((c) => c.key === 'BTC')?.startPrice, 7200);
+
+  const pts2008 = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    '2008',
+    'ALL_TIME'
+  );
+  const sum2008 = computeM2AssetSummaries(pts2008, '2008', 'ALL_TIME');
+  assert.equal(sum2008.windowTag, '2008 Open');
+  assert.equal(sum2008.coreCards?.find((c) => c.key === 'BTC')?.available, true);
+  assert.equal(sum2008.coreCards?.find((c) => c.key === 'BTC')?.startPrice, 0.05);
+
+  const pts1971 = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    '1971',
+    'ALL_TIME'
+  );
+  const sum1971 = computeM2AssetSummaries(pts1971, '1971', 'ALL_TIME');
+  assert.equal(sum1971.windowTag, '1971 Open');
+  assert.ok(Math.abs(sum1971.m2StartTrillions - 0.6329) < 0.001);
+  assert.equal(sum1971.coreCards?.find((c) => c.key === 'BTC')?.available, false);
+  assert.equal(sum1971.coreCards?.find((c) => c.key === 'KAS')?.available, false);
+  assert.equal(sum1971.coreCards?.find((c) => c.key === 'GOLD')?.startPrice, 35);
+  assert.equal(transformM2PointNullable(pts1971[0], 'REAL_DIV_M2').BTC, null);
+});
+

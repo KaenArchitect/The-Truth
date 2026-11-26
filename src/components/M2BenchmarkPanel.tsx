@@ -1,22 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildNiceYGridTicks,
-  formatBasketUsd,
   formatPctSigned,
-  formatUsdPrice
+  formatUsdPrice,
+  type GainsCohortRecord
 } from '../data/gainsCohortData.ts';
 import {
   M2_SERIES_META,
   computeM2AssetSummaries,
-  transformM2PointForMode,
+  formatM2SupplyLabel,
+  resolveBenchmarkSeriesForTimeline,
+  transformM2PointNullable,
   type M2BenchmarkDataset,
   type M2ComparisonMode,
   type M2SeriesKey,
   type MacroM2HorizonKey
 } from '../data/m2BenchmarkData.ts';
+import type { GlobalTimelineYear } from '../data/globalTimeMachine.ts';
+import { formatScore } from '../data/rubricSpec.ts';
 
 export interface M2BenchmarkPanelProps {
   horizon: MacroM2HorizonKey;
+  timelineYear?: GlobalTimelineYear;
+  cohortRecord?: GainsCohortRecord;
   useLogScale: boolean;
   onChangeLogScale: (next: boolean) => void;
   dataset: M2BenchmarkDataset;
@@ -24,40 +30,67 @@ export interface M2BenchmarkPanelProps {
   onSelectOrAuditTicker: (ticker: string) => void;
 }
 
-const HORIZON_M2_HEADING: Record<MacroM2HorizonKey, string> = {
-  ALL_TIME: "MAY '22 COMMON LAUNCH → LIVE SPOT",
-  D180: '180-DAY ROLLING WINDOW → LIVE SPOT',
-  Y1: '1-YEAR ROLLING WINDOW → LIVE SPOT',
-  Y2: '2-YEAR ROLLING WINDOW → LIVE SPOT',
-  Y4: '4-YEAR CYCLE WINDOW → LIVE SPOT'
-};
-
 const ALL_SERIES_KEYS: M2SeriesKey[] = ['KAS', 'BTC', 'GOLD', 'SPX', 'M2'];
 
 function formatMultipleCompact(mult: number): string {
   if (!Number.isFinite(mult) || mult <= 0) return '—';
+  if (mult >= 1_000_000) return `${(mult / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}Mx`;
   if (mult >= 1000) return `${(mult / 1000).toFixed(1).replace(/\.0$/, '')}Kx`;
   if (mult >= 100) return `${Math.round(mult).toLocaleString()}x`;
   if (mult >= 10) return `${mult.toFixed(1)}x`;
-  return `${mult.toFixed(2)}x`;
+  if (mult >= 0.01) return `${mult.toFixed(2)}x`;
+  if (mult < 0.0001) return '<0.0001x';
+  return `${mult.toFixed(4)}x`;
+}
+
+function formatSimOutcomeUsd(val: number): string {
+  if (!Number.isFinite(val) || val < 0) return '—';
+  if (val === 0) return '$0';
+  if (val >= 1_000_000_000_000) {
+    return `$${(val / 1_000_000_000_000).toFixed(2).replace(/\.?0+$/, '')}T`;
+  }
+  if (val >= 1_000_000_000) {
+    return `$${(val / 1_000_000_000).toFixed(2).replace(/\.?0+$/, '')}B`;
+  }
+  if (val >= 1_000_000) {
+    return `$${(val / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  }
+  if (val >= 10_000) {
+    return `$${(val / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  if (val >= 1) {
+    return `$${Math.round(val).toLocaleString()}`;
+  }
+  if (val >= 0.1) {
+    return `$${val.toFixed(2)}`;
+  }
+  if (val >= 0.01) {
+    return `$${val.toFixed(3)}`;
+  }
+  if (val >= 0.0001) {
+    return `$${val.toFixed(4)}`;
+  }
+  return '<$0.0001';
 }
 
 function formatIndexValue(seriesKey: M2SeriesKey, val: number): string {
   if (seriesKey === 'SPX') {
-    return val.toLocaleString(undefined, { maximumFractionDigits: 0 });
+    return val.toLocaleString(undefined, { maximumFractionDigits: val < 100 ? 1 : 0 });
   }
   return formatUsdPrice(val);
 }
 
 export function M2BenchmarkPanel({
   horizon,
+  timelineYear = 'PRESENT',
+  cohortRecord,
   useLogScale,
   onChangeLogScale,
   dataset,
   allocPerAsset,
   onSelectOrAuditTicker
 }: M2BenchmarkPanelProps) {
-  const [comparisonMode, setComparisonMode] = useState<M2ComparisonMode>('INDEXED');
+  const [comparisonMode, setComparisonMode] = useState<M2ComparisonMode>('REAL_DIV_M2');
   const [visibleSeries, setVisibleSeries] = useState<Record<M2SeriesKey, boolean>>({
     KAS: true,
     BTC: true,
@@ -71,7 +104,7 @@ export function M2BenchmarkPanel({
 
   useEffect(() => {
     setHoverIdx(null);
-  }, [horizon, comparisonMode]);
+  }, [horizon, timelineYear, comparisonMode]);
 
   useEffect(() => {
     const el = boxRef.current;
@@ -91,17 +124,20 @@ export function M2BenchmarkPanel({
   }, []);
 
   const rawPoints = useMemo(
-    () => dataset.seriesByHorizon[horizon] || dataset.seriesByHorizon.ALL_TIME,
-    [dataset, horizon]
+    () => resolveBenchmarkSeriesForTimeline(dataset, timelineYear, horizon),
+    [dataset, timelineYear, horizon]
   );
 
-  const summary = useMemo(() => computeM2AssetSummaries(rawPoints), [rawPoints]);
+  const summary = useMemo(
+    () => computeM2AssetSummaries(rawPoints, timelineYear, horizon),
+    [rawPoints, timelineYear, horizon]
+  );
 
   const seriesData = useMemo(
     () =>
       rawPoints.map((pt) => ({
         raw: pt,
-        vals: transformM2PointForMode(pt, comparisonMode)
+        vals: transformM2PointNullable(pt, comparisonMode)
       })),
     [rawPoints, comparisonMode]
   );
@@ -113,7 +149,7 @@ export function M2BenchmarkPanel({
   const activePoint = seriesData[activeIdx] || seriesData[0];
 
   const svgH = 264;
-  const padL = horizon === 'ALL_TIME' && visibleSeries.KAS && useLogScale ? 58 : 56;
+  const padL = (horizon === 'ALL_TIME' || timelineYear !== 'PRESENT') && useLogScale ? 64 : 58;
   const padR = 20;
   const padT = 20;
   const padB = 34;
@@ -122,7 +158,10 @@ export function M2BenchmarkPanel({
 
   const activeKeys = ALL_SERIES_KEYS.filter((k) => visibleSeries[k]);
   const allPlotVals = seriesData.flatMap((d) =>
-    activeKeys.map((k) => d.vals[k]).concat([1.0])
+    activeKeys
+      .map((k) => d.vals[k])
+      .filter((v): v is number => v !== null && Number.isFinite(v))
+      .concat([1.0])
   );
   const minVal = Math.max(0.04, Math.min(...allPlotVals) * 0.9);
   const maxVal = Math.max(1.05, ...allPlotVals) * 1.1;
@@ -145,12 +184,36 @@ export function M2BenchmarkPanel({
     return padT + plotH - frac * plotH;
   };
 
-  const buildPolyline = (key: M2SeriesKey) =>
-    seriesData
-      .map((d, i) => `${i === 0 ? 'M' : 'L'} ${mapX(i).toFixed(1)} ${mapY(d.vals[key]).toFixed(1)}`)
-      .join(' ');
+  const buildPolyline = (key: M2SeriesKey) => {
+    let started = false;
+    const cmds: string[] = [];
+    seriesData.forEach((d, i) => {
+      const v = d.vals[key];
+      if (v === null || !Number.isFinite(v)) {
+        started = false;
+        return;
+      }
+      cmds.push(`${started ? 'L' : 'M'} ${mapX(i).toFixed(1)} ${mapY(v).toFixed(1)}`);
+      started = true;
+    });
+    return cmds.join(' ');
+  };
 
-  const yGridTicks = buildNiceYGridTicks(minVal, maxVal, useLogScale);
+  const yGridTicks = useMemo(() => {
+    const raw = buildNiceYGridTicks(minVal, maxVal, useLogScale);
+    if (raw.length <= 6) return raw;
+    const breakeven = raw.find((t) => Math.abs(t - 1.0) < 0.001);
+    const kept: number[] = [];
+    if (breakeven !== undefined) kept.push(breakeven);
+    for (const t of raw) {
+      if (breakeven !== undefined && Math.abs(t - breakeven) < 0.001) continue;
+      const y = mapY(t);
+      if (kept.every((k) => Math.abs(mapY(k) - y) >= 22)) {
+        kept.push(t);
+      }
+    }
+    return kept.sort((a, b) => a - b);
+  }, [minVal, maxVal, useLogScale, plotH]);
 
   const toggleSeries = (key: M2SeriesKey) => {
     setVisibleSeries((prev) => {
@@ -167,72 +230,136 @@ export function M2BenchmarkPanel({
       ? 2
       : 1;
 
-  const kasSummary = summary.assets.find((a) => a.key === 'KAS');
-  const btcSummary = summary.assets.find((a) => a.key === 'BTC');
-  const goldSummary = summary.assets.find((a) => a.key === 'GOLD');
-  const spxSummary = summary.assets.find((a) => a.key === 'SPX');
+  const cohortLookup = useMemo(() => {
+    const map = new Map<string, { grade: string; score: number }>();
+    if (!cohortRecord) return map;
+    for (const p of cohortRecord.passed) {
+      map.set(p.ticker, { grade: p.grade, score: p.auditScore });
+    }
+    for (const f of cohortRecord.failed) {
+      map.set(f.ticker, { grade: f.grade, score: f.auditScore });
+    }
+    return map;
+  }, [cohortRecord]);
+
+  const cardsSource = summary.coreCards || summary.assets;
+  const kasSummary = cardsSource.find((a) => a.key === 'KAS');
+  const btcSummary = cardsSource.find((a) => a.key === 'BTC');
+  const goldSummary = cardsSource.find((a) => a.key === 'GOLD');
+  const spxSummary = cardsSource.find((a) => a.key === 'SPX');
+
+  const kasMeta = cohortLookup.get('KAS');
+  const btcMeta = cohortLookup.get('BTC');
+  const goldMeta = cohortLookup.get('XAU');
+
+  const headingLabel = summary.headingLabel || "ALL-TIME GENESIS (JUL '10) → LIVE SPOT";
+  const windowTag = summary.windowTag || "Jul '10 Genesis";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5" data-testid="m2-benchmark-panel" data-timeline-year={timelineYear}>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           {
             title: 'KASPA ($KAS) VS. M2',
-            badge: 'A+ • 6.0',
+            badge: kasMeta ? `${kasMeta.grade} • ${formatScore(kasMeta.score)}` : 'A+ • 6.0',
             item: kasSummary,
             accent: '#49EACB',
             grad: 'linear-gradient(135deg, #49EACB 0%, #34D399 100%)'
           },
           {
             title: 'BITCOIN ($BTC) VS. M2',
-            badge: 'B+ • 4.4',
+            badge: btcMeta ? `${btcMeta.grade} • ${formatScore(btcMeta.score)}` : 'B+ • 4.4',
             item: btcSummary,
             accent: '#F59E0B',
             grad: 'linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%)'
           },
           {
             title: 'GOLD ($XAU) VS. M2',
-            badge: 'B • 4.1',
+            badge: goldMeta ? `${goldMeta.grade} • ${formatScore(goldMeta.score)}` : 'B • 4.1',
             item: goldSummary,
             accent: '#FACC15',
             grad: 'linear-gradient(135deg, #FEF08A 0%, #EAB308 100%)'
           }
         ].map((card) => {
           const item = card.item;
+          const isUnavailable = item?.available === false;
           return (
             <div
               key={card.title}
-              className="rounded-2xl bg-[#0B0C0E] p-4 space-y-1 min-w-0 overflow-hidden border"
-              style={{ borderColor: `${card.accent}40` }}
+              className={`rounded-2xl bg-[#0B0C0E] p-4 space-y-1 min-w-0 overflow-hidden border ${
+                isUnavailable ? 'opacity-70' : ''
+              }`}
+              style={{ borderColor: isUnavailable ? 'rgba(255,255,255,0.08)' : `${card.accent}40` }}
             >
               <div
                 className="font-mono text-[10px] uppercase tracking-wider flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5"
-                style={{ color: card.accent }}
+                style={{ color: isUnavailable ? '#9CA3AF' : card.accent }}
               >
                 <span>{card.title}</span>
-                <span className="shrink-0 opacity-85">{card.badge}</span>
-              </div>
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span
-                  className="font-display text-2xl sm:text-3xl font-bold leading-tight"
-                  style={{
-                    backgroundImage: card.grad,
-                    WebkitBackgroundClip: 'text',
-                    WebkitTextFillColor: 'transparent'
-                  }}
-                >
-                  {formatPctSigned(item?.nominalPct ?? null)}
-                </span>
-                <span className="font-mono text-xs text-neutral-400 whitespace-nowrap">
-                  ({formatMultipleCompact(item?.nominalMult ?? 0)})
+                <span className="shrink-0 opacity-85">
+                  {isUnavailable ? 'N/A' : card.badge}
                 </span>
               </div>
-              <div className="font-mono text-[11px] text-neutral-300 leading-snug">
-                <span className={item?.beatsM2 ? 'text-[#34D399] font-semibold' : 'text-[#F97316] font-semibold'}>
-                  {formatPctSigned(item?.m2AdjustedPct ?? null)} vs M2
-                </span>{' '}
-                • Real {formatMultipleCompact(item?.m2AdjustedMult ?? 0)}
-              </div>
+              {isUnavailable ? (
+                <>
+                  <div className="font-display text-xl sm:text-2xl font-bold text-neutral-500 leading-tight">
+                    Pre-Genesis
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-500 leading-snug">
+                    {item?.launchNote || `Not yet launched in ${timelineYear}`}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span
+                      className="font-display text-2xl sm:text-3xl font-bold leading-tight tabular-nums"
+                      style={{
+                        backgroundImage: card.grad,
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent'
+                      }}
+                    >
+                      {formatPctSigned(item?.m2AdjustedPct ?? null)}
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-semibold whitespace-nowrap tabular-nums ${
+                        item?.beatsM2 ? 'text-[#34D399]' : 'text-[#F97316]'
+                      }`}
+                    >
+                      ({formatMultipleCompact(item?.m2AdjustedMult ?? 0)} real)
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] text-neutral-400 leading-snug tabular-nums">
+                    <span className="text-neutral-200 font-semibold">
+                      {formatPctSigned(item?.nominalPct ?? null)} in USD
+                    </span>{' '}
+                    • {formatMultipleCompact(item?.nominalMult ?? 0)}
+                    {item?.windowNote ? (
+                      <span className="whitespace-nowrap">
+                        {' '}
+                        · {item.windowNote.replace(/^Since\s+/i, '')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div
+                    className="pt-1.5 mt-1 border-t border-white/[0.06] font-mono text-[10.5px] xl:text-[11px] flex flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 tabular-nums"
+                    data-testid="m2-kpi-sim-outcome"
+                  >
+                    <span className="text-neutral-200 font-semibold whitespace-nowrap">
+                      ${allocPerAsset.toLocaleString()} →{' '}
+                      {formatSimOutcomeUsd(allocPerAsset * (item?.nominalMult ?? 0))}
+                    </span>
+                    <span
+                      className={`font-semibold whitespace-nowrap ${
+                        item?.beatsM2 ? 'text-[#34D399]' : 'text-[#F97316]'
+                      }`}
+                    >
+                      ({formatSimOutcomeUsd(allocPerAsset * (item?.m2AdjustedMult ?? 0))} real)
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
@@ -240,30 +367,56 @@ export function M2BenchmarkPanel({
         <div className="rounded-2xl bg-[#0B0C0E] border border-[#60A5FA]/35 p-4 space-y-1 min-w-0 overflow-hidden">
           <div className="font-mono text-[10px] uppercase tracking-wider text-[#60A5FA] flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
             <span>S&amp;P 500 VS. US M2</span>
-            <span className="shrink-0 text-neutral-400">
+            <span className="shrink-0 text-neutral-400 tabular-nums">
               M2 {formatPctSigned(summary.m2Pct)}
             </span>
           </div>
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span
-              className="font-display text-2xl sm:text-3xl font-bold leading-tight"
+              className="font-display text-2xl sm:text-3xl font-bold leading-tight tabular-nums"
               style={{
                 backgroundImage: 'linear-gradient(135deg, #93C5FD 0%, #60A5FA 100%)',
                 WebkitBackgroundClip: 'text',
                 WebkitTextFillColor: 'transparent'
               }}
             >
-              {formatPctSigned(spxSummary?.nominalPct ?? null)}
+              {formatPctSigned(spxSummary?.m2AdjustedPct ?? null)}
             </span>
-            <span className="font-mono text-xs text-neutral-400 whitespace-nowrap">
-              (${summary.m2StartTrillions.toFixed(1)}T→${summary.m2EndTrillions.toFixed(1)}T M2)
+            <span
+              className={`font-mono text-xs font-semibold whitespace-nowrap tabular-nums ${
+                spxSummary?.beatsM2 ? 'text-[#34D399]' : 'text-[#F97316]'
+              }`}
+            >
+              ({formatMultipleCompact(spxSummary?.m2AdjustedMult ?? 0)} real)
             </span>
           </div>
-          <div className="font-mono text-[11px] text-neutral-300 leading-snug">
-            <span className={spxSummary?.beatsM2 ? 'text-[#34D399] font-semibold' : 'text-[#F97316] font-semibold'}>
-              {formatPctSigned(spxSummary?.m2AdjustedPct ?? null)} vs M2
+          <div className="font-mono text-[11px] text-neutral-400 leading-snug tabular-nums">
+            <span className="text-neutral-200 font-semibold">
+              {formatPctSigned(spxSummary?.nominalPct ?? null)} in USD
             </span>{' '}
-            • Real {formatMultipleCompact(spxSummary?.m2AdjustedMult ?? 0)}
+            • {formatMultipleCompact(spxSummary?.nominalMult ?? 0)}
+            {spxSummary?.windowNote ? (
+              <span className="whitespace-nowrap">
+                {' '}
+                · {spxSummary.windowNote.replace(/^Since\s+/i, '')}
+              </span>
+            ) : null}
+          </div>
+          <div
+            className="pt-1.5 mt-1 border-t border-white/[0.06] font-mono text-[10.5px] xl:text-[11px] flex flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 tabular-nums"
+            data-testid="m2-kpi-sim-outcome"
+          >
+            <span className="text-neutral-200 font-semibold whitespace-nowrap">
+              ${allocPerAsset.toLocaleString()} →{' '}
+              {formatSimOutcomeUsd(allocPerAsset * (spxSummary?.nominalMult ?? 0))}
+            </span>
+            <span
+              className={`font-semibold whitespace-nowrap ${
+                spxSummary?.beatsM2 ? 'text-[#34D399]' : 'text-[#F97316]'
+              }`}
+            >
+              ({formatSimOutcomeUsd(allocPerAsset * (spxSummary?.m2AdjustedMult ?? 0))} real)
+            </span>
           </div>
         </div>
       </div>
@@ -272,32 +425,32 @@ export function M2BenchmarkPanel({
         <div className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 min-h-[28px]">
             <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-400 leading-tight">
-              BTC • KAS • S&amp;P 500 • GOLD VS. US M2 MONEY SUPPLY ({HORIZON_M2_HEADING[horizon]})
+              BTC • KAS • S&amp;P 500 • GOLD VS. US M2 MONEY SUPPLY ({headingLabel})
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
               <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px]">
                 <button
                   type="button"
-                  onClick={() => setComparisonMode('INDEXED')}
-                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
-                    comparisonMode === 'INDEXED'
-                      ? 'bg-[#1D212A] text-white border-white/15'
-                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                  }`}
-                >
-                  Indexed vs M2
-                </button>
-                <button
-                  type="button"
                   onClick={() => setComparisonMode('REAL_DIV_M2')}
-                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
+                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
                     comparisonMode === 'REAL_DIV_M2'
                       ? 'bg-[#49EACB]/15 text-[#49EACB] border-[#49EACB]/35'
                       : 'text-neutral-400 hover:text-neutral-200 border-transparent'
                   }`}
                 >
                   Deflated ÷ M2
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComparisonMode('INDEXED')}
+                  className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
+                    comparisonMode === 'INDEXED'
+                      ? 'bg-[#1D212A] text-white border-white/15'
+                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                  }`}
+                >
+                  Indexed in USD
                 </button>
               </div>
 
@@ -333,31 +486,35 @@ export function M2BenchmarkPanel({
               <span className="text-white font-bold">
                 [{activePoint.raw.label} — {activePoint.raw.event}]
               </span>
-              {visibleSeries.KAS && (
+              {visibleSeries.KAS && activePoint.vals.KAS !== null && (
                 <span className="text-[#49EACB] font-semibold">
-                  KAS: {formatPctSigned((activePoint.vals.KAS - 1) * 100)} ({formatMultipleCompact(activePoint.vals.KAS)})
+                  KAS: {formatPctSigned((activePoint.vals.KAS - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.KAS)})
                 </span>
               )}
-              {visibleSeries.BTC && (
+              {visibleSeries.BTC && activePoint.vals.BTC !== null && (
                 <span className="text-[#F59E0B] font-semibold">
-                  BTC: {formatPctSigned((activePoint.vals.BTC - 1) * 100)} ({formatMultipleCompact(activePoint.vals.BTC)})
+                  BTC: {formatPctSigned((activePoint.vals.BTC - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.BTC)})
                 </span>
               )}
-              {visibleSeries.GOLD && (
+              {visibleSeries.GOLD && activePoint.vals.GOLD !== null && (
                 <span className="text-[#FACC15] font-semibold">
-                  Gold: {formatPctSigned((activePoint.vals.GOLD - 1) * 100)} ({formatMultipleCompact(activePoint.vals.GOLD)})
+                  Gold: {formatPctSigned((activePoint.vals.GOLD - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.GOLD)})
                 </span>
               )}
-              {visibleSeries.SPX && (
+              {visibleSeries.SPX && activePoint.vals.SPX !== null && (
                 <span className="text-[#60A5FA] font-semibold">
-                  S&amp;P 500: {formatPctSigned((activePoint.vals.SPX - 1) * 100)} ({formatMultipleCompact(activePoint.vals.SPX)})
+                  S&amp;P 500: {formatPctSigned((activePoint.vals.SPX - 1) * 100)} (
+                  {formatMultipleCompact(activePoint.vals.SPX)})
                 </span>
               )}
-              {visibleSeries.M2 && (
+              {visibleSeries.M2 && activePoint.vals.M2 !== null && (
                 <span className="text-neutral-300">
                   {comparisonMode === 'REAL_DIV_M2'
-                    ? `M2 Base: 1.00x ($${activePoint.raw.m2Trillions.toFixed(2)}T)`
-                    : `US M2: ${formatPctSigned((activePoint.vals.M2 - 1) * 100)} ($${activePoint.raw.m2Trillions.toFixed(2)}T)`}
+                    ? `M2 Base: 1.00x (${formatM2SupplyLabel(activePoint.raw.m2Trillions)})`
+                    : `US M2: ${formatPctSigned((activePoint.vals.M2 - 1) * 100)} (${formatM2SupplyLabel(activePoint.raw.m2Trillions)})`}
                 </span>
               )}
             </div>
@@ -398,7 +555,9 @@ export function M2BenchmarkPanel({
                     fontSize="9.5"
                     fontFamily="JetBrains Mono, monospace"
                   >
-                    {tickVal >= 1_000
+                    {tickVal >= 1_000_000
+                      ? `${(tickVal / 1_000_000).toFixed(tickVal % 1_000_000 === 0 ? 0 : 1)}Mx`
+                      : tickVal >= 1_000
                       ? `${(tickVal / 1_000).toFixed(0)}Kx`
                       : tickVal >= 2
                       ? `${Number(tickVal.toFixed(1)).toString().replace(/\.0$/, '')}x`
@@ -408,7 +567,7 @@ export function M2BenchmarkPanel({
               );
             })}
 
-            {visibleSeries.M2 && (
+            {visibleSeries.M2 && buildPolyline('M2') && (
               <path
                 d={buildPolyline('M2')}
                 fill="none"
@@ -419,7 +578,7 @@ export function M2BenchmarkPanel({
               />
             )}
 
-            {visibleSeries.SPX && (
+            {visibleSeries.SPX && buildPolyline('SPX') && (
               <path
                 d={buildPolyline('SPX')}
                 fill="none"
@@ -429,7 +588,7 @@ export function M2BenchmarkPanel({
               />
             )}
 
-            {visibleSeries.GOLD && (
+            {visibleSeries.GOLD && buildPolyline('GOLD') && (
               <path
                 d={buildPolyline('GOLD')}
                 fill="none"
@@ -439,7 +598,7 @@ export function M2BenchmarkPanel({
               />
             )}
 
-            {visibleSeries.BTC && (
+            {visibleSeries.BTC && buildPolyline('BTC') && (
               <path
                 d={buildPolyline('BTC')}
                 fill="none"
@@ -449,7 +608,7 @@ export function M2BenchmarkPanel({
               />
             )}
 
-            {visibleSeries.KAS && (
+            {visibleSeries.KAS && buildPolyline('KAS') && (
               <path
                 d={buildPolyline('KAS')}
                 fill="none"
@@ -482,12 +641,13 @@ export function M2BenchmarkPanel({
 
                   {(isActive || isLast) &&
                     (['M2', 'SPX', 'GOLD', 'BTC', 'KAS'] as M2SeriesKey[]).map((key) => {
-                      if (!visibleSeries[key]) return null;
+                      const val = pt.vals[key];
+                      if (!visibleSeries[key] || val === null || !Number.isFinite(val)) return null;
                       return (
                         <circle
                           key={key}
                           cx={x}
-                          cy={mapY(pt.vals[key])}
+                          cy={mapY(val)}
                           r={isActive ? 4.5 : 3}
                           fill="#0B0C0E"
                           stroke={M2_SERIES_META[key].color}
@@ -531,14 +691,18 @@ export function M2BenchmarkPanel({
             {ALL_SERIES_KEYS.map((key) => {
               const meta = M2_SERIES_META[key];
               const isOn = visibleSeries[key];
-              const latestVal = seriesData[seriesData.length - 1]?.vals[key] ?? 1;
+              const latestVal = seriesData[seriesData.length - 1]?.vals[key] ?? null;
+              const isPreGenesis = latestVal === null;
               return (
                 <button
                   key={key}
                   type="button"
+                  disabled={isPreGenesis}
                   onClick={() => toggleSeries(key)}
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors duration-150 ${
-                    isOn
+                    isPreGenesis
+                      ? 'bg-[#0B0C0E] text-neutral-600 border-white/[0.04] opacity-50 cursor-not-allowed'
+                      : isOn
                       ? 'bg-[#121418] text-neutral-100 border-white/15'
                       : 'bg-[#0B0C0E] text-neutral-500 border-white/[0.06] opacity-60'
                   }`}
@@ -553,9 +717,15 @@ export function M2BenchmarkPanel({
                         : { backgroundColor: meta.color }
                     }
                   />
-                  <span style={{ color: isOn ? meta.color : undefined }}>{meta.ticker}</span>
-                  <span className="text-neutral-400">
-                    ({formatPctSigned((latestVal - 1) * 100)})
+                  <span style={{ color: isOn && !isPreGenesis ? meta.color : undefined }}>
+                    {meta.ticker}
+                  </span>
+                  <span className="text-neutral-400 tabular-nums">
+                    {isPreGenesis
+                      ? '(Pre-Genesis)'
+                      : key === 'M2' && comparisonMode === 'REAL_DIV_M2'
+                      ? '(1.00x Base)'
+                      : `(${formatPctSigned((latestVal - 1) * 100)})`}
                   </span>
                 </button>
               );
@@ -567,14 +737,23 @@ export function M2BenchmarkPanel({
         </div>
       </div>
 
-      <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-3">
+      <div
+        className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-3"
+        data-testid="m2-purchasing-power-matrix"
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-white/[0.07]">
           <div className="font-mono text-xs font-bold text-white flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
-            <span>PURCHASING POWER MATRIX VS. US M2 EXPANSION ({formatPctSigned(summary.m2Pct)})</span>
+            <span>
+              PURCHASING POWER MATRIX VS. US M2 EXPANSION ({formatPctSigned(summary.m2Pct)})
+            </span>
           </div>
-          <span className="font-mono text-[10.5px] text-neutral-400">
-            FRED M2SL: ${summary.m2StartTrillions.toFixed(2)}T → ${summary.m2EndTrillions.toFixed(2)}T
+          <span
+            className="font-mono text-[10.5px] text-neutral-400 tabular-nums"
+            data-testid="m2-matrix-baseline-label"
+          >
+            FRED M2SL ({windowTag} → Spot): {formatM2SupplyLabel(summary.m2StartTrillions)} →{' '}
+            {formatM2SupplyLabel(summary.m2EndTrillions)}
           </span>
         </div>
 
@@ -582,22 +761,31 @@ export function M2BenchmarkPanel({
           {summary.assets.map((asset) => {
             const canAudit = asset.key === 'KAS' || asset.key === 'BTC' || asset.key === 'GOLD';
             const auditTicker = asset.key === 'GOLD' ? 'XAU' : asset.ticker;
+            const foundMeta = canAudit ? cohortLookup.get(auditTicker) : undefined;
             const nominalEndUsd = allocPerAsset * asset.nominalMult;
             const realM2EndUsd = allocPerAsset * asset.m2AdjustedMult;
 
             const inner = (
-              <div className="flex flex-col gap-2 font-mono text-xs">
+              <div className="flex flex-col gap-2.5 font-mono text-xs">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span
-                      className="w-2 h-2 rounded-full shrink-0"
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
                       style={{ backgroundColor: asset.color }}
                     />
-                    <span className="font-bold text-white">{asset.name}</span>
-                    <span className="text-[10.5px] text-neutral-500">({asset.ticker})</span>
+                    <span className="text-[13px] font-bold text-white truncate">{asset.name}</span>
+                    <span className="text-[11px] text-neutral-500 shrink-0">
+                      ({asset.ticker}
+                      {foundMeta ? ` · ${foundMeta.grade}` : ''})
+                    </span>
+                    {asset.windowNote && (
+                      <span className="text-[10px] text-neutral-500 hidden sm:inline shrink-0">
+                        · {asset.windowNote}
+                      </span>
+                    )}
                   </div>
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    className={`px-3 py-1 rounded-full text-xs font-bold border shrink-0 whitespace-nowrap tabular-nums ${
                       asset.beatsM2
                         ? 'bg-[#34D399]/12 text-[#34D399] border-[#34D399]/35'
                         : 'bg-[#F97316]/12 text-[#F97316] border-[#F97316]/35'
@@ -607,20 +795,21 @@ export function M2BenchmarkPanel({
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                  <span className="text-neutral-400">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px]">
+                  <span className="text-neutral-400 tabular-nums">
                     {formatIndexValue(asset.key, asset.startPrice)} →{' '}
                     <strong className="text-neutral-200">
                       {formatIndexValue(asset.key, asset.currentPrice)}
                     </strong>
                   </span>
-                  <div className="flex items-center gap-2 tabular-nums">
+                  <div className="flex items-center gap-1.5 tabular-nums">
                     <span style={{ color: asset.color }} className="font-bold">
                       Nominal {formatPctSigned(asset.nominalPct)}
                     </span>
                     <span className="text-neutral-500">•</span>
                     <span className="text-neutral-300">
-                      ${allocPerAsset.toLocaleString()} → {formatBasketUsd(nominalEndUsd)} ({formatBasketUsd(realM2EndUsd)} real)
+                      ${allocPerAsset.toLocaleString()} → {formatSimOutcomeUsd(nominalEndUsd)} (
+                      {formatSimOutcomeUsd(realM2EndUsd)} real)
                     </span>
                   </div>
                 </div>
@@ -632,14 +821,14 @@ export function M2BenchmarkPanel({
                 key={asset.key}
                 type="button"
                 onClick={() => onSelectOrAuditTicker(auditTicker)}
-                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.07] hover:border-[#49EACB]/35 p-3 transition-colors duration-150"
+                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.07] hover:border-[#49EACB]/35 p-3.5 transition-colors duration-150"
               >
                 {inner}
               </button>
             ) : (
               <div
                 key={asset.key}
-                className="w-full text-left rounded-xl bg-[#121418] border border-white/[0.07] p-3"
+                className="w-full text-left rounded-xl bg-[#121418] border border-white/[0.07] p-3.5"
               >
                 {inner}
               </div>

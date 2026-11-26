@@ -6,6 +6,7 @@ import {
   MOBILE_TUTORIAL_STEPS,
   TUTORIAL_STEPS,
   TUTORIAL_STORAGE_KEY,
+  buildCleanHomeUrl,
   buildSpotlightCutoutPath,
   clampTutorialStepIndex,
   computeMobileScrollTargetY,
@@ -227,3 +228,14 @@ test('computeMobileScrollTargetY keeps header, time-machine, mystery-beacon, cen
   const failedPaddedTop = 1280 - failedScrollY - 10;
   assert.ok(failedPaddedTop > 220);
 });
+
+test('buildCleanHomeUrl strips asset, compare, modal, and timeline deep-link params while preserving neutral flags', () => {
+  assert.equal(buildCleanHomeUrl('/', ''), '/');
+  assert.equal(buildCleanHomeUrl('/', '?asset=BTC&year=2016&mode=GENIUS'), '/');
+  assert.equal(buildCleanHomeUrl('/', '?compare=BTC,ETH&gains=1&archive=1'), '/');
+  assert.equal(
+    buildCleanHomeUrl('/', '?asset=BTC&autostart=1&year=2016'),
+    '/?autostart=1'
+  );
+});
+

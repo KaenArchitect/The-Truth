@@ -29,6 +29,14 @@ export interface M2ChartPoint {
   ethPrice?: number;
   spxPrice: number;
   goldPrice: number;
+  kasActive?: boolean;
+  btcActive?: boolean;
+  ethActive?: boolean;
+  kasStartBtcPrice?: number;
+  ethStartBtcPrice?: number;
+  kasStartM2Trillions?: number;
+  btcStartM2Trillions?: number;
+  ethStartM2Trillions?: number;
 }
 
 export interface M2SeriesMeta {
@@ -78,6 +86,9 @@ export interface M2AssetSummary {
   ticker: string;
   name: string;
   color: string;
+  available?: boolean;
+  windowNote?: string;
+  launchNote?: string;
   startPrice: number;
   currentPrice: number;
   nominalMult: number;
@@ -92,7 +103,10 @@ export interface M2HorizonSummary {
   m2EndTrillions: number;
   m2Mult: number;
   m2Pct: number;
+  windowTag?: string;
+  headingLabel?: string;
   assets: M2AssetSummary[];
+  coreCards?: M2AssetSummary[];
 }
 
 export interface M2BenchmarkDataset {
@@ -101,12 +115,32 @@ export interface M2BenchmarkDataset {
   isLive: boolean;
   latestM2Trillions: number;
   latestM2Date: string;
+  spots?: {
+    btc: number;
+    kas: number;
+    eth: number;
+    spx: number;
+    gold: number;
+  };
   seriesByHorizon: Record<MacroM2HorizonKey, M2ChartPoint[]>;
 }
 
+export const BTC_GENESIS_JUL10_PRICE = 0.05;
+export const BTC_GENESIS_JUL10_MS = Date.UTC(2010, 6, 18, 0, 0, 0);
 export const KAS_GENESIS_MAY22_PRICE = 0.0001859;
 export const KAS_GENESIS_MAY22_MS = Date.UTC(2022, 4, 30, 0, 0, 0);
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function formatM2SupplyLabel(trillions: number): string {
+  if (!Number.isFinite(trillions) || trillions <= 0) return '—';
+  if (trillions < 0.1) {
+    return `$${(trillions * 1000).toFixed(1)}B`;
+  }
+  if (trillions < 1.0) {
+    return `$${Math.round(trillions * 1000)}B`;
+  }
+  return `$${trillions.toFixed(2)}T`;
+}
 
 export function parseFredM2Csv(csvText: string): FredM2Row[] {
   if (!csvText || typeof csvText !== 'string') return [];
@@ -375,8 +409,34 @@ export function applyLiveSpotsToM2Dataset(
     updatedSeries[key] = [...arr.slice(0, -1), nextLast];
   }
 
+  const allTimeArr = updatedSeries.ALL_TIME;
+  const terminalPt =
+    allTimeArr && allTimeArr.length > 0 ? allTimeArr[allTimeArr.length - 1] : null;
+
   return {
     ...dataset,
+    spots: {
+      btc:
+        Number.isFinite(btcSpot) && btcSpot > 0
+          ? btcSpot
+          : dataset.spots?.btc ?? terminalPt?.btcPrice ?? 63004,
+      kas:
+        Number.isFinite(kasSpot) && kasSpot > 0
+          ? kasSpot
+          : dataset.spots?.kas ?? terminalPt?.kasPrice ?? 0.02725,
+      eth:
+        Number.isFinite(ethSpot) && ethSpot > 0
+          ? ethSpot
+          : dataset.spots?.eth ?? terminalPt?.ethPrice ?? 1782.23,
+      gold:
+        Number.isFinite(goldSpot) && goldSpot > 0
+          ? goldSpot
+          : dataset.spots?.gold ?? terminalPt?.goldPrice ?? 3778,
+      spx:
+        Number.isFinite(spxSpot) && spxSpot > 0
+          ? spxSpot
+          : dataset.spots?.spx ?? terminalPt?.spxPrice ?? 7322
+    },
     seriesByHorizon: updatedSeries
   };
 }
@@ -387,9 +447,17 @@ export function transformM2PointForMode(
 ): Record<M2SeriesKey, number> {
   if (mode === 'REAL_DIV_M2') {
     const denom = Math.max(0.05, pt.m2Mult);
+    const kasDenom =
+      pt.kasStartM2Trillions && pt.kasStartM2Trillions > 0
+        ? Math.max(0.05, pt.m2Trillions / pt.kasStartM2Trillions)
+        : denom;
+    const btcDenom =
+      pt.btcStartM2Trillions && pt.btcStartM2Trillions > 0
+        ? Math.max(0.05, pt.m2Trillions / pt.btcStartM2Trillions)
+        : denom;
     return {
-      KAS: Math.max(0.01, pt.kasMult / denom),
-      BTC: Math.max(0.01, pt.btcMult / denom),
+      KAS: Math.max(0.01, pt.kasMult / kasDenom),
+      BTC: Math.max(0.01, pt.btcMult / btcDenom),
       GOLD: Math.max(0.01, pt.goldMult / denom),
       SPX: Math.max(0.01, pt.spxMult / denom),
       M2: 1.0
@@ -404,7 +472,554 @@ export function transformM2PointForMode(
   };
 }
 
-export function computeM2AssetSummaries(points: M2ChartPoint[]): M2HorizonSummary {
+export function transformM2PointNullable(
+  pt: M2ChartPoint,
+  mode: M2ComparisonMode
+): Record<M2SeriesKey, number | null> {
+  const base = transformM2PointForMode(pt, mode);
+  return {
+    KAS: pt.kasActive === false ? null : base.KAS,
+    BTC: pt.btcActive === false ? null : base.BTC,
+    GOLD: base.GOLD,
+    SPX: base.SPX,
+    M2: base.M2
+  };
+}
+
+interface MacroHistoricalMilestone {
+  id: string;
+  year: number;
+  tsMs: number;
+  label: string;
+  event: string;
+  m2Trillions: number;
+  btcPrice: number | null;
+  kasPrice: number | null;
+  ethPrice: number | null;
+  goldPrice: number;
+  spxPrice: number;
+}
+
+const MACRO_HISTORICAL_MILESTONES: readonly MacroHistoricalMilestone[] = [
+  {
+    id: '1913',
+    year: 1913,
+    tsMs: Date.UTC(1913, 11, 23),
+    label: '1913',
+    event: '1913 Pre-Fed Classical Gold Specie Open',
+    m2Trillions: 0.0158,
+    btcPrice: null,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 20.67,
+    spxPrice: 9.5
+  },
+  {
+    id: '1944',
+    year: 1944,
+    tsMs: Date.UTC(1944, 6, 22),
+    label: '1944',
+    event: 'Bretton Woods $35/oz Accord',
+    m2Trillions: 0.106,
+    btcPrice: null,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 35.0,
+    spxPrice: 13.3
+  },
+  {
+    id: '1971',
+    year: 1971,
+    tsMs: Date.UTC(1971, 7, 15),
+    label: '1971',
+    event: '1971 Bretton Woods $35/oz Window Open',
+    m2Trillions: 0.6329,
+    btcPrice: null,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 35.0,
+    spxPrice: 92.15
+  },
+  {
+    id: '1980',
+    year: 1980,
+    tsMs: Date.UTC(1980, 0, 21),
+    label: '1980',
+    event: 'Stagflation Bullion Repricing',
+    m2Trillions: 1.4827,
+    btcPrice: null,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 675.0,
+    spxPrice: 111.0
+  },
+  {
+    id: '2000',
+    year: 2000,
+    tsMs: Date.UTC(2000, 0, 3),
+    label: '2000',
+    event: '2000 Post-Bretton Woods Fiat Era Open',
+    m2Trillions: 4.6662,
+    btcPrice: null,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 277.0,
+    spxPrice: 1469
+  },
+  {
+    id: '2008',
+    year: 2008,
+    tsMs: Date.UTC(2008, 9, 31),
+    label: '2008',
+    event: '2008 GFC & Bitcoin Genesis Open',
+    m2Trillions: 7.9485,
+    btcPrice: 0.05,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 865.0,
+    spxPrice: 1411
+  },
+  {
+    id: '2010',
+    year: 2010,
+    tsMs: BTC_GENESIS_JUL10_MS,
+    label: "Jul '10",
+    event: 'BTC First Exchange Open ($0.05)',
+    m2Trillions: 8.6224,
+    btcPrice: 0.05,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 1190.0,
+    spxPrice: 1065
+  },
+  {
+    id: '2013',
+    year: 2013,
+    tsMs: Date.UTC(2013, 10, 30),
+    label: '2013',
+    event: 'First BTC Halving Cycle',
+    m2Trillions: 10.967,
+    btcPrice: 750.0,
+    kasPrice: null,
+    ethPrice: null,
+    goldPrice: 1250.0,
+    spxPrice: 1805
+  },
+  {
+    id: '2015',
+    year: 2015,
+    tsMs: Date.UTC(2015, 7, 15),
+    label: "Aug '15",
+    event: 'ETH Mainnet Launch ($2.77)',
+    m2Trillions: 12.104,
+    btcPrice: 279.0,
+    kasPrice: null,
+    ethPrice: 2.77,
+    goldPrice: 1094.0,
+    spxPrice: 2077
+  },
+  {
+    id: '2016',
+    year: 2016,
+    tsMs: Date.UTC(2016, 0, 1),
+    label: '2016',
+    event: '2016 Sequential PoW & DAO Era Open',
+    m2Trillions: 12.4902,
+    btcPrice: 434.0,
+    kasPrice: null,
+    ethPrice: 0.95,
+    goldPrice: 1061.0,
+    spxPrice: 2044
+  },
+  {
+    id: '2017',
+    year: 2017,
+    tsMs: Date.UTC(2017, 11, 15),
+    label: '2017',
+    event: '2017 ICO Boom & SegWit Era',
+    m2Trillions: 13.852,
+    btcPrice: 17600.0,
+    kasPrice: null,
+    ethPrice: 685.0,
+    goldPrice: 1255.0,
+    spxPrice: 2675
+  },
+  {
+    id: '2020',
+    year: 2020,
+    tsMs: Date.UTC(2020, 0, 1),
+    label: '2020',
+    event: '2020 DeFi & QE Surge Open',
+    m2Trillions: 15.4168,
+    btcPrice: 7200.0,
+    kasPrice: null,
+    ethPrice: 129.6,
+    goldPrice: 1517.0,
+    spxPrice: 3231
+  },
+  {
+    id: '2021',
+    year: 2021,
+    tsMs: Date.UTC(2021, 4, 15),
+    label: '2021',
+    event: 'Pandemic Liquidity Peak ($20.3T M2)',
+    m2Trillions: 20.328,
+    btcPrice: 46700.0,
+    kasPrice: null,
+    ethPrice: 3580.0,
+    goldPrice: 1843.0,
+    spxPrice: 4173
+  },
+  {
+    id: '2022',
+    year: 2022,
+    tsMs: KAS_GENESIS_MAY22_MS,
+    label: "May '22",
+    event: 'KAS Public Open ($0.0001859) & QT Cycle',
+    m2Trillions: 21.7,
+    btcPrice: 29907.0,
+    kasPrice: KAS_GENESIS_MAY22_PRICE,
+    ethPrice: 1940.0,
+    goldPrice: 1850.0,
+    spxPrice: 4109
+  },
+  {
+    id: '2024',
+    year: 2024,
+    tsMs: Date.UTC(2024, 0, 1),
+    label: '2024',
+    event: '2024 Post-Merge PoS & 1-BPS BlockDAG Open',
+    m2Trillions: 20.8417,
+    btcPrice: 42265.0,
+    kasPrice: 0.1118,
+    ethPrice: 2282.0,
+    goldPrice: 2063.0,
+    spxPrice: 4770
+  },
+  {
+    id: '2024_NOV',
+    year: 2024,
+    tsMs: Date.UTC(2024, 10, 15),
+    label: "Nov '24",
+    event: 'M2 Re-Expansion & Post-Halving Bid',
+    m2Trillions: 21.43,
+    btcPrice: 90917.0,
+    kasPrice: 0.1524,
+    ethPrice: 3207.9,
+    goldPrice: 2642.0,
+    spxPrice: 5950
+  },
+  {
+    id: '2025_MAY',
+    year: 2025,
+    tsMs: Date.UTC(2025, 4, 15),
+    label: "May '25",
+    event: 'Crescendo 10 BPS Live & Gold Surge',
+    m2Trillions: 21.84,
+    btcPrice: 101983.0,
+    kasPrice: 0.0952,
+    ethPrice: 2540.0,
+    goldPrice: 3293.0,
+    spxPrice: 5909
+  },
+  {
+    id: '2025_NOV',
+    year: 2025,
+    tsMs: Date.UTC(2025, 10, 15),
+    label: "Nov '25",
+    event: 'Liquidity Tightening vs Gold Highs',
+    m2Trillions: 22.25,
+    btcPrice: 93010.0,
+    kasPrice: 0.0433,
+    ethPrice: 3123.0,
+    goldPrice: 4066.0,
+    spxPrice: 6706
+  },
+  {
+    id: '2026_MAY',
+    year: 2026,
+    tsMs: Date.UTC(2026, 4, 15),
+    label: "May '26",
+    event: 'US M2 New Highs ($22.98T)',
+    m2Trillions: 22.98,
+    btcPrice: 75485.0,
+    kasPrice: 0.0337,
+    ethPrice: 2064.6,
+    goldPrice: 4523.0,
+    spxPrice: 7569
+  }
+];
+
+const HISTORICAL_BTC_PRICE_CURVE: ReadonlyArray<{ tsMs: number; price: number }> = [
+  { tsMs: Date.UTC(2008, 9, 31), price: 0.05 },
+  { tsMs: BTC_GENESIS_JUL10_MS, price: 0.05 },
+  { tsMs: Date.UTC(2013, 3, 15), price: 118.0 },
+  { tsMs: Date.UTC(2013, 7, 15), price: 109.0 },
+  { tsMs: Date.UTC(2013, 11, 15), price: 750.0 },
+  { tsMs: Date.UTC(2014, 4, 15), price: 490.0 },
+  { tsMs: Date.UTC(2014, 7, 15), price: 515.0 },
+  { tsMs: Date.UTC(2015, 7, 15), price: 279.0 },
+  { tsMs: Date.UTC(2016, 0, 1), price: 434.0 },
+  { tsMs: Date.UTC(2016, 9, 15), price: 640.0 },
+  { tsMs: Date.UTC(2017, 7, 15), price: 4180.0 },
+  { tsMs: Date.UTC(2017, 9, 15), price: 5650.0 },
+  { tsMs: Date.UTC(2018, 2, 15), price: 8300.0 },
+  { tsMs: Date.UTC(2018, 7, 15), price: 6400.0 },
+  { tsMs: Date.UTC(2019, 5, 15), price: 8900.0 },
+  { tsMs: Date.UTC(2019, 7, 15), price: 10350.0 },
+  { tsMs: Date.UTC(2019, 9, 15), price: 8200.0 },
+  { tsMs: Date.UTC(2020, 0, 1), price: 7200.0 },
+  { tsMs: Date.UTC(2020, 3, 15), price: 6900.0 },
+  { tsMs: Date.UTC(2020, 8, 15), price: 10800.0 },
+  { tsMs: Date.UTC(2020, 9, 15), price: 11450.0 },
+  { tsMs: Date.UTC(2021, 4, 15), price: 46700.0 },
+  { tsMs: Date.UTC(2021, 7, 15), price: 46500.0 },
+  { tsMs: KAS_GENESIS_MAY22_MS, price: 29907.0 },
+  { tsMs: Date.UTC(2022, 10, 15), price: 16628.0 },
+  { tsMs: Date.UTC(2023, 2, 15), price: 24700.0 },
+  { tsMs: Date.UTC(2023, 4, 15), price: 27156.0 },
+  { tsMs: Date.UTC(2023, 10, 15), price: 37145.0 },
+  { tsMs: Date.UTC(2024, 0, 1), price: 42265.0 },
+  { tsMs: Date.UTC(2024, 5, 15), price: 66200.0 },
+  { tsMs: Date.UTC(2024, 10, 15), price: 90917.0 },
+  { tsMs: Date.UTC(2025, 1, 15), price: 96500.0 },
+  { tsMs: Date.UTC(2025, 4, 15), price: 101983.0 },
+  { tsMs: Date.UTC(2025, 10, 15), price: 93010.0 },
+  { tsMs: Date.UTC(2026, 4, 15), price: 75485.0 }
+];
+
+export function findHistoricalBtcPriceAt(
+  targetTsMs: number,
+  extraBars?: HistoricalPriceBar[],
+  latestSpot?: number
+): number {
+  if (!Number.isFinite(targetTsMs) || targetTsMs <= BTC_GENESIS_JUL10_MS) {
+    return BTC_GENESIS_JUL10_PRICE;
+  }
+  const combined: HistoricalPriceBar[] = [...HISTORICAL_BTC_PRICE_CURVE];
+  if (Array.isArray(extraBars)) {
+    for (const b of extraBars) {
+      if (b && Number.isFinite(b.tsMs) && Number.isFinite(b.price) && b.price > 0) {
+        combined.push(b);
+      }
+    }
+  }
+  if (latestSpot && Number.isFinite(latestSpot) && latestSpot > 0) {
+    combined.push({ tsMs: Date.UTC(2026, 10, 26), price: latestSpot });
+  }
+  combined.sort((a, b) => a.tsMs - b.tsMs);
+
+  if (targetTsMs <= combined[0].tsMs) return combined[0].price;
+  if (targetTsMs >= combined[combined.length - 1].tsMs) {
+    return combined[combined.length - 1].price;
+  }
+
+  for (let i = 1; i < combined.length; i += 1) {
+    const prev = combined[i - 1];
+    const curr = combined[i];
+    if (targetTsMs <= curr.tsMs) {
+      const span = Math.max(1, curr.tsMs - prev.tsMs);
+      const t = (targetTsMs - prev.tsMs) / span;
+      return Math.exp(Math.log(prev.price) + t * (Math.log(curr.price) - Math.log(prev.price)));
+    }
+  }
+  return combined[combined.length - 1].price;
+}
+
+const TIMELINE_STOP_MILESTONE_IDS: Record<string, string[]> = {
+  '1913': ['1913', '1944', '1971', '2000', '2008', '2016', '2020', '2024'],
+  '1971': ['1971', '1980', '2000', '2008', '2016', '2020', '2024'],
+  '2000': ['2000', '2008', '2013', '2016', '2020', '2022', '2024', '2025_MAY'],
+  '2008': ['2008', '2010', '2013', '2016', '2020', '2022', '2024', '2025_MAY'],
+  '2016': ['2016', '2017', '2020', '2021', '2022', '2024', '2025_MAY', '2026_MAY'],
+  '2020': ['2020', '2021', '2022', '2024', '2024_NOV', '2025_MAY', '2026_MAY'],
+  '2024': ['2024', '2024_NOV', '2025_MAY', '2025_NOV', '2026_MAY'],
+  PRESENT_ALL_TIME: [
+    '2010',
+    '2013',
+    '2015',
+    '2017',
+    '2020',
+    '2022',
+    '2024',
+    '2025_MAY',
+    '2026_MAY'
+  ]
+};
+
+export function resolveBenchmarkSeriesForTimeline(
+  dataset: M2BenchmarkDataset,
+  timelineYear: string | null | undefined,
+  horizon: MacroM2HorizonKey
+): M2ChartPoint[] {
+  const cleanYear = String(timelineYear || 'PRESENT')
+    .trim()
+    .toUpperCase();
+
+  // Rolling windows on PRESENT use the live dataset rolling series directly
+  if (cleanYear === 'PRESENT' && horizon !== 'ALL_TIME') {
+    const rolling = dataset.seriesByHorizon[horizon] || dataset.seriesByHorizon.ALL_TIME;
+    return rolling.map((pt) => ({
+      ...pt,
+      kasActive: true,
+      btcActive: true,
+      ethActive: true
+    }));
+  }
+
+  const allTimeRaw = dataset.seriesByHorizon.ALL_TIME || [];
+  const terminalRaw =
+    allTimeRaw.length > 0
+      ? allTimeRaw[allTimeRaw.length - 1]
+      : DEFAULT_M2_BENCHMARK_DATASET.seriesByHorizon.ALL_TIME[
+          DEFAULT_M2_BENCHMARK_DATASET.seriesByHorizon.ALL_TIME.length - 1
+        ];
+
+  const latestM2Trillions =
+    dataset.latestM2Trillions > 0 ? dataset.latestM2Trillions : terminalRaw.m2Trillions;
+  const latestBtc = dataset.spots?.btc ?? terminalRaw.btcPrice;
+  const latestKas = dataset.spots?.kas ?? terminalRaw.kasPrice;
+  const latestEth = dataset.spots?.eth ?? terminalRaw.ethPrice ?? 1782.23;
+  const latestGold = dataset.spots?.gold ?? terminalRaw.goldPrice;
+  const latestSpx = dataset.spots?.spx ?? terminalRaw.spxPrice;
+
+  const scheduleKey =
+    cleanYear === 'PRESENT'
+      ? 'PRESENT_ALL_TIME'
+      : TIMELINE_STOP_MILESTONE_IDS[cleanYear]
+      ? cleanYear
+      : 'PRESENT_ALL_TIME';
+  const milestoneIds = TIMELINE_STOP_MILESTONE_IDS[scheduleKey];
+  const milestoneMap = new Map(MACRO_HISTORICAL_MILESTONES.map((m) => [m.id, m]));
+  const chosenMilestones = milestoneIds
+    .map((id) => milestoneMap.get(id))
+    .filter((m): m is MacroHistoricalMilestone => Boolean(m));
+
+  if (chosenMilestones.length === 0) {
+    return allTimeRaw;
+  }
+
+  const isHistoricalStop = cleanYear !== 'PRESENT';
+  const numericStopYear = isHistoricalStop ? Number(cleanYear) : 2026;
+
+  // At historical Time Machine stops, only assets that existed by numericStopYear are active
+  const allowKas = !isHistoricalStop || numericStopYear >= 2021;
+  const allowEth = !isHistoricalStop || numericStopYear >= 2015;
+  const allowBtcFromStart = !isHistoricalStop || numericStopYear >= 2008;
+
+  const startMilestone = chosenMilestones[0];
+  const m2Base = startMilestone.m2Trillions;
+  const goldBase = startMilestone.goldPrice;
+  const spxBase = startMilestone.spxPrice;
+
+  // Determine each digital asset's inception baseline within this window
+  const btcGenesisMilestone = chosenMilestones.find((m) => m.btcPrice !== null) ?? null;
+  const btcStartMilestone = allowBtcFromStart ? btcGenesisMilestone : null;
+  const ethStartMilestone = allowEth
+    ? chosenMilestones.find((m) => m.ethPrice !== null) ?? null
+    : null;
+  const kasStartMilestone = allowKas
+    ? chosenMilestones.find((m) => m.kasPrice !== null) ?? null
+    : null;
+
+  const btcBase =
+    (btcStartMilestone?.btcPrice ?? btcGenesisMilestone?.btcPrice) ?? BTC_GENESIS_JUL10_PRICE;
+  const btcBaseM2 =
+    (btcStartMilestone?.m2Trillions ?? btcGenesisMilestone?.m2Trillions) ?? 8.6224;
+
+  const ethBase = ethStartMilestone?.ethPrice ?? 2.77;
+  const ethBaseBtc = ethStartMilestone?.btcPrice ?? 279.0;
+  const ethBaseM2 = ethStartMilestone?.m2Trillions ?? 12.104;
+
+  const kasBase = kasStartMilestone?.kasPrice ?? KAS_GENESIS_MAY22_PRICE;
+  const kasBaseBtc = kasStartMilestone?.btcPrice ?? 29907.0;
+  const kasBaseM2 = kasStartMilestone?.m2Trillions ?? 21.7;
+
+  const points: M2ChartPoint[] = chosenMilestones.map((m) => {
+    const hasBtcQuote = Boolean(
+      btcGenesisMilestone && m.tsMs >= btcGenesisMilestone.tsMs && m.btcPrice !== null
+    );
+    const btcActive = Boolean(
+      btcStartMilestone && m.tsMs >= btcStartMilestone.tsMs && m.btcPrice !== null
+    );
+    const ethActive = Boolean(
+      ethStartMilestone && m.tsMs >= ethStartMilestone.tsMs && m.ethPrice !== null
+    );
+    const kasActive = Boolean(
+      kasStartMilestone && m.tsMs >= kasStartMilestone.tsMs && m.kasPrice !== null
+    );
+
+    const curBtc = hasBtcQuote && m.btcPrice ? m.btcPrice : btcBase;
+    const curEth = ethActive && m.ethPrice ? m.ethPrice : ethBase;
+    const curKas = kasActive && m.kasPrice ? m.kasPrice : kasBase;
+
+    return {
+      tsMs: m.tsMs,
+      label: m.label,
+      event: m.event,
+      m2Trillions: m.m2Trillions,
+      m2Mult: Number((m.m2Trillions / m2Base).toFixed(4)),
+      btcMult: hasBtcQuote ? Number((curBtc / btcBase).toFixed(4)) : 1.0,
+      ethMult: ethActive ? Number((curEth / ethBase).toFixed(4)) : 1.0,
+      kasMult: kasActive ? Number((curKas / kasBase).toFixed(4)) : 1.0,
+      goldMult: Number((m.goldPrice / goldBase).toFixed(4)),
+      spxMult: Number((m.spxPrice / spxBase).toFixed(4)),
+      btcPrice: curBtc,
+      ethPrice: curEth,
+      kasPrice: curKas,
+      goldPrice: m.goldPrice,
+      spxPrice: m.spxPrice,
+      btcActive,
+      ethActive,
+      kasActive,
+      btcStartM2Trillions: btcBaseM2,
+      ethStartBtcPrice: ethBaseBtc,
+      ethStartM2Trillions: ethBaseM2,
+      kasStartBtcPrice: kasBaseBtc,
+      kasStartM2Trillions: kasBaseM2
+    };
+  });
+
+  const nowTsMs = Math.max(dataset.updatedAtMs || Date.now(), Date.UTC(2026, 10, 18));
+  const endEvent =
+    cleanYear === 'PRESENT'
+      ? 'Live Spot (All Time Since Genesis)'
+      : `Live Spot (${cleanYear} → Today)`;
+
+  points.push({
+    tsMs: nowTsMs,
+    label: 'Now',
+    event: endEvent,
+    m2Trillions: latestM2Trillions,
+    m2Mult: Number((latestM2Trillions / m2Base).toFixed(4)),
+    btcMult: Number((latestBtc / btcBase).toFixed(4)),
+    ethMult: ethStartMilestone ? Number((latestEth / ethBase).toFixed(4)) : 1.0,
+    kasMult: kasStartMilestone ? Number((latestKas / kasBase).toFixed(4)) : 1.0,
+    goldMult: Number((latestGold / goldBase).toFixed(4)),
+    spxMult: Number((latestSpx / spxBase).toFixed(4)),
+    btcPrice: latestBtc,
+    ethPrice: latestEth,
+    kasPrice: latestKas,
+    goldPrice: latestGold,
+    spxPrice: latestSpx,
+    btcActive: Boolean(btcStartMilestone),
+    ethActive: Boolean(ethStartMilestone),
+    kasActive: Boolean(kasStartMilestone),
+    btcStartM2Trillions: btcBaseM2,
+    ethStartBtcPrice: ethBaseBtc,
+    ethStartM2Trillions: ethBaseM2,
+    kasStartBtcPrice: kasBaseBtc,
+    kasStartM2Trillions: kasBaseM2
+  });
+
+  return points;
+}
+
+export function computeM2AssetSummaries(
+  points: M2ChartPoint[],
+  timelineYear?: string | null,
+  horizon: MacroM2HorizonKey = 'ALL_TIME'
+): M2HorizonSummary {
   if (!points || points.length === 0) {
     return {
       m2StartTrillions: 21.7,
@@ -419,15 +1034,58 @@ export function computeM2AssetSummaries(points: M2ChartPoint[]): M2HorizonSummar
   const m2Mult = last.m2Mult > 0 ? last.m2Mult : 1;
   const m2Pct = (m2Mult - 1) * 100;
 
+  const hasExplicitTimeline = timelineYear !== undefined && timelineYear !== null;
+  const cleanYear = String(timelineYear || 'PRESENT')
+    .trim()
+    .toUpperCase();
+  const isHistoricalStop = hasExplicitTimeline && cleanYear !== 'PRESENT';
+
+  const windowTag = isHistoricalStop
+    ? `${cleanYear} Open`
+    : horizon === 'ALL_TIME'
+    ? hasExplicitTimeline
+      ? "Jul '10 Genesis"
+      : "May '22 Open"
+    : ({
+        D180: '180D Open',
+        Y1: '1Y Open',
+        Y2: '2Y Open',
+        Y4: '4Y Open'
+      } as const)[horizon];
+
+  const headingLabel = isHistoricalStop
+    ? `${cleanYear} EPOCH OPEN → LIVE SPOT`
+    : horizon === 'ALL_TIME'
+    ? hasExplicitTimeline
+      ? "ALL-TIME GENESIS (JUL '10) → LIVE SPOT"
+      : "MAY '22 COMMON LAUNCH → LIVE SPOT"
+    : ({
+        D180: '180-DAY ROLLING WINDOW → LIVE SPOT',
+        Y1: '1-YEAR ROLLING WINDOW → LIVE SPOT',
+        Y2: '2-YEAR ROLLING WINDOW → LIVE SPOT',
+        Y4: '4-YEAR CYCLE WINDOW → LIVE SPOT'
+      } as const)[horizon];
+
   const makeEntry = (
     key: Exclude<M2SeriesKey, 'M2'>,
     startPrice: number,
     currentPrice: number,
-    rawMult: number
+    rawMult: number,
+    opts?: {
+      available?: boolean;
+      customM2StartTrillions?: number;
+      windowNote?: string;
+      launchNote?: string;
+    }
   ): M2AssetSummary => {
-    const nominalMult = rawMult > 0 ? rawMult : 1;
+    const available = opts?.available ?? true;
+    const effectiveM2Mult =
+      opts?.customM2StartTrillions && opts.customM2StartTrillions > 0
+        ? Math.max(0.01, last.m2Trillions / opts.customM2StartTrillions)
+        : m2Mult;
+    const nominalMult = available && rawMult > 0 ? rawMult : 1;
     const nominalPct = (nominalMult - 1) * 100;
-    const m2AdjustedMult = nominalMult / m2Mult;
+    const m2AdjustedMult = available ? nominalMult / effectiveM2Mult : 1;
     const m2AdjustedPct = (m2AdjustedMult - 1) * 100;
     const meta = M2_SERIES_META[key];
     return {
@@ -435,29 +1093,97 @@ export function computeM2AssetSummaries(points: M2ChartPoint[]): M2HorizonSummar
       ticker: meta.ticker,
       name: meta.name,
       color: meta.color,
+      available,
+      windowNote: opts?.windowNote,
+      launchNote: opts?.launchNote,
       startPrice,
       currentPrice,
       nominalMult,
       nominalPct,
       m2AdjustedMult,
       m2AdjustedPct,
-      beatsM2: m2AdjustedMult >= 1.0
+      beatsM2: available && m2AdjustedMult >= 1.0
     };
   };
 
-  const assets: M2AssetSummary[] = [
-    makeEntry('KAS', first.kasPrice, last.kasPrice, last.kasMult),
-    makeEntry('BTC', first.btcPrice, last.btcPrice, last.btcMult),
-    makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult),
-    makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult)
-  ];
+  if (!hasExplicitTimeline) {
+    const assets: M2AssetSummary[] = [
+      makeEntry('KAS', first.kasPrice, last.kasPrice, last.kasMult),
+      makeEntry('BTC', first.btcPrice, last.btcPrice, last.btcMult),
+      makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult),
+      makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult)
+    ];
+    return {
+      m2StartTrillions: first.m2Trillions,
+      m2EndTrillions: last.m2Trillions,
+      m2Mult,
+      m2Pct,
+      windowTag,
+      headingLabel,
+      assets,
+      coreCards: assets
+    };
+  }
+
+  const kasFirstActive = points.find((p) => p.kasActive !== false);
+  const btcFirstActive = points.find((p) => p.btcActive !== false);
+
+  const kasAvailable = Boolean(kasFirstActive && last.kasActive !== false);
+  const btcAvailable = Boolean(btcFirstActive && last.btcActive !== false);
+
+  const kasCard = makeEntry(
+    'KAS',
+    kasFirstActive?.kasPrice ?? KAS_GENESIS_MAY22_PRICE,
+    last.kasPrice,
+    last.kasMult,
+    {
+      available: kasAvailable,
+      customM2StartTrillions:
+        kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
+          ? last.kasStartM2Trillions
+          : undefined,
+      windowNote:
+        kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
+          ? `Since ${kasFirstActive.label}`
+          : undefined,
+      launchNote: !kasAvailable ? `Pre-Genesis in ${cleanYear} (Nov '21)` : undefined
+    }
+  );
+
+  const btcCard = makeEntry(
+    'BTC',
+    btcFirstActive?.btcPrice ?? BTC_GENESIS_JUL10_PRICE,
+    last.btcPrice,
+    last.btcMult,
+    {
+      available: btcAvailable,
+      customM2StartTrillions:
+        btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
+          ? last.btcStartM2Trillions
+          : undefined,
+      windowNote:
+        btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
+          ? `Since ${btcFirstActive.label}`
+          : undefined,
+      launchNote: !btcAvailable ? `Pre-Genesis in ${cleanYear} (Oct '08)` : undefined
+    }
+  );
+
+  const goldCard = makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult);
+  const spxCard = makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult);
+
+  const coreCards = [kasCard, btcCard, goldCard, spxCard];
+  const assets = coreCards.filter((c) => c.available !== false);
 
   return {
     m2StartTrillions: first.m2Trillions,
     m2EndTrillions: last.m2Trillions,
     m2Mult,
     m2Pct,
-    assets
+    windowTag,
+    headingLabel,
+    assets,
+    coreCards
   };
 }
 

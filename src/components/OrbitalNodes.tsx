@@ -197,6 +197,7 @@ interface WaveSubscriberEntry {
 const waveSubscribers = new Set<WaveSubscriberEntry>();
 let sharedWaveRafId: number | null = null;
 let sharedWavePaused = false;
+let sharedWaveTutorialHold = false;
 let lastSharedFrameMs = 0;
 
 let reducedMotionMql: MediaQueryList | null = null;
@@ -229,6 +230,7 @@ function runSharedWaveLoop(now: number): void {
   if (
     waveSubscribers.size === 0 ||
     sharedWavePaused ||
+    sharedWaveTutorialHold ||
     reducedMotionActive ||
     (typeof document !== 'undefined' && document.hidden)
   ) {
@@ -252,6 +254,7 @@ function ensureSharedWaveLoop(): void {
   if (
     sharedWaveRafId === null &&
     !sharedWavePaused &&
+    !sharedWaveTutorialHold &&
     !reducedMotionActive &&
     waveSubscribers.size > 0 &&
     (typeof document === 'undefined' || !document.hidden)
@@ -291,6 +294,16 @@ export function setGlobalWavePaused(paused: boolean): void {
     cancelAnimationFrame(sharedWaveRafId);
     sharedWaveRafId = null;
   } else if (!paused) {
+    ensureSharedWaveLoop();
+  }
+}
+
+export function setTutorialWaveHold(hold: boolean): void {
+  sharedWaveTutorialHold = hold;
+  if (hold && sharedWaveRafId !== null) {
+    cancelAnimationFrame(sharedWaveRafId);
+    sharedWaveRafId = null;
+  } else if (!hold) {
     ensureSharedWaveLoop();
   }
 }
