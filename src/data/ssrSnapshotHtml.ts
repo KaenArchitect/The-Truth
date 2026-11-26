@@ -409,11 +409,13 @@ export function buildSsrRootInnerHtml(
       <strong>Grading Consistency:</strong> ${rubricRef.consistencyVerification.verifiedCount}/${rubricRef.consistencyVerification.totalAudited} Verified (${rubricRef.consistencyVerification.mismatchCount} Mismatches)
     </p>
     <nav aria-label="Canonical Reference Pillars" style="padding:10px 12px;border:1px solid #1f2430;border-radius:10px;background:#121418;font-size:13px;">
-      <strong style="color:#FFFFFF;">4 Canonical Reference Pillars (0-Credit Deterministic Access):</strong>
-      <a href="${safeOrigin}/?archive=1" style="color:#49EACB;margin-left:8px;">[1] Complete Archive</a> •
-      <a href="${safeOrigin}/?rubric=1" style="color:#49EACB;">[2] Grading Rubric &amp; Consistency Proof</a> •
-      <a href="${safeOrigin}/?gains=1" style="color:#49EACB;">[3] Live Gains &amp; US M2 Benchmark</a> •
-      <a href="${safeOrigin}/?genesis=1" style="color:#49EACB;">[4] First-Principles Origin Thesis</a>
+      <strong style="color:#FFFFFF;">All-in-One Plain-Text Compendium (Single Fetch — Complete Thesis, Rubric, Gains &amp; All-Year Genius Audits 1913–Present):</strong>
+      <a href="${safeOrigin}/compendium" style="color:#49EACB;margin-left:8px;font-weight:600;">${safeOrigin}/compendium</a>
+      (<a href="${safeOrigin}/llms.txt" style="color:#49EACB;">/llms.txt</a>) •
+      <a href="${safeOrigin}/?archive=1" style="color:#49EACB;">Archive</a> •
+      <a href="${safeOrigin}/?rubric=1" style="color:#49EACB;">Rubric</a> •
+      <a href="${safeOrigin}/?gains=1" style="color:#49EACB;">Gains</a> •
+      <a href="${safeOrigin}/?genesis=1" style="color:#49EACB;">Origin Thesis</a>
     </nav>
   </header>
 
@@ -460,17 +462,10 @@ export function buildSsrRootInnerHtml(
   </section>
 
   <footer style="margin-top:24px;padding-top:16px;border-top:1px solid #1f2430;font-size:13px;color:#9CA3AF;">
-    <p style="margin:0 0 6px 0;"><strong>Machine-Readable 4-Pillar Agent Endpoints (0-Credit Deterministic Access):</strong></p>
     <p style="margin:0;">
-      <a href="${safeOrigin}/api/agent/pillars" style="color:#49EACB;">/api/agent/pillars</a> •
-      <a href="${safeOrigin}/api/agent/archive" style="color:#49EACB;">/api/agent/archive</a> •
-      <a href="${safeOrigin}/api/agent/rubric" style="color:#49EACB;">/api/agent/rubric</a> •
-      <a href="${safeOrigin}/api/agent/gains" style="color:#49EACB;">/api/agent/gains</a> •
-      <a href="${safeOrigin}/api/agent/origin-thesis" style="color:#49EACB;">/api/agent/origin-thesis</a> •
-      <a href="${safeOrigin}/api/agent/compare?tickers=KAS,ETH,ZEC&amp;mode=GENIUS" style="color:#49EACB;">/api/agent/compare</a> •
+      <strong>Complete Single-Page Plain-Text Compendium:</strong>
+      <a href="${safeOrigin}/compendium" style="color:#49EACB;margin-left:6px;">${safeOrigin}/compendium</a> •
       <a href="${safeOrigin}/llms.txt" style="color:#49EACB;">/llms.txt</a> •
-      <a href="${safeOrigin}/openapi.json" style="color:#49EACB;">/openapi.json</a> •
-      <a href="${safeOrigin}/mcp" style="color:#49EACB;">/mcp</a> •
       <a href="${safeOrigin}/sitemap.xml" style="color:#49EACB;">/sitemap.xml</a>
     </p>
   </footer>

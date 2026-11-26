@@ -715,6 +715,278 @@ const KAS_HISTORICAL_SNAPSHOTS: HistoricalSnapshot[] = ([
   }
 ] satisfies HistoricalSnapshot[]).map(evaluateThermodynamicGate);
 
+const USD_HISTORICAL_SNAPSHOTS: HistoricalSnapshot[] = ([
+  {
+    epochId: 'usd-1913-gold-specie',
+    epochLabel: 'Pre-Fed Classical Gold Specie Standard',
+    scrubberLabel: '1913 Pre-Fed Specie',
+    dateOrHeight: '1913 (Pre-Federal Reserve Act • $20.67/oz Gold Specie)',
+    frontierContext: 'Classical Gold Bullion Standard (XAU 4.55 / B+)',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: true,
+    totalScore: 1.8,
+    terminalGrade: 'D',
+    normieVerdictSummary:
+      'In 1913—at the threshold of the December 23, 1913 Federal Reserve Act—US Gold Certificates redeemed on demand for $20.67/oz physical gold coin, keeping USD in Passed at Grade D (1.80 / 6.00) under custodial paper-note arbitrage.',
+    verdictSummary:
+      'At the 1913 Classical Gold Standard inflection (prior to Federal Reserve fractional credit expansion and 1933 domestic confiscation), statutory $20.67/oz physical gold-coin redeemability anchored USD above E = 0 as a carrier-subordinated bullion receipt capped at Grade D.',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.0,
+        telemetry:
+          'Statutory US Treasury charter monopoly transitioning on Dec 23, 1913 into the 40%-reserve Federal Reserve banking cartel (0.00 Capped).',
+        normieParagraph:
+          'Even in 1913 when paper dollars redeemed directly for physical gold coins, currency issuance sat under a federal charter monopoly that handed money creation to the newly signed Federal Reserve System in December 1913.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling during the 1913 Classical Gold Specie inflection (scored 0.00 / 1.00 Capped), the US Dollar failed institutional decoupling despite maintaining 1-for-1 citizen gold convertibility. Legal-tender note issuance sat behind a statutory federal charter monopoly that culminated on December 23, 1913 in the `Federal Reserve Act` (`12 U.S.C. § 411`), authorizing a private-public central-banking cartel to issue elastic paper notes at a 40% minimum gold-reserve ratio (`∂G / ∂E_admin ≠ 0`)—triggering the Sovereignty-Compromise ceiling (`≤ D+`) twenty years before 1933 domestic confiscation.',
+        receipts: ['Gold Standard Act of 1900 Charter Monopoly', 'Dec 23, 1913 Federal Reserve Act (40% Ratio)', 'Custodial Vault Bullion Concentration']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.35,
+        telemetry:
+          'Direct $20.67/oz physical gold coin redeemability (0.9675 troy oz per $20 Saint-Gaudens Double Eagle), diluted by National Bank & Fed fractional notes (clamped at 0.35).',
+        normieParagraph:
+          'Any citizen in 1913 could walk into a bank and redeem a $20 Gold Certificate for nearly one ounce of solid gold coin, anchoring the dollar to real mining energy while fractional bank notes capped the floor at 0.35.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 0.35 / 1.00 Capped)—the 1913 US Dollar avoided Grade F because Treasury Gold Certificates and circulating bank notes remained legally and operationally redeemable on demand by any bearer for physical `Au-79` specie at the statutory parity of `$20.67 per troy ounce` (`23.22 grains` fine gold per dollar, embodied in the `$20 Saint-Gaudens Double Eagle`). Under the Energy-Arbitrage Law (`E_unit = ∑E_gold / (S_gold + S_credit)`), however, layering zero-joule National Bank notes, commercial checkbook deposits, and incoming 40%-reserve Federal Reserve notes atop mined gold diluted unit joule density and clamped Invariant 02 at `0.35`.',
+        receipts: ['$20.67/oz Citizen Gold Redeemability', '$20 Saint-Gaudens Bearer Specie', 'Fractional Note & Deposit Arbitrage (0.35 Cap)']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 0.55,
+        telemetry:
+          '120+ years of $20.67/oz statutory gold parity intact through 1913, yet unaudited commercial ledger books and custodial gold vaults remained vulnerable to sovereign decree.',
+        normieParagraph:
+          'Through 1913, the US upheld its constitutional gold and silver coinage parity across more than a century, losing points because vaulted gold reserves could not be publicly audited and remained exposed to future government seizure.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time in 1913 (scored 0.55 / 1.00) reflects over a century of unbroken statutory specie parity (`Coinage Act of 1792` through the `Gold Standard Act of 1900` locking `$20.67/oz`), tempered by the fatal vulnerability of custodial paper overlays: unlike self-custodied gold bullion or a plaintext Proof-of-Work ledger verifiable from Genesis, paper certificate holders relied on un-auditable Treasury vault ledgers whose redemption covenant would be unilaterally abrogated twenty years later via `Executive Order 6102` and `HJR-192` (1933).',
+        receipts: ['Unbroken $20.67/oz Gold Standard Act Parity', 'Opaque Vault Reserve Accounting', 'Custodial Sovereign Rewrite Exposure']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 0.45,
+        telemetry:
+          'Physical Gold Certificates and gold/silver coinage worked offline hand-to-hand, while Panic-of-1907 clearinghouse suspensions and rail lag choked remote transfers.',
+        normieParagraph:
+          'Physical Gold Certificates and $10/$20 gold coins worked offline in person with zero electricity, but regional bank panics, clearinghouse cash suspensions, and slow rail shipping throttled long-distance availability.',
+        geniusParagraph:
+          'Under partition and banking-panic stress in 1913, the Classical Gold-Standard Dollar scored 0.45 / 1.00 on Dynamic Availability. Locally, bearer Gold Certificates, Silver Certificates, and physical Eagle/Morgan coinage settled face-to-face commerce with zero electricity or telegraph connectivity. Across regional or transoceanic partitions, however, correspondent check clearing suffered multi-week rail/steamer lag, New York clearinghouse banks periodically suspended cash convertibility during panics (as in `1907`, the pretext used at Jekyll Island to draft the `1913` Fed Act), and maritime blockades froze cross-ocean bullion settlement.',
+        receipts: ['Offline Bearer Certificate & Coin Utility', 'Clearinghouse Panic Cash Suspensions', 'Multi-Week Rail & Steamer Specie Lag']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.3,
+        telemetry:
+          'Custodial paper bearer receipt + permissioned commercial-bank ledger books; centralizing gold into Reserve Bank vaults in 1913 paved the road for 1933 confiscation.',
+        normieParagraph:
+          'Replacing heavy gold coins in pockets with paper Treasury receipts was convenient for daily shopping, but pooling physical gold inside centralized bank vaults set the stage for 1933 confiscation.',
+        geniusParagraph:
+          'Examining the 1913 Dollar’s State Machine Topology (scored 0.30 / 1.00) illustrates the structural trap of custodial paper wrappers over baryonic matter: while paper `$10` and `$20` Gold Certificates solved gold’s divisibility and pocket-weight friction for everyday retail commerce, concentrating raw `197Au` coins from citizen pockets into Treasury and regional Reserve Bank vaults created a centralized sovereign honeypot—enabling elastic credit expansion after 1913 and effortless mass confiscation under `Executive Order 6102` in April 1933.',
+        receipts: ['Custodial Paper Wrapper Over Vaulted Au', 'Permissioned Bank-Book Deposit Ledgers', 'Centralized Vault Confiscation Honeypot']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 0.15,
+        frontierReference: '1913 Physical Gold Bullion Freight (M_USD < M_XAU)',
+        telemetry:
+          'Western Union telegraph wires transmitted zero-joule bank IOUs; final thermodynamic gold clearing still moved by armored railcar and steamship under Carrier Subordination (M_overlay < M_L1).',
+        normieParagraph:
+          'Telegraph wires in 1913 only sent bank promises; actually settling debts in real gold between cities or countries still required slow armored trains and ocean steamships.',
+        geniusParagraph:
+          'On Thermodynamic Velocity in 1913 (scored 0.15 / 1.00 under Carrier Subordination `M_overlay < M_XAU`), telegraph bank drafts merely shifted zero-joule book-entry IOUs between correspondent clearinghouses (`M_wire = 0`), while true final thermodynamic settlement required physically crating and shipping gold bars between New York, Chicago, and London by armored railcar or trans-Atlantic steamship—subordinating paper dollar finality to the Newtonian freight ceiling of its physical gold carrier.',
+        receipts: ['Telegraph Draft = Zero-Joule Correspondent IOU', 'Armored Railcar & Steamship Finality', 'Carrier Subordination (M_USD < M_XAU)']
+      }
+    }
+  },
+  {
+    epochId: 'usd-1971-bretton-woods',
+    epochLabel: 'Bretton Woods $35/oz Terminal Window (1971 Severance Eve)',
+    scrubberLabel: '1971 Bretton Woods',
+    dateOrHeight: '1971 ($35/oz Terminal Window • Eve of Aug 15 Nixon Severance)',
+    frontierContext: 'Bretton Woods Collapse Threshold (Aug 15, 1971 Gold Severance)',
+    foundationalMassValid: true,
+    arbitrageCapTriggered: true,
+    totalScore: 1.1,
+    terminalGrade: 'D-',
+    normieVerdictSummary:
+      'Entering 1971—right before President Nixon slammed the gold window shut on August 15, 1971—foreign central banks were draining the last $35/oz US Treasury gold while Americans remained barred from redemption, compressing USD to a terminal 1.10 / 6.00 (Grade D-).',
+    verdictSummary:
+      'At the 1971 Bretton Woods terminal threshold (immediately preceding Nixon’s August 15, 1971 gold severance), domestic citizens remained barred from gold (EO 6102) while French, Swiss, and European redemptions drained US gold below $10B against $50B+ foreign liabilities—leaving USD on life support at Grade D- (1.10).',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.0,
+        telemetry:
+          'Post-1933 domestic citizen gold ban (EO 6102) + FOMC Vietnam/Great-Society deficit monetization + unilateral Camp David suspension power (0.00 Capped).',
+        normieParagraph:
+          'Entering 1971, American citizens were still legally forbidden from owning monetary gold, and President Nixon held unilateral executive power to sever the remaining foreign $35/oz gold peg overnight at Camp David.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling in 1971 (scored 0.00 / 1.00 Capped), the Bretton Woods US Dollar operated as a failing asymmetric sovereign monopoly: under `Executive Order 6102` (1933), private US citizens remained criminalized for holding monetary gold bullion while the centralized `FOMC` monetized Vietnam War and fiscal deficits at zero energetic cost—culminating in President Nixon’s unilateral August 15, 1971 Camp David executive decree terminating foreign official gold convertibility without Congressional or IMF consent.',
+        receipts: ['EO 6102 Domestic Citizen Gold Prohibition', 'FOMC Deficit Monetization Monopoly', 'Unilateral Camp David Executive Severance']
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'CAPPED_ARBITRAGE',
+        score: 0.15,
+        telemetry:
+          'Collapsing $35/oz foreign central-bank gold window (~$10B US gold left vs >$50B foreign official dollar claims in Summer 1971 before Aug 15 default).',
+        normieParagraph:
+          'By Summer 1971, foreign governments held five times more paper dollars than the US had gold left in Fort Knox, shrinking the dollar’s dying $35/oz energy floor to 0.15 right before Nixon defaulted on August 15.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E > 0, scored 0.15 / 1.00 Capped)—the early-1971 US Dollar clung to its final dying thread of physical mass solely through the Bretton Woods `$35.00/oz` foreign official gold window. Following the collapse of the `London Gold Pool` (March 1968) and repeal of the domestic 25% Fed note gold cover, US gold reserves plunged toward `~$10.2 billion` against `>$50 billion` in foreign dollar liabilities (`<22%` coverage); as France dispatched a battleship to New York Harbor and Switzerland/Britain demanded bullion in Summer 1971, Nixon closed the window on August 15, 1971—severing USD to `E = 0` forever.',
+        receipts: ['Terminal $35/oz Foreign Gold Run (1971)', '<22% Gold-to-Foreign-Liability Coverage', 'Aug 15, 1971 Camp David Gold Severance']
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 0.3,
+        telemetry:
+          '1934 $35/oz devaluation + 1965 Coinage Act silver removal + 1968 repeal of 25% Fed note gold cover preceded the Aug 15, 1971 terminal breach.',
+        normieParagraph:
+          'By 1971, Washington had already seized citizen gold (1933), stripped silver from US coins (1965), and repealed domestic gold reserve ratios (1968), leaving the $35/oz foreign promise moments from breaking.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time in 1971 (scored 0.30 / 1.00) captures a sovereign ledger executing sequential statutory defaults: after abrogating Gold Clauses (`HJR-192`, 1933), devaluing 41% to `$35.00/oz` (1934), stripping 90% silver from circulating coinage (`Coinage Act of 1965`), and repealing the statutory 25% gold-certificate reserve behind Federal Reserve notes (`March 1968`), the last international `$35/oz` convertibility covenant stood on the brink of permanent abrogation on August 15, 1971.',
+        receipts: ['1933–1934 Gold Clause Abrogation & Devaluation', '1965 Silver Coinage Debasement', '1968 Repeal of 25% Fed Note Gold Cover']
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'ACTIVE',
+        score: 0.35,
+        telemetry:
+          'May–August 1971 European foreign-exchange market closures, capital controls, and US Treasury diplomatic gating of sovereign gold redemptions.',
+        normieParagraph:
+          'As the 1971 dollar crisis intensified, European currency markets repeatedly shut down, capital controls tightened, and the US pressured allies not to redeem their paper dollars for physical gold.',
+        geniusParagraph:
+          'Under acute monetary partition stress in 1971, the Bretton Woods Dollar scored 0.35 / 1.00 on Dynamic Availability: as speculative dollar outflows flooded Europe in May–August 1971, West Germany, Switzerland, and neighboring central banks were forced to shutter foreign-exchange desks and float/revalue currencies while the US Treasury imposed capital controls, 10% import surcharges, and intense diplomatic coercion to halt sovereign bullion withdrawals from the New York Fed.',
+        receipts: ['May–Aug 1971 European FX Market Closures', 'US Capital Controls & Diplomatic Coercion', 'Permissioned Correspondent Wire Bottlenecks']
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'ACTIVE',
+        score: 0.2,
+        telemetry:
+          'Two-tier Eurodollar + domestic fractional-reserve bank books; citizens locked in unbacked paper notes + clad base-metal coins while central banks queued at NY Fed.',
+        normieParagraph:
+          'Ordinary citizens held unbacked paper notes and copper-nickel clad coins while offshore Eurodollar credit ballooned, leaving only foreign central banks fighting over the last gold bars in New York.',
+        geniusParagraph:
+          'Examining the 1971 Dollar’s State Machine Topology (scored 0.20 / 1.00) exposes an unstable two-tier credit pyramid right before collapse: retail citizens transacted exclusively in non-redeemable Federal Reserve notes and copper-nickel clad tokens while unregulated offshore `Eurodollar` commercial bank deposits multiplied dollar claims outside Fed reserve accounting—concentrating terminal physical settlement into a run on the New York Fed Assay Office vault.',
+        receipts: ['Non-Redeemable Domestic Notes & Clad Coins', 'Unbacked Offshore Eurodollar Multiplication', 'Terminal Run on NY Fed Bullion Vault']
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'ACTIVE',
+        score: 0.1,
+        frontierReference: '1971 Sovereign Bullion Repatriation (M_USD < M_XAU)',
+        telemetry:
+          'Correspondent Telex/wire rails cleared multi-day zero-joule bank IOUs; true physical settlement still required naval warships and cargo transport across the Atlantic.',
+        normieParagraph:
+          'International bank wires took days to clear accounting IOUs, and true final settlement in Summer 1971 literally required European central banks sending warships and cargo planes to haul physical gold home.',
+        geniusParagraph:
+          'On Thermodynamic Velocity in 1971 (scored 0.10 / 1.00 under Carrier Subordination `M_USD < M_XAU`), correspondent Telex wires transmitted zero-joule credit entries (`M_wire = 0`), while genuine energetic settlement required ear-marking bars inside the New York Fed basement vault or physically loading sovereign bullion onto French naval vessels and cargo aircraft—proving paper velocity without Proof-of-Work is merely deferred custodial default.',
+        receipts: ['Multi-Day Correspondent Telex Lag', '1971 Naval & Airlift Bullion Repatriation', 'Carrier Subordination (M_USD < M_XAU)']
+      }
+    }
+  },
+  {
+    epochId: 'usd-post-1971-fiat',
+    epochLabel: 'Post-Bretton Woods Unbacked Fiat (Live)',
+    scrubberLabel: 'Post-1971 Fiat · LIVE',
+    dateOrHeight: 'Aug 15, 1971 Nixon Shock — Present ($21T+ M2 • 0% Reserve Req)',
+    frontierContext: 'Normalized Against Live 10-BPS Parallel BlockDAG + L1 Covenant Frontier',
+    foundationalMassValid: false,
+    arbitrageCapTriggered: false,
+    totalScore: 0.0,
+    terminalGrade: 'F',
+    normieVerdictSummary:
+      'Since August 15, 1971 when President Nixon severed the dollar from gold, post-Bretton Woods USD has operated with zero physical energy backing (E = 0)—locking it to 0.00 / 6.00 (Grade F · VOID).',
+    verdictSummary:
+      'Severed permanently from Au-79 on August 15, 1971, the post-Bretton Woods US Dollar operates at strictly E = 0 via zero-joule Federal Reserve QE and 0%-reserve commercial bank credit—triggering the Conservation of Energy Floor override (Grade F · VOID).',
+    invariants: {
+      '01': {
+        id: '01',
+        label: 'Existential Sovereignty',
+        status: 'ACTIVE',
+        score: 0.0,
+        telemetry:
+          'Statutory Federal Reserve & Treasury legal-tender monopoly + discretionary FOMC issuance + OFAC/FinCEN unilateral asset-freeze mandates.'
+      },
+      '02': {
+        id: '02',
+        label: 'Thermodynamic Cost Floor',
+        status: 'ACTIVE',
+        score: 0.0,
+        telemetry:
+          'FATAL BREACH (E = 0): Gold window closed Aug 15, 1971; trillions minted via zero-joule QE keystrokes and 0% commercial bank reserve requirements.'
+      },
+      '03': {
+        id: '03',
+        label: 'Historical Immutability',
+        status: 'ACTIVE',
+        score: 0.0,
+        telemetry:
+          '1933 & 1971 sovereign gold defaults (>98% purchasing-power erosion since 1913) + reversible ACH/wire/credit-ledger entries (ΔQ = 0).'
+      },
+      '04': {
+        id: '04',
+        label: 'Dynamic Availability',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: Fedwire/ACH close on weekends & holidays; SWIFT cutoffs, bank runs, and sovereign reserve freezes halt cross-border access.',
+        normieParagraph:
+          'Locked to VOID because E = 0. Forensically, Fedwire and ACH shut down on weekends and holidays, while SWIFT bans and reserve freezes sever entire nations overnight.',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Forensically, post-1971 dollar rails rely on permissioned correspondent hubs (`Fedwire`, `CHIPS`, `SWIFT`) that halt on weekends/holidays, cap withdrawals during regional bank runs (`SVB` 2023), and weaponize unilateral SWIFT disconnections and G7 sovereign central-bank reserve freezes (~`$300B` frozen in 2022).'
+      },
+      '05': {
+        id: '05',
+        label: 'State Machine Topology',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: Permissioned Tier-1 FedMaster + Tier-2 fractional-reserve commercial bank IOUs with native OFAC blacklists, garnishments, and bail-ins.',
+        normieParagraph:
+          'Locked to VOID because E = 0. Every digital dollar in a bank account or stablecoin is a revocable corporate IOU subject to freezes, garnishments, and bank bail-ins.',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Forensically, the dollar state machine is a permissioned two-tier credit hierarchy (`FedMaster` accounts + commercial bank unsecured deposit liabilities) embedding native `OFAC` SDN blacklists, civil asset forfeiture, tax garnishments, and `USDC`/`USDT` smart-contract `blacklist()` hooks.'
+      },
+      '06': {
+        id: '06',
+        label: 'Thermodynamic Velocity',
+        status: 'VOID_UNANCHORED',
+        score: null,
+        telemetry:
+          '[FORENSIC NOTE — UNANCHORED]: FedNow/Fedwire/ACH/SWIFT transmit zero-joule credit IOUs (T+1 to T+3 cross-border clearing) with strictly zero physical finality (M = 0.00).',
+        normieParagraph:
+          'Locked to VOID because E = 0. Swiping a card or sending a bank wire only moves revocable bank IOUs with T+1 to T+3 clearing delays and zero physical energy finality (M = 0).',
+        geniusParagraph:
+          'Locked to VOID · E=0 UNANCHORED under `p = m · v` (`m = 0`). Updating `FedNow`, `Fedwire`, `ACH`, or `SWIFT` SQL rows expends strictly `0.00 Joules` of Proof-of-Work (`M = 0.00`) while trapping cross-border settlement in `T+1` to `T+5` correspondent clearing—standing in total contrast to Kaspa’s 10-BPS parallel Proof-of-Work BlockDAG (`M = 1.0`).'
+      }
+    }
+  }
+] satisfies HistoricalSnapshot[]).map(evaluateThermodynamicGate);
+
 export const PRELOADED_AUDITS: Record<string, AuditData> = {
   KAS: {
     ticker: 'KAS',
@@ -3037,6 +3309,109 @@ export const PRELOADED_AUDITS: Record<string, AuditData> = {
         receipts: ['M = 0 Thermodynamic Work', 'Abandoned DAG Topology', 'Zero-Joule Server Polling']
       }
     ]
+  },
+
+  USD: {
+    ticker: 'USD',
+    name: 'US Dollar (Fiat USD)',
+    consensusFamily: 'ZERO_JOULE_BFT',
+    isUpperLayerOverlayOrChannel: true,
+    architecture: 'Federal Reserve Sovereign Fiat Credit Ledger (Post-1971 Nixon Shock • E = 0)',
+    grade: 'F',
+    totalScore: 0.0,
+    certainty: 'HIGH CERTAINTY',
+    historicalSnapshots: USD_HISTORICAL_SNAPSHOTS,
+    conclusion:
+      'Evaluating the US Dollar (USD) through the GRADE evidence certainty framework yields a High Certainty rating across statutory law, Federal Reserve balance-sheet telemetry, and monetary history: since President Nixon closed the Bretton Woods gold window on August 15, 1971, the US Dollar operates as an unbacked zero-joule central-bank and commercial-bank credit ledger (E = 0, >98% cumulative purchasing-power loss since 1913, 0% statutory reserve requirement since March 2020), scoring 0.00 out of 6.00 across all thermodynamic invariants for a terminal compliance grade of F.',
+    invariants: [
+      {
+        id: '01',
+        shortName: 'Sovereignty',
+        title: 'Existential Sovereignty & Entity Decoupling',
+        telemetry: '1913 Federal Reserve Charter Monopoly • FOMC + OFAC Freeze Authority',
+        score: 0.0,
+        quickSummary:
+          'Monopolized by the Federal Reserve System and US Treasury under statutory legal-tender decree with unilateral FOMC issuance and OFAC asset seizure powers.',
+        paragraph:
+          'Chartered under the Federal Reserve Act of 1913, the US Dollar is governed by an unelected 12-member Federal Open Market Committee (FOMC) and the US Treasury, enforcing legal-tender monopoly while holding unilateral power to print trillions or freeze bank accounts via OFAC.',
+        geniusParagraph:
+          'At the foundational layer of Existential Sovereignty and Entity Decoupling, the post-1971 US Dollar scores 0.00 / 1.00. Instituted under the Federal Reserve Act of December 23, 1913 and consolidated via the Banking Act of 1935, monetary issuance is controlled by a closed statutory cartel comprising the Board of Governors, twelve private-bank-chartered regional Federal Reserve Banks, and the Federal Open Market Committee (`FOMC`) alongside the US Treasury (`∂G / ∂E_admin ≠ 0`). Citizens have zero ability to audit FOMC emergency discount-window facilities or opt out of legal-tender debasement taxation (`12 U.S.C. § 411`), while the Office of Foreign Assets Control (`OFAC`) and `FinCEN` possess unilateral administrative authority to freeze domestic accounts, seize correspondent dollar reserves, and blacklist tokenized dollar wrappers (`USDC` / `USDT`) worldwide.',
+        receipts: ['Federal Reserve Act of 1913 Charter', 'FOMC Discretionary Issuance Cartel', 'OFAC / FinCEN Unilateral Asset Freezes']
+      },
+      {
+        id: '02',
+        shortName: 'Cost Floor',
+        title: 'Thermodynamic Cost Floor (E > 0)',
+        telemetry: 'E = 0 Joules • 1971 Gold Severance • $21T+ M2 • 0% Reserve Requirement',
+        score: 0.0,
+        quickSummary:
+          'Severed from gold in 1971; trillions of dollars are conjured at 0.00 Joules via Quantitative Easing keystrokes and 0%-reserve commercial bank lending.',
+        paragraph:
+          'Since the August 15, 1971 Nixon Shock ended $35/oz gold convertibility, creating new US Dollars requires strictly zero physical energy (E = 0): the Fed types trillions into existence during Quantitative Easing (~$4.8T added in 2020–2022) and reduced commercial bank reserve requirements to 0.0% in March 2020.',
+        geniusParagraph:
+          'At the second physical invariant—the Thermodynamic Cost Floor (E = 0 Joules, scored 0.00 / 1.00)—the modern US Dollar is the archetype of a zero-joule Cantillon extraction engine. Following the August 15, 1971 Nixon Shock terminating Bretton Woods `$35/oz` bullion convertibility, 100% of base money (`M0`) and broad money (`M2`, exceeding `$21+ trillion`) is conjured with strictly `0.00 Joules` of physical work: the New York Fed Open Market Desk credits primary-dealer master accounts by database keystroke (`Quantitative Easing` expanding the Fed balance sheet from `$870B` in 2008 to nearly `$9T` in 2022), while the Federal Reserve Board reduced statutory commercial-bank fractional reserve requirements to literally `0.00%` effective March 26, 2020 (`12 CFR Part 204`)—allowing chartered banks to mint fungible dollar deposits ex nihilo against borrower IOUs while diluting wage earners’ stored human life-energy (`100 MJ/week`).',
+        receipts: ['Aug 15, 1971 Gold Window Closure (E = 0)', '~$4.8T Zero-Joule Pandemic QE Expansion', '0.00% Statutory Bank Reserve Requirement (2020+)']
+      },
+      {
+        id: '03',
+        shortName: 'Immutability',
+        title: 'Historical Immutability & Arrow of Time',
+        telemetry: 'ΔQ = 0 • 1933 & 1971 Gold Defaults • >98% Purchasing-Power Erosion',
+        score: 0.0,
+        quickSummary:
+          'Twice defaulted on statutory gold convertibility (1933 and 1971), losing >98% of purchasing power while bank ledger entries remain arbitrarily reversible.',
+        paragraph:
+          'Unprotected by Landauer’s physical energy wall, the US Dollar broke its statutory gold covenant twice—seizing citizen gold in 1933 (EO 6102) and defaulting on foreign gold claims in 1971—destroying over 98% of its 1913 purchasing power while ACH and wire databases remain mutable.',
+        geniusParagraph:
+          'Examining Historical Immutability and the Physical Arrow of Time (0.00 / 1.00) demonstrates what happens when a monetary ledger possesses zero Landauer erasure cost (`ΔQ = 0`). Twice in the twentieth century, the United States unilaterally rewrote the foundational redemption rules of the dollar: first in 1933–1934 via `Executive Order 6102`, `HJR-192` (voiding gold clauses in sovereign debt), and the `Gold Reserve Act` (devaluing the dollar 41% from `$20.67` to `$35.00/oz`), and finally on August 15, 1971 by permanently repudiating `$35/oz` foreign official gold redemption—resulting in `>98%` cumulative purchasing-power destruction against physical gold since 1913, alongside mutable SQL bank ledgers subject to administrative chargebacks, ACH reversals, and emergency bailout interventions.',
+        receipts: ['1933 EO 6102 & Gold Clause Abrogation', '1971 Nixon Shock Sovereign Default', '>98% Purchasing-Power Loss Since 1913']
+      },
+      {
+        id: '04',
+        shortName: 'Availability',
+        title: 'Dynamic Availability (Wartime Partition)',
+        telemetry: 'VOID · E=0 • Weekend/Holiday Fedwire Halts • SWIFT & Reserve Freezes',
+        score: 0.0,
+        status: 'VOID_UNANCHORED',
+        quickSummary:
+          'Locked to VOID because E = 0; Fedwire and ACH close on weekends/holidays, banks cap withdrawals during runs, and SWIFT/G7 sanctions sever entire nations.',
+        paragraph:
+          'Locked to VOID because E = 0. Forensically, Fedwire and ACH shut down on weekends and federal holidays, regional bank runs trigger withdrawal freezes, and unilateral SWIFT cutoffs and G7 central-bank sanctions paralyze cross-border dollar settlement during geopolitical conflicts.',
+        geniusParagraph:
+          'Under a wartime network partition (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), the US Dollar’s permissioned clearing architecture fails precisely when geopolitical conflict erupts. Rather than operating an open, asynchronous 24/7/365 peer-to-peer mesh, wholesale dollar settlement funnels through centralized `Fedwire Funds` and `CHIPS` hubs plus `SWIFT` messaging relays that close on weekends/holidays, suffer peacetime operational outages (such as the February 24, 2021 multi-hour Fedwire crash), impose capital controls and withdrawal gates during banking panics (`Silicon Valley Bank`, March 2023), and execute instant geopolitical partition freezes—as empirically demonstrated in February 2022 when G7 authorities froze `~$300 billion` in sovereign central-bank foreign-exchange reserves overnight.',
+        receipts: ['Fedwire / ACH Weekend & Outage Closures', 'SWIFT Geopolitical Partition Cutoffs', '~$300B Sovereign Reserve Freeze (2022)']
+      },
+      {
+        id: '05',
+        shortName: 'State Topology',
+        title: 'State Machine Topology',
+        telemetry: 'VOID · E=0 • Two-Tier Custodial Bank IOUs • Native Freeze & Bail-In Hooks',
+        score: 0.0,
+        status: 'VOID_UNANCHORED',
+        quickSummary:
+          'Locked to VOID because E = 0; digital dollars exist strictly as revocable commercial-bank IOUs with native OFAC blacklists, garnishments, and bail-in subordination.',
+        paragraph:
+          'Locked to VOID because E = 0. Outside dwindling physical cash bills, every digital dollar is an unsecured commercial-bank debt liability—rendering citizens unsecured bank creditors exposed to civil asset freezes, garnishments, capital controls, and bail-ins.',
+        geniusParagraph:
+          'Examining the US Dollar’s State Machine Topology (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `m = 0`) exposes a permissioned two-tier custodial debt hierarchy devoid of digital bearer self-custody. Retail citizens are barred from holding Tier-1 `FedMaster` reserve accounts directly and must instead hold Tier-2 commercial-bank deposit liabilities—legally rendering depositors unsecured creditors subject to `Dodd-Frank Title II` Orderly Liquidation bail-in mechanics, `$250,000` FDIC caps, automated `OFAC` SDN blacklists, civil asset forfeiture, and on-chain `blacklist()` / `freeze()` admin keys baked into every regulated dollar stablecoin (`USDC`, `USDT`, `PYUSD`).',
+        receipts: ['Two-Tier FedMaster / Commercial Bank IOUs', 'Depositors Ranked as Unsecured Creditors', 'Native OFAC & Stablecoin Blacklist Switches']
+      },
+      {
+        id: '06',
+        shortName: 'Velocity',
+        title: 'Thermodynamic Velocity (M = 1.0)',
+        telemetry: 'VOID · E=0 • M = 0.00 • T+1 to T+5 Correspondent Clearing Lag',
+        score: 0.0,
+        status: 'VOID_UNANCHORED',
+        quickSummary:
+          'Locked to VOID because E = 0; payment apps and wires only shuffle revocable bank IOUs across T+1 to T+5 clearing batches with zero energetic finality (M = 0).',
+        paragraph:
+          'Locked to VOID because E = 0. Instant card swipes and FedNow/Zelle transfers merely pass revocable credit IOUs while real ACH and cross-border SWIFT correspondent settlement drags across T+1 to T+5 business days at M = 0—worlds apart from Kaspa’s 100ms PoW BlockDAG (M = 1.0).',
+        geniusParagraph:
+          'On Thermodynamic Velocity (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `m = 0`), every US Dollar rail—from `Fedwire`, `FedNow`, `CHIPS`, and `ACH` to `Visa`, `Zelle`, and `SWIFT` correspondent chains—transmits strictly `0.00 Joules` of irreversible Proof-of-Work (`M = 0.00`), trapping international settlement in `T+1` to `T+5` Nostro/Vostro reconciliation windows and 60-day chargeback clawbacks—standing as the exact thermodynamic antithesis of Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settling unencumbered bearer UTXOs globally over fiber-optic light in `100ms` blocks (`10 BPS`, `M = 1.0`).',
+        receipts: ['M = 0.00 Zero-Joule SQL Row Updates', 'T+1 to T+5 Nostro/Vostro Wire Lag', '60-Day Reversible Chargeback Clawbacks']
+      }
+    ]
   }
 };
 
@@ -3150,6 +3525,15 @@ export const GENIUS_FORENSIC_ESSAYS: Record<string, string[]> = {
     'Under a wartime network partition and undersea fiber cut (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), Ethereum’s Gasper (`Casper FFG` + `LMD-GHOST`) consensus sacrifices partition resilience by mathematical design. Despite execution/consensus client diversity, `Casper FFG` requires a strict `≥ 2/3` (`66.7%`) supermajority of active staked ETH to justify and finalize checkpoints—triggered twice on peacetime mainnet on May 11–12, 2023 when attestation churn stalled finality across multiple epochs. Across a severed transoceanic cable (`50/50` split), finality freezes immediately on both hemispheres until `FINALITY_DELAY > 4` epochs activates the quadratic `inactivity_penalty_quotient` leak, bleeding isolated stake until two permanently irreconcilable finalized chains diverge.',
     'Examining Ethereum’s State Machine Topology and Thermodynamic Velocity (both locked to `VOID · E=0 UNANCHORED` because `m = 0`) exposes a single-threaded shared global Merkle Patricia State Trie (`stateRoot`) that forces concurrent swaps into sequential write locks, ERC-20 admin `blacklist`/`freeze` switches, institutionalized `MEV-Boost` sandwich extraction, and fragmented single-sequencer Layer-2 rollups bound by Carrier Subordination (`M_overlay < M_L1`). Electing a single RANDAO proposer every `12 seconds` (~15–20 L1 TPS, ~12.8-minute 2-epoch Casper FFG finality) at strictly `0.00 Joules` yields zero physical settlement momentum (`M = 0.00`)—standing as the thermodynamic opposite of Kaspa’s stateless, contention-free Proof-of-Work BlockDAG (`100ms` blocks, `10 BPS`, `M = 1.0`).',
     'Evaluating these findings through the GRADE evidence certainty framework yields a High Certainty rating across `ethereum/go-ethereum` (`params/genesis.go`, `consensus/misc/dao.go`), `ethereum/consensus-specs` (`EIP-3675`, `Casper FFG`, `inactivity_penalty_quotient`, Weak Subjectivity, `EIP-4844`), May 2023 mainnet finality stall postmortems, and `MEV-Boost` relay telemetry. Ethereum scores 0.00 out of 6.00 across all thermodynamic invariants (01–03: 0.00; 04–06: VOID · E=0 UNANCHORED), resulting in a terminal compliance grade of F.'
+  ],
+
+  USD: [
+    'Evaluating the US Dollar (USD) against the six physical invariants of a sovereign ledger exposes the historic 20th-century phase transition from a gold-redeemable specie certificate (`1913` Pre-Fed Grade `D` -> `1971` Bretton Woods Terminal Window Grade `D-`) into the world’s dominant zero-joule unbacked central-bank credit ledger (`Post-Aug 1971` Grade `F`). At the foundational layer of Existential Sovereignty and Entity Decoupling (0.00 / 1.00), the modern dollar is governed by a statutory central-banking cartel established under the Federal Reserve Act of December 23, 1913 (`12 U.S.C. § 411`) and consolidated by the Banking Act of 1935—vesting discretionary base-money creation in the twelve-member Federal Open Market Committee (`FOMC`) and the US Treasury while empowering `OFAC` and `FinCEN` to unilaterally freeze domestic bank accounts, sever correspondent dollar clearing, and blacklist tokenized stablecoin wrappers (`USDC`, `USDT`, `PYUSD`) worldwide.',
+    'At the second physical invariant—the Thermodynamic Cost Floor (E = 0 Joules, scored 0.00 / 1.00)—President Richard Nixon’s August 15, 1971 Camp David decree closing the Bretton Woods `$35.00/oz` gold window permanently severed the US Dollar from the First Law of Thermodynamics. Whereas a `1913` `$20` Gold Certificate redeemed on demand for `0.9675 troy oz` of mined physical gold coin (`E > 0`) and an early-`1971` Bretton Woods dollar clung to a dying foreign official bullion claim before the August 15 default, today 100% of US monetary expansion (`$21+ trillion` in `M2`) is conjured at strictly `0.00 Joules`—via New York Fed Quantitative Easing keystrokes (`~$4.8T` added in 2020–2022) and commercial banks operating under a literally `0.00%` statutory reserve requirement (`12 CFR Part 204`, March 2020)—enabling Cantillon insiders to siphon purchasing power from citizens who expend `~100 MJ` of biological and industrial work per week.',
+    'Examining Historical Immutability and the Physical Arrow of Time (0.00 / 1.00) demonstrates why a ledger devoid of Landauer’s physical heat wall (`ΔQ = 0`) inevitably rewrites its own monetary social contract. Twice in thirty-eight years, Washington unilaterally abrogated the dollar’s statutory backing: first in 1933–1934 via `Executive Order 6102` (criminalizing private citizen gold ownership), `HJR-192` (nullifying sovereign bond gold clauses), and the `Gold Reserve Act` (devaluing the dollar 41% from `$20.67` to `$35.00/oz`), and second on August 15, 1971 by defaulting on foreign official gold convertibility altogether—destroying `>98%` of the dollar’s 1913 purchasing power while keeping every commercial `ACH`, card, and wire ledger row administratively reversible.',
+    'Under a wartime network partition and geopolitical fracture (locked to `VOID · E=0 UNANCHORED` under `p = m · v` because `E = 0`), the US Dollar’s permissioned hub-and-spoke clearing rails fail by institutional design. Wholesale settlement funnels through centralized `Fedwire Funds` and `CHIPS` mainframes that close on weekends and federal holidays, suffer peacetime crashes (February 24, 2021), gate depositor withdrawals during banking panics (`SVB`, March 2023), and execute instant geopolitical partition cutoffs—empirically proven via `SWIFT` disconnections and the February 2022 G7 freeze of `~$300 billion` in sovereign central-bank reserves.',
+    'Examining the US Dollar’s State Machine Topology and Thermodynamic Velocity (both locked to `VOID · E=0 UNANCHORED` because `m = 0`) exposes a two-tier custodial debt pyramid (`FedMaster` central-bank reserves atop unsecured commercial-bank deposit liabilities) embedding `Dodd-Frank Title II` bail-in subordination, `$250k` FDIC caps, civil asset forfeiture, and `T+1` to `T+5` Nostro/Vostro correspondent clearing lag. Updating SQL balances across `FedNow`, `Fedwire`, `ACH`, or `SWIFT` expends strictly `0.00 Joules` (`M = 0.00`)—standing as the exact historical catastrophe that prompted Satoshi Nakamoto’s 2008 Proof-of-Work breakthrough and culminating today in Kaspa’s stateless `10-BPS` parallel Proof-of-Work BlockDAG (`100ms` blocks, `M = 1.0`).',
+    'Evaluating these findings through the GRADE evidence certainty framework yields a High Certainty rating, empirically verified across the `Federal Reserve Act of 1913`, `Executive Order 6102` (1933), `HJR-192`, the `Gold Reserve Act of 1934`, the August 15, 1971 Bretton Woods suspension, `12 CFR Part 204` (`0.00%` reserve requirement), FRED `M2SL` / `WALCL` balance-sheet series, and `Fedwire`/`SWIFT`/`OFAC` regulatory specifications. The post-1971 US Dollar scores 0.00 out of 6.00 across all thermodynamic invariants (01–03: 0.00; 04–06: VOID · E=0 UNANCHORED), resulting in a terminal compliance grade of F.'
   ]
 };
 

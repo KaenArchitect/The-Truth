@@ -1460,6 +1460,28 @@ const KNOWN_AUDIT_COHORT_METADATA: Record<string, Partial<CohortAssetEntry>> = {
     geckoId: 'pi-network',
     yahooSymbol: 'PI35697-USD',
     note: 'Centralized stellar-core fork • 100B 0-Joule mint • Mandatory KYC/KYB'
+  },
+  USD: {
+    ticker: 'USD',
+    name: 'US Dollar (Fiat USD)',
+    grade: 'F',
+    auditScore: 0.0,
+    baselineLabel: '$1.00 Unit Numeraire',
+    basePrice: null,
+    releaseLabel: '$1.00 Fiat Unit',
+    releasePrice: null,
+    price180d: null,
+    price1y: null,
+    price2y: null,
+    price4y: null,
+    snapshotSpot: null,
+    tactical90dPct: null,
+    liquidCycle: false,
+    isOutlier: false,
+    coinbasePair: null,
+    geckoId: null,
+    yahooSymbol: null,
+    note: 'Post-1971 unbacked Federal Reserve credit ledger ($1.00 benchmark numeraire • E = 0)'
   }
 };
 

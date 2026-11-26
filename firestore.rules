@@ -93,6 +93,8 @@ service cloud.firestore {
           'queryAliases',
           'archivedInvLogs',
           'sources',
+          'historicalSnapshots',
+          'auditedAtTimelineYear',
           'isArchived',
           'archivedAtMs',
           'archivedAtLabel',
@@ -115,6 +117,8 @@ service cloud.firestore {
         data.queryAliases is list && data.queryAliases.size() >= 1 && data.queryAliases.size() <= 20 && data.queryAliases[0] is string &&
         (!('archivedInvLogs' in data) || data.archivedInvLogs is map) &&
         (!('sources' in data) || (data.sources is list && data.sources.size() <= 12)) &&
+        (!('historicalSnapshots' in data) || (data.historicalSnapshots is list && data.historicalSnapshots.size() <= 16 && (data.historicalSnapshots.size() == 0 || data.historicalSnapshots[0] is map))) &&
+        (!('auditedAtTimelineYear' in data) || (data.auditedAtTimelineYear is string && data.auditedAtTimelineYear.size() >= 1 && data.auditedAtTimelineYear.size() <= 16)) &&
         data.isArchived == true &&
         isNum(data.archivedAtMs) && data.archivedAtMs > 0 &&
         data.archivedAtLabel is string && data.archivedAtLabel.size() >= 1 && data.archivedAtLabel.size() <= 64 &&
@@ -213,6 +217,8 @@ service cloud.firestore {
             'queryAliases',
             'archivedInvLogs',
             'sources',
+            'historicalSnapshots',
+            'auditedAtTimelineYear',
             'archivedAtMs',
             'archivedAtLabel',
             'archiveRevision',

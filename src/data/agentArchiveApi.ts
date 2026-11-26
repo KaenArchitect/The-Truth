@@ -691,7 +691,7 @@ export function answerArchiveResearchQuestion(
         unarchivedMentions: [],
         comparison: null,
         audits: [],
-        answer: `Deterministic Grading Consistency Proof: ${rubricRef.consistencyVerification.verifiedCount}/${rubricRef.consistencyVerification.totalAudited} archived assets match deriveGradeFromTotal() with ${rubricRef.consistencyVerification.mismatchCount} mismatches (100% mathematically consistent). Standard Curve (Sovereignty > 0): ${rubricRef.standardGradeCurveSummary}. Sovereignty-Compromise Cap (Sovereignty = 0): ${rubricRef.sovereigntyCompromisedCurveSummary}. Zero-Joule Floor (Cost Floor = 0): automatic Grade F (0.00/6.00). Inspect full brackets at /?rubric=1 or /api/agent/rubric.`,
+        answer: `Deterministic Grading Consistency Proof: ${rubricRef.consistencyVerification.verifiedCount}/${rubricRef.consistencyVerification.totalAudited} archived assets match deriveGradeFromTotal() with ${rubricRef.consistencyVerification.mismatchCount} mismatches (100% mathematically consistent). Standard Curve (Sovereignty > 0): ${rubricRef.standardGradeCurveSummary}. Sovereignty-Compromise Cap (Sovereignty = 0): ${rubricRef.sovereigntyCompromisedCurveSummary}. Zero-Joule Floor (Cost Floor = 0): automatic Grade F (0.00/6.00). Inspect full brackets at /?rubric=1 or /compendium.`,
         deepLinkUrl: '/?rubric=1'
       };
     }
@@ -709,7 +709,7 @@ export function answerArchiveResearchQuestion(
         unarchivedMentions: [],
         comparison: null,
         audits: [],
-        answer: `Empirical Thermodynamic Gains & M2 Benchmark: Across the May 2022–Present cycle, Passed (E > 0) assets average ${cyc.passAvgPct >= 0 ? '+' : ''}${cyc.passAvgPct}% (${cyc.passExTopGainerAvgPct >= 0 ? '+' : ''}${cyc.passExTopGainerAvgPct}% ex-${cyc.passTopGainerTicker || 'top'}) vs Failed (E = 0) at ${cyc.failAvgPct >= 0 ? '+' : ''}${cyc.failAvgPct}% (${cyc.failExTopGainerAvgPct >= 0 ? '+' : ''}${cyc.failExTopGainerAvgPct}% ex-${cyc.failTopGainerTicker || 'top'}) — a ${cyc.victoryMultiple}x portfolio multiple. Against US M2 Money Supply ($${m2All.m2StartTrillions.toFixed(2)}T → $${m2All.m2EndTrillions.toFixed(2)}T), M2-adjusted multiples are ${m2All.assets.map((a) => `${a.ticker} ${a.m2AdjustedMult.toFixed(2)}x`).join(', ')}. Full dataset at /?gains=1 or /api/agent/gains.`,
+        answer: `Empirical Thermodynamic Gains & M2 Benchmark: Across the May 2022–Present cycle, Passed (E > 0) assets average ${cyc.passAvgPct >= 0 ? '+' : ''}${cyc.passAvgPct}% (${cyc.passExTopGainerAvgPct >= 0 ? '+' : ''}${cyc.passExTopGainerAvgPct}% ex-${cyc.passTopGainerTicker || 'top'}) vs Failed (E = 0) at ${cyc.failAvgPct >= 0 ? '+' : ''}${cyc.failAvgPct}% (${cyc.failExTopGainerAvgPct >= 0 ? '+' : ''}${cyc.failExTopGainerAvgPct}% ex-${cyc.failTopGainerTicker || 'top'}) — a ${cyc.victoryMultiple}x portfolio multiple. Against US M2 Money Supply ($${m2All.m2StartTrillions.toFixed(2)}T → $${m2All.m2EndTrillions.toFixed(2)}T), M2-adjusted multiples are ${m2All.assets.map((a) => `${a.ticker} ${a.m2AdjustedMult.toFixed(2)}x`).join(', ')}. Full dataset at /?gains=1 or /compendium.`,
         deepLinkUrl: '/?gains=1'
       };
     }
@@ -729,7 +729,7 @@ export function answerArchiveResearchQuestion(
         unarchivedMentions: [],
         comparison: null,
         audits: [],
-        answer: `First-Principles Origin Thesis (${thesisRef.axiomCount} Axioms across 5 Parts — Six Invariants 01–06, 100 MJ Human Work Ledger 07–12, Cosmic & Observer Physics 13–19, Satoshi’s Betrayal & BlockDAG Completion 20–22, and Unified Audit Functional 23): ${thesisRef.axioms[0]?.text || ''} Full 23-axiom treatise available at /?genesis=1 or /api/agent/origin-thesis.`,
+        answer: `First-Principles Origin Thesis (${thesisRef.axiomCount} Axioms across 5 Parts — Six Invariants 01–06, 100 MJ Human Work Ledger 07–12, Cosmic & Observer Physics 13–19, Satoshi’s Betrayal & BlockDAG Completion 20–22, and Unified Audit Functional 23): ${thesisRef.axioms[0]?.text || ''} Full 23-axiom treatise available at /?genesis=1 or /compendium.`,
         deepLinkUrl: '/?genesis=1'
       };
     }

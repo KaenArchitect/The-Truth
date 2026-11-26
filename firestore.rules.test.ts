@@ -55,3 +55,11 @@ test('GainsCohortSnapshot enforces strict schema, bounds, verified writer, and m
   assert.match(rulesSource, /incoming\(\)\.revision\s*==\s*existing\(\)\.revision\s*\+\s*1/);
   assert.match(rulesSource, /match \/gains_cohorts\/\{cohortId\}/);
 });
+
+test('ArchivedAudit enforces bounded historicalSnapshots and auditedAtTimelineYear guards', () => {
+  assert.match(rulesSource, /'historicalSnapshots'/);
+  assert.match(rulesSource, /data\.historicalSnapshots\.size\(\)\s*<=\s*16/);
+  assert.match(rulesSource, /'auditedAtTimelineYear'/);
+  assert.match(rulesSource, /data\.auditedAtTimelineYear\.size\(\)\s*<=\s*16/);
+});
+

@@ -161,6 +161,7 @@ import {
   TUTORIAL_STEPS,
   TUTORIAL_STORAGE_KEY,
   clampTutorialStepIndex,
+  isBottomChromeInAppBrowser,
   type TutorialActionId
 } from './data/tutorialSteps.ts';
 import { resolvePinOrientationMode } from './data/constellationOrientation.ts';
@@ -205,6 +206,21 @@ const GenesisThesisModal = lazy(() =>
 import { GeniusSearchWaveRings } from './components/GeniusSearchWaveRings.tsx';
 import { AuditChaosWaveRings } from './components/AuditChaosWaveRings.tsx';
 import { GeniusUniverseBackground } from './components/GeniusUniverseBackground.tsx';
+import { GlobalTimeMachineSlider } from './components/GlobalTimeMachineSlider.tsx';
+import {
+  type GlobalTimelineYear,
+  getGlobalTimelineStop,
+  parseGlobalTimelineYear,
+  projectAuditAtYear,
+  projectAuditsCollectionAtYear,
+  resolveAssetGenesisYear,
+  resolveEarliestTimelineStopForAsset
+} from './data/globalTimeMachine.ts';
+import {
+  attachHistoricalAuditToBaseline,
+  getHistoricalAuditHorizon,
+  hasDedicatedTimelineCoverage
+} from './data/historicalAuditScope.ts';
 import { ARCHIVE_PULL_STAGE_MS } from './data/auditChaosWave.ts';
 import {
   answerArchiveResearchQuestion,
@@ -475,6 +491,11 @@ function ThermodynamicAuditApp() {
 
   // Mode Toggle: false = Normie Mode (Default), true = Genius Mode (Full 6-Paragraph Forensic Audit)
   const [isGeniusMode, setIsGeniusMode] = useState(false);
+  const [timelineYear, setTimelineYear] = useState<GlobalTimelineYear>(() => {
+    if (typeof window === 'undefined') return 'PRESENT';
+    const params = new URLSearchParams(window.location.search);
+    return parseGlobalTimelineYear(params.get('year'));
+  });
   const [isRubricOpen, setIsRubricOpen] = useState(false);
 
   // Shared Persistent Archive & API Credit Shield State
@@ -912,34 +933,39 @@ function ThermodynamicAuditApp() {
     }
   }, [isAnyModalOpen, isTutorialOpen]);
 
-  const sortedTickers = useMemo(() => sortAuditTickersByGrade(audits), [audits]);
+  const displayAudits = useMemo(
+    () => projectAuditsCollectionAtYear(audits, timelineYear),
+    [audits, timelineYear]
+  );
+  const sortedTickers = useMemo(() => sortAuditTickersByGrade(displayAudits), [displayAudits]);
+  const archiveSortedTickers = useMemo(() => sortAuditTickersByGrade(audits), [audits]);
   const passedTickers = useMemo(
     () =>
       sortedTickers.filter((tk) => {
-        const a = audits[tk];
+        const a = displayAudits[tk];
         return a && Number(a.totalScore) > 1.0 && String(a.grade || '').toUpperCase() !== 'F';
       }),
-    [sortedTickers, audits]
+    [sortedTickers, displayAudits]
   );
   const failedTickers = useMemo(
     () =>
       sortedTickers.filter((tk) => {
-        const a = audits[tk];
+        const a = displayAudits[tk];
         return a && (Number(a.totalScore) <= 1.0 || String(a.grade || '').toUpperCase() === 'F');
       }),
-    [sortedTickers, audits]
+    [sortedTickers, displayAudits]
   );
   const { coreTickers: corePassedTickers, ecosystemTickers: ecosystemPassedTickers } = useMemo(
-    () => partitionTickersByEcosystem(passedTickers, audits),
-    [passedTickers, audits]
+    () => partitionTickersByEcosystem(passedTickers, displayAudits),
+    [passedTickers, displayAudits]
   );
   const { coreTickers: coreFailedTickers, ecosystemTickers: ecosystemFailedTickers } = useMemo(
-    () => partitionTickersByEcosystem(failedTickers, audits),
-    [failedTickers, audits]
+    () => partitionTickersByEcosystem(failedTickers, displayAudits),
+    [failedTickers, displayAudits]
   );
   const { coreTickers: coreDirectoryTickers, ecosystemTickers: ecosystemDirectoryTickers } = useMemo(
-    () => partitionTickersByEcosystem(sortedTickers, audits),
-    [sortedTickers, audits]
+    () => partitionTickersByEcosystem(archiveSortedTickers, audits),
+    [archiveSortedTickers, audits]
   );
   const sandboxTickerSet = useMemo(() => new Set(sandboxTickers), [sandboxTickers]);
 
@@ -980,14 +1006,14 @@ function ThermodynamicAuditApp() {
   );
 
   const basketGainsSummary = useMemo(() => {
-    const synced = buildBasketSyncedCohortRecord(audits, gainsCohortRecord);
+    const synced = buildBasketSyncedCohortRecord(displayAudits, gainsCohortRecord);
     return computeCohortAggregateSummary(
       computeCohortLiquidMetricsList(synced.passed, 'RELEASE', gainsLiveSpots),
       computeCohortLiquidMetricsList(synced.failed, 'RELEASE', gainsLiveSpots),
       1000,
       false
     );
-  }, [audits, gainsCohortRecord, gainsLiveSpots]);
+  }, [displayAudits, gainsCohortRecord, gainsLiveSpots]);
 
   const flashArchiveToast = (text: string, tone: ArchiveToastState['tone'] = 'hit') => {
     setArchiveToast({ text, tone });
@@ -1091,10 +1117,17 @@ function ThermodynamicAuditApp() {
         Object.entries(payload.audits).forEach(([tk, item]) => {
           if (item && Array.isArray(item.invariants) && item.invariants.length >= 6) {
             const cleanTk = String(item.ticker || tk).toUpperCase();
+            const mergedSnaps = mergeHistoricalSnapshots(
+              item.historicalSnapshots,
+              PRELOADED_AUDITS[cleanTk]?.historicalSnapshots
+            );
             serverAudits[cleanTk] = enforceEnergyArbitrageLawOnAudit({
               ...item,
               ticker: cleanTk,
-              isArchived: true
+              isArchived: true,
+              ...(mergedSnaps && mergedSnaps.length > 0
+                ? { historicalSnapshots: mergedSnaps }
+                : {})
             });
             if (Array.isArray(item.queryAliases)) {
               item.queryAliases.forEach((al) => {
@@ -1179,11 +1212,19 @@ function ThermodynamicAuditApp() {
             ? (data.sources as GroundingSource[])
             : undefined;
 
-          const candidateAudit = {
+          const mergedRemoteSnaps = mergeHistoricalSnapshots(
+            (data.historicalSnapshots as AuditData['historicalSnapshots']) || undefined,
+            PRELOADED_AUDITS[tk]?.historicalSnapshots
+          );
+
+          const candidateAudit: AuditData = {
             ...(data as unknown as AuditData),
             ticker: tk,
             freshSources: docSources || (data.freshSources as GroundingSource[] | undefined),
-            isArchived: true
+            isArchived: true,
+            ...(mergedRemoteSnaps && mergedRemoteSnaps.length > 0
+              ? { historicalSnapshots: mergedRemoteSnaps }
+              : {})
           };
 
           remoteAudits[tk] = enforceEnergyArbitrageLawOnAudit(candidateAudit);
@@ -1505,10 +1546,10 @@ function ThermodynamicAuditApp() {
   };
 
   const validPinnedKeys = useMemo(
-    () => pinnedKeys.filter((k) => Boolean(audits[k])),
-    [pinnedKeys, audits]
+    () => pinnedKeys.filter((k) => Boolean(displayAudits[k])),
+    [pinnedKeys, displayAudits]
   );
-  const hasActiveAudit = Boolean(activeKey && audits[activeKey]);
+  const hasActiveAudit = Boolean(activeKey && displayAudits[activeKey]);
   const isPinned = Boolean(hasActiveAudit && activeKey && validPinnedKeys.includes(activeKey));
   const stageTickers: string[] = useMemo(() => {
     if (isAuditing) {
@@ -1692,20 +1733,37 @@ function ThermodynamicAuditApp() {
             wrapTransform && wrapTransform !== 'none' ? new DOMMatrixReadOnly(wrapTransform) : null;
           const currentWrapTy =
             wrapMatrix && Number.isFinite(wrapMatrix.m42) ? wrapMatrix.m42 : 0;
-          const arenaRect = arenaEl.getBoundingClientRect();
+
+          // Subtract any in-flight heroDockRef CSS transition translateY so frame-0 coordinates
+          // match the final resting header position without pulling controls up mid-transition.
+          const heroTransform = heroEl ? window.getComputedStyle(heroEl).transform : 'none';
+          const heroMatrix =
+            heroTransform && heroTransform !== 'none' ? new DOMMatrixReadOnly(heroTransform) : null;
+          const currentHeroTy =
+            heroMatrix && Number.isFinite(heroMatrix.m42) ? heroMatrix.m42 : 0;
+
+          const arenaBoxEl = (arenaEl.parentElement as HTMLElement | null) || arenaEl;
+          const wrapRect = wrapEl.getBoundingClientRect();
+          const arenaLayoutHeight = arenaBoxEl.offsetHeight;
+          const wrapLayoutHeightWithoutPt = Math.max(0, wrapEl.offsetHeight - currentPt);
           const pillRect = pillEl ? pillEl.getBoundingClientRect() : null;
-          const searchClearancePx = isGeniusMode ? (isCompactHeight ? 16 : 28) : 10;
+          const searchClearancePx = isGeniusMode ? (isCompactHeight ? 12 : 20) : 6;
           const minArenaTopDocY =
             pillRect && pillRect.height > 0
-              ? pillRect.bottom + docScrollY + searchClearancePx
+              ? pillRect.bottom + docScrollY - currentHeroTy + searchClearancePx
               : 0;
-          if (arenaRect.height > 0) {
-            const arenaTopBaseDocY =
-              arenaRect.top + docScrollY - currentPt - currentMt - currentWrapTy;
-            const arenaCenterBaseDocY = arenaTopBaseDocY + arenaRect.height / 2;
+          if (arenaLayoutHeight > 0) {
+            const arenaTopBaseDocY = wrapRect.top + docScrollY - currentMt - currentWrapTy;
+            const arenaCenterBaseDocY = arenaTopBaseDocY + arenaLayoutHeight / 2;
             const desiredPt = backdropCenterY - arenaCenterBaseDocY;
             const minSafePt = Math.max(0, minArenaTopDocY - arenaTopBaseDocY);
-            nextWrapPt = stackBasketsBelow ? minSafePt : Math.max(minSafePt, desiredPt);
+            const wrapBottomBaseDocY = arenaTopBaseDocY + wrapLayoutHeightWithoutPt;
+            const persistentFooterReservePx = 62;
+            const rawMaxSafePt =
+              window.innerHeight - persistentFooterReservePx - wrapBottomBaseDocY;
+            nextWrapPt = stackBasketsBelow
+              ? minSafePt
+              : Math.max(0, Math.min(Math.max(minSafePt, desiredPt), Math.max(0, rawMaxSafePt)));
             nextWrapMt = 0;
           }
         }
@@ -1779,10 +1837,14 @@ function ThermodynamicAuditApp() {
     viewportMetrics.width,
     viewportMetrics.height,
     displayMetrics.stageSizePx,
-    activeKey
+    activeKey,
+    timelineYear
   ]);
 
-  const currentAudit = hasActiveAudit && activeKey ? audits[activeKey] : audits.KAS;
+  const currentAudit =
+    hasActiveAudit && activeKey
+      ? displayAudits[activeKey]
+      : displayAudits.KAS || displayAudits.BTC || audits.KAS;
   const baseAccent = hasActiveAudit
     ? getGradeAccent(currentAudit.grade)
     : {
@@ -1837,7 +1899,10 @@ function ThermodynamicAuditApp() {
     [rawHistoricalSnapshots]
   );
 
-  const hasEpochTimeMachine = evaluatedSnapshots.length > 0;
+  const hasEpochTimeMachine =
+    timelineYear === 'PRESENT' &&
+    evaluatedSnapshots.length >= 2 &&
+    (!currentAudit.auditedAtTimelineYear || currentAudit.auditedAtTimelineYear === 'PRESENT');
   const effectiveEpochIdx = hasEpochTimeMachine
     ? selectedEpochIdx !== null &&
       selectedEpochIdx >= 0 &&
@@ -2059,7 +2124,20 @@ function ThermodynamicAuditApp() {
   const togglePinTickerRef = useRef<(key: string) => void>(() => {});
 
   const selectCachedAudit = (key: string) => {
-    if (!audits[key] || isAuditing) return;
+    if (isAuditing) return;
+    let resolvedItem = displayAudits[key];
+    if (!resolvedItem && audits[key]) {
+      const earliestStop = resolveEarliestTimelineStopForAsset(key, audits[key]);
+      setTimelineYear(earliestStop);
+      resolvedItem = projectAuditAtYear(audits[key], earliestStop) || audits[key];
+      flashArchiveToast(
+        `$${key} was pre-genesis in ${timelineYear} — Time Machine advanced to ${
+          getGlobalTimelineStop(earliestStop).buttonLabel
+        }`,
+        'hit'
+      );
+    }
+    if (!resolvedItem) return;
     trackDotDiscovery('inspect_asset');
     setAuditError(null);
     setConfirmFullReauditKey(null);
@@ -2079,11 +2157,11 @@ function ThermodynamicAuditApp() {
             }
           );
           const idx = stageTickers.indexOf(key);
-          if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
+          if (idx !== -1 && curLayout.positions[idx] && resolvedItem) {
             const ghostId = `${key}-${Date.now()}`;
             const ghostEntry: ExitingPinEntry = {
               ghostId,
-              auditObj: audits[key],
+              auditObj: resolvedItem,
               x: curLayout.positions[idx].x,
               y: curLayout.positions[idx].y,
               nodeScale: curLayout.nodeScale
@@ -2126,7 +2204,8 @@ function ThermodynamicAuditApp() {
   };
 
   const togglePinTicker = (key: string) => {
-    if (!audits[key] || isAuditing) return;
+    const resolvedItem = displayAudits[key];
+    if (!resolvedItem || isAuditing) return;
     trackDotDiscovery('pin_constellation');
     setHoveredInvId(null);
 
@@ -2142,11 +2221,11 @@ function ThermodynamicAuditApp() {
           }
         );
         const idx = stageTickers.indexOf(key);
-        if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
+        if (idx !== -1 && curLayout.positions[idx] && resolvedItem) {
           const ghostId = `${key}-${Date.now()}`;
           const ghostEntry: ExitingPinEntry = {
             ghostId,
-            auditObj: audits[key],
+            auditObj: resolvedItem,
             x: curLayout.positions[idx].x,
             y: curLayout.positions[idx].y,
             nodeScale: curLayout.nodeScale
@@ -2165,7 +2244,12 @@ function ThermodynamicAuditApp() {
       return;
     }
 
-    if (validPinnedKeys.length === 0 && activeKey && key !== activeKey && audits[activeKey]) {
+    if (
+      validPinnedKeys.length === 0 &&
+      activeKey &&
+      key !== activeKey &&
+      displayAudits[activeKey]
+    ) {
       setPinnedKeys([activeKey, key]);
       setActiveKey(key);
       triggerScanPulse();
@@ -2206,11 +2290,11 @@ function ThermodynamicAuditApp() {
         }
       );
       const idx = stageTickers.indexOf(key);
-      if (idx !== -1 && curLayout.positions[idx] && audits[key]) {
+      if (idx !== -1 && curLayout.positions[idx] && displayAudits[key]) {
         const ghostId = `${key}-${Date.now()}`;
         const ghostEntry: ExitingPinEntry = {
           ghostId,
-          auditObj: audits[key],
+          auditObj: displayAudits[key],
           x: curLayout.positions[idx].x,
           y: curLayout.positions[idx].y,
           nodeScale: curLayout.nodeScale
@@ -2308,7 +2392,7 @@ function ThermodynamicAuditApp() {
     const modeLabel = isGeniusMode ? 'GENIUS FORENSIC' : 'NORMIE';
     const blocks = stageTickers
       .map((tk) => {
-        const item = audits[tk];
+        const item = displayAudits[tk];
         const inv = item?.invariants?.find((i) => i.id === invId);
         if (!item || !inv) return null;
         const body = getActiveInvariantParagraph(inv);
@@ -2329,8 +2413,16 @@ function ThermodynamicAuditApp() {
 
   // Replays a deterministic 6-second chaotic-to-harmonic reveal animation when pulling from the Archive (0 API credits)
   const performArchivePullAudit = async (cachedKey: string) => {
-    const targetAudit = audits[cachedKey];
-    if (!targetAudit || isAuditing) return;
+    const baseAudit = audits[cachedKey];
+    if (!baseAudit || isAuditing) return;
+
+    let effectiveStop = timelineYear;
+    let targetAudit = displayAudits[cachedKey];
+    if (!targetAudit) {
+      effectiveStop = resolveEarliestTimelineStopForAsset(cachedKey, baseAudit);
+      setTimelineYear(effectiveStop);
+      targetAudit = projectAuditAtYear(baseAudit, effectiveStop) || baseAudit;
+    }
 
     setSearchInput('');
     setHoveredInvId(null);
@@ -2420,7 +2512,8 @@ function ThermodynamicAuditApp() {
   // Executes SSE-streamed 6-invariant grounded audit via server.ts (/api/audit -> gemini-4-hydrogen)
   const performLiveGroundedAudit = async (
     rawQuery: string,
-    existingBaseline: AuditData | null = null
+    existingBaseline: AuditData | null = null,
+    requestedYear: GlobalTimelineYear = timelineYear
   ) => {
     if (!rawQuery || isAuditing) return;
 
@@ -2443,6 +2536,23 @@ function ThermodynamicAuditApp() {
       ? resolveCanonicalAssetTicker(existingBaseline.ticker) || existingBaseline.ticker
       : canonicalGuess.slice(0, 8) || normalized.slice(0, 8) || 'ASSET';
 
+    // If the user is on a historical stop before a known asset's genesis (e.g. searching BTC on 1971),
+    // advance to the asset's earliest valid Time Machine stop so we audit a real epoch.
+    const knownGenesisYear = resolveAssetGenesisYear(
+      canonicalGuess || normalized,
+      existingBaseline || undefined
+    );
+    const effectiveTimelineYear: GlobalTimelineYear =
+      requestedYear !== 'PRESENT' && knownGenesisYear > getGlobalTimelineStop(requestedYear).numericYear
+        ? resolveEarliestTimelineStopForAsset(
+            canonicalGuess || normalized,
+            existingBaseline || undefined
+          )
+        : requestedYear;
+    if (effectiveTimelineYear !== timelineYear) {
+      setTimelineYear(effectiveTimelineYear);
+    }
+
     setIsAuditing(true);
     setSearchInput('');
     setHoveredInvId(null);
@@ -2454,7 +2564,9 @@ function ThermodynamicAuditApp() {
     setResolvedStepColors({});
     setResolvedStepScores({});
     setAuditStatusMsg(
-      existingBaseline
+      effectiveTimelineYear !== 'PRESENT'
+        ? `Pulling <= ${effectiveTimelineYear} historical intel for $${displayTarget} via Google Search...`
+        : existingBaseline
         ? `Re-auditing $${displayTarget} via Live Google Search...`
         : effectiveSandbox
         ? `Sandbox Preview: scanning ${rawQuery.toUpperCase()} (local only)...`
@@ -2492,7 +2604,8 @@ function ThermodynamicAuditApp() {
         body: JSON.stringify({
           query: rawQuery,
           existingBaseline,
-          bypassCache: Boolean(existingBaseline),
+          bypassCache: Boolean(existingBaseline) || effectiveTimelineYear !== 'PRESENT',
+          timelineYear: effectiveTimelineYear,
           sandbox: effectiveSandbox,
           clientId,
           userId: archiveUser?.uid || null
@@ -2564,10 +2677,14 @@ function ThermodynamicAuditApp() {
                   ...evt.audit,
                   freshSources: evt.sources || evt.audit.freshSources || tracker.freshSources
                 });
+                const displayForSteps =
+                  effectiveTimelineYear !== 'PRESENT'
+                    ? projectAuditAtYear(enforced, effectiveTimelineYear) || enforced
+                    : enforced;
                 tracker.result = enforced;
                 tracker.freshSources = evt.sources || enforced.freshSources || tracker.freshSources;
                 for (let k = 0; k < 6; k++) {
-                  const inv = enforced.invariants[k];
+                  const inv = displayForSteps.invariants[k];
                   if (inv) {
                     tracker.scores[k] = inv.score;
                     tracker.colors[k] = getScoreStyle(inv.score).color;
@@ -2603,7 +2720,9 @@ function ThermodynamicAuditApp() {
         const stage = CORE_SCAN_STAGES[step];
         setScanStepIdx(step);
         setAuditStatusMsg(
-          `[${stage.id}/06] Auditing ${stage.title} on $${displayTarget}...`
+          effectiveTimelineYear !== 'PRESENT'
+            ? `[${stage.id}/06] Auditing <= ${effectiveTimelineYear} ${stage.title} on $${displayTarget}...`
+            : `[${stage.id}/06] Auditing ${stage.title} on $${displayTarget}...`
         );
 
         let tick = 0;
@@ -2652,12 +2771,40 @@ function ThermodynamicAuditApp() {
 
       const builtAudit = tracker.result;
       const cleanTicker = builtAudit.ticker;
+      const mergedForArchive = hasDedicatedTimelineCoverage(builtAudit, effectiveTimelineYear)
+        ? attachHistoricalAuditToBaseline(
+            audits[cleanTicker] || existingBaseline,
+            projectAuditAtYear(builtAudit, effectiveTimelineYear) || builtAudit,
+            effectiveTimelineYear
+          )
+        : attachHistoricalAuditToBaseline(
+            audits[cleanTicker] || existingBaseline,
+            builtAudit,
+            effectiveTimelineYear
+          );
 
       if (tracker.sandbox && !PRELOADED_AUDITS[cleanTicker]) {
         setSandboxTickers((prev) => (prev.includes(cleanTicker) ? prev : [...prev, cleanTicker]));
       }
       setScanTargetTicker(cleanTicker);
-      setAudits((prev) => ({ ...prev, [cleanTicker]: builtAudit }));
+      setAudits((prev) => {
+        const localExisting = prev[cleanTicker] || existingBaseline;
+        const incomingForYear =
+          effectiveTimelineYear !== 'PRESENT'
+            ? projectAuditAtYear(builtAudit, effectiveTimelineYear) || builtAudit
+            : builtAudit;
+        return {
+          ...prev,
+          [cleanTicker]: attachHistoricalAuditToBaseline(
+            localExisting,
+            incomingForYear,
+            effectiveTimelineYear
+          )
+        };
+      });
+      if (!projectAuditAtYear(mergedForArchive, effectiveTimelineYear)) {
+        setTimelineYear(resolveEarliestTimelineStopForAsset(cleanTicker, mergedForArchive));
+      }
       setPinnedKeys((prev) => {
         const cleanPrev = prev.filter(Boolean);
         if (cleanPrev.length === 0 || cleanPrev.includes(cleanTicker)) return cleanPrev;
@@ -2677,18 +2824,23 @@ function ThermodynamicAuditApp() {
           : tracker.quota
           ? ` • ${tracker.quota.remaining}/${tracker.quota.limit} daily pulls left`
           : '';
+      const yearBadge =
+        effectiveTimelineYear !== 'PRESENT' ? ` (<= ${effectiveTimelineYear} Horizon)` : '';
 
       if (tracker.sandbox) {
         flashArchiveToast(
-          `Sandbox Preview ($${cleanTicker}) saved locally in browser only — excluded from public archive${quotaSuffix}`,
+          `Sandbox Preview ($${cleanTicker}${yearBadge}) saved locally in browser only — excluded from public archive${quotaSuffix}`,
           'warn'
         );
       } else {
-        const savedRemotely = await persistAuditToArchive(builtAudit, invLogs, [rawQuery, normalized]);
+        const savedRemotely = await persistAuditToArchive(mergedForArchive, invLogs, [
+          rawQuery,
+          normalized
+        ]);
         flashArchiveToast(
           savedRemotely
-            ? `Archived $${cleanTicker} to Shared Vault — future lookups cost 0 credits${quotaSuffix}`
-            : `Archived $${cleanTicker} in Session Vault — future lookups cost 0 credits${quotaSuffix}`,
+            ? `Archived $${cleanTicker}${yearBadge} to Shared Vault — future lookups cost 0 credits${quotaSuffix}`
+            : `Archived $${cleanTicker}${yearBadge} in Session Vault — future lookups cost 0 credits${quotaSuffix}`,
           'saved'
         );
       }
@@ -2705,8 +2857,9 @@ function ThermodynamicAuditApp() {
   };
 
   const handleFreshReaudit = async (targetKey: string | null = activeKey, bypassConfirm = false) => {
-    const targetObj = (targetKey && audits[targetKey]) || currentAudit;
-    if (!targetObj || isAuditing || singleInvBusy) return;
+    const rawRootObj =
+      (targetKey && audits[targetKey]) || audits[currentAudit.ticker] || currentAudit;
+    if (!rawRootObj || isAuditing || singleInvBusy) return;
 
     if (strictCreditLock && !isAdminSession) {
       flashArchiveToast(
@@ -2716,14 +2869,15 @@ function ThermodynamicAuditApp() {
       return;
     }
 
-    if (!bypassConfirm && confirmFullReauditKey !== targetObj.ticker) {
-      setConfirmFullReauditKey(targetObj.ticker);
+    const alreadyCoversYear = hasDedicatedTimelineCoverage(rawRootObj, timelineYear);
+    if (alreadyCoversYear && !bypassConfirm && confirmFullReauditKey !== rawRootObj.ticker) {
+      setConfirmFullReauditKey(rawRootObj.ticker);
       return;
     }
 
     setConfirmFullReauditKey(null);
     if (modalInvId) setModalInvId(null);
-    await performLiveGroundedAudit(targetObj.ticker, targetObj);
+    await performLiveGroundedAudit(rawRootObj.ticker, rawRootObj, timelineYear);
   };
 
   // Surgically updates one invariant on an asset while preserving all other 5 locked-in invariants & essays
@@ -2804,6 +2958,7 @@ function ThermodynamicAuditApp() {
         ? 'LINEAR_POW'
         : targetAudit.consensusFamily;
 
+    const activeHorizon = getHistoricalAuditHorizon(timelineYear);
     const baseParas = [...getGeniusForensicParagraphs(targetAudit)];
     if (baseParas.length === 6) {
       if (invIdx >= 0 && invIdx <= 5) {
@@ -2817,7 +2972,11 @@ function ThermodynamicAuditApp() {
             usesSecretTemplate: targetAudit.usesSecretTemplate
           },
           invIdx,
-          { preserveSecretGeniusProse: Boolean(targetAudit.usesSecretTemplate) }
+          {
+            preserveSecretGeniusProse: Boolean(targetAudit.usesSecretTemplate),
+            maxYear: activeHorizon.numericYear,
+            contemporaryVelocityContrast: activeHorizon.contemporaryVelocityContrast
+          }
         );
       }
       if (Math.abs(nextTotal - prevTotal) > 0.001) {
@@ -2837,7 +2996,7 @@ function ThermodynamicAuditApp() {
       (s, idx, arr) => s && s.uri && arr.findIndex((x) => x.uri === s.uri) === idx
     );
 
-    const updatedAudit: AuditData = {
+    const updatedEpochAudit: AuditData = {
       ...targetAudit,
       consensusFamily: nextFamily,
       invariants: nextInvariants,
@@ -2852,9 +3011,22 @@ function ThermodynamicAuditApp() {
       archiveRevision: (Number(targetAudit.archiveRevision) || 0) + 1
     };
 
-    setAudits((prev) => ({ ...prev, [targetAudit.ticker]: updatedAudit }));
+    const mergedRootAudit = attachHistoricalAuditToBaseline(
+      audits[targetAudit.ticker] || targetAudit,
+      updatedEpochAudit,
+      timelineYear
+    );
+
+    setAudits((prev) => ({
+      ...prev,
+      [targetAudit.ticker]: attachHistoricalAuditToBaseline(
+        prev[targetAudit.ticker] || targetAudit,
+        updatedEpochAudit,
+        timelineYear
+      )
+    }));
     return {
-      updatedAudit,
+      updatedAudit: mergedRootAudit,
       updatedSingleInv,
       prevInvScore,
       clampedScore,
@@ -2898,7 +3070,8 @@ function ThermodynamicAuditApp() {
           mode: 'REAUDIT',
           targetAudit,
           invId,
-          isGeniusMode
+          isGeniusMode,
+          timelineYear
         })
       });
 
@@ -3040,7 +3213,8 @@ function ThermodynamicAuditApp() {
           targetAudit,
           invId,
           userInput: rawClaim,
-          isGeniusMode
+          isGeniusMode,
+          timelineYear
         })
       });
 
@@ -3241,7 +3415,8 @@ function ThermodynamicAuditApp() {
           targetAudit,
           invId,
           userInput: userQuestion,
-          isGeniusMode
+          isGeniusMode,
+          timelineYear
         })
       });
 
@@ -3333,18 +3508,32 @@ function ThermodynamicAuditApp() {
 
     if (cachedKey) {
       trackDotDiscovery('inspect_asset');
+      const cachedRoot = audits[cachedKey];
+      const existedAtSelectedYear =
+        timelineYear === 'PRESENT' ||
+        resolveAssetGenesisYear(cachedKey, cachedRoot) <=
+          getGlobalTimelineStop(timelineYear).numericYear;
+      if (
+        cachedRoot &&
+        existedAtSelectedYear &&
+        !hasDedicatedTimelineCoverage(cachedRoot, timelineYear) &&
+        (!strictCreditLock || isAdminSession)
+      ) {
+        await performLiveGroundedAudit(cachedKey, cachedRoot, timelineYear);
+        return;
+      }
       await performArchivePullAudit(cachedKey);
       return;
     }
 
-    if (strictCreditLock) {
+    if (strictCreditLock && !isAdminSession) {
       setAuditError(
         `Credit Shield Lock is ON: "${rawQuery}" is not in the archive yet. Unlock in the Archive menu to audit new unarchived tokens.`
       );
       return;
     }
 
-    await performLiveGroundedAudit(rawQuery, null);
+    await performLiveGroundedAudit(rawQuery, null, timelineYear);
   };
 
   const openWartimeSimTab = useCallback(() => {
@@ -4069,7 +4258,7 @@ function ThermodynamicAuditApp() {
             ...(displayMetrics.sidebarWidthPx ? { width: `${displayMetrics.sidebarWidthPx}px` } : {}),
             contain: 'layout style'
           }}
-          className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+          className="hidden md:flex md:absolute md:left-3 lg:left-4 xl:left-6 md:top-[152px] lg:top-[126px] md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
         >
           <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
             <span className="flex items-center gap-1.5 text-[#49EACB] font-semibold">
@@ -4099,7 +4288,7 @@ function ThermodynamicAuditApp() {
               {corePassedTickers.map((tk, idx) => (
                 <HarmonicProjectBubble
                   key={tk}
-                  item={audits[tk]}
+                  item={displayAudits[tk]}
                   isSelected={activeKey === tk}
                   isPinnedItem={pinnedStageSet.has(tk)}
                   onSelectTicker={stableSelectTicker}
@@ -4118,7 +4307,7 @@ function ThermodynamicAuditApp() {
                   {ecosystemPassedTickers.map((tk, idx) => (
                     <HarmonicProjectBubble
                       key={tk}
-                      item={audits[tk]}
+                      item={displayAudits[tk]}
                       isSelected={activeKey === tk}
                       isPinnedItem={pinnedStageSet.has(tk)}
                       onSelectTicker={stableSelectTicker}
@@ -4139,7 +4328,7 @@ function ThermodynamicAuditApp() {
             ...(displayMetrics.sidebarWidthPx ? { width: `${displayMetrics.sidebarWidthPx}px` } : {}),
             contain: 'layout style'
           }}
-          className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[calc(50vh+36px)] lg:top-[calc(50vh+24px)] md:-translate-y-1/2 md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
+          className="hidden md:flex md:absolute md:right-3 lg:right-4 xl:right-6 md:top-[152px] lg:top-[126px] md:w-[176px] lg:w-[212px] xl:w-[250px] md:max-h-[calc(100vh-232px)] lg:max-h-[calc(100vh-204px)] z-30 rounded-3xl bg-[#121418]/[0.92] border border-white/[0.06] p-3 lg:p-3.5 xl:p-4 flex-col items-center shadow-[0_14px_36px_rgba(0,0,0,0.5)]"
         >
           <div className="w-full shrink-0 flex items-center justify-between pb-2.5 border-b border-white/[0.06] font-mono text-[10px] uppercase tracking-widest">
             <span className="flex items-center gap-1.5 text-[#EF4444] font-semibold">
@@ -4165,22 +4354,33 @@ function ThermodynamicAuditApp() {
           </button>
 
           <div className="-mx-2.5 w-[calc(100%+20px)] overflow-y-auto no-scrollbar px-3.5 py-3.5 xl:py-4 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
-              {coreFailedTickers.map((tk, idx) => (
-                <HarmonicProjectBubble
-                  key={tk}
-                  item={audits[tk]}
-                  isSelected={activeKey === tk}
-                  isPinnedItem={pinnedStageSet.has(tk)}
-                  onSelectTicker={stableSelectTicker}
-                  onTogglePin={stableTogglePin}
-                  seedIndex={idx + 50}
-                  sizePx={displayMetrics.sidebarBubbleSizePx}
-                />
-              ))}
-            </div>
+            {failedTickers.length === 0 && (
+              <div className="py-2.5 px-1 text-center font-mono text-[9.5px] leading-relaxed text-neutral-500">
+                Zero E = 0 assets in {timelineYear} &middot; Pre-Aug 15, 1971 Severance
+              </div>
+            )}
+            {coreFailedTickers.length > 0 && (
+              <div className="flex flex-wrap items-center justify-center gap-2 lg:gap-3 xl:gap-3.5">
+                {coreFailedTickers.map((tk, idx) => (
+                  <HarmonicProjectBubble
+                    key={tk}
+                    item={displayAudits[tk]}
+                    isSelected={activeKey === tk}
+                    isPinnedItem={pinnedStageSet.has(tk)}
+                    onSelectTicker={stableSelectTicker}
+                    onTogglePin={stableTogglePin}
+                    seedIndex={idx + 50}
+                    sizePx={displayMetrics.sidebarBubbleSizePx}
+                  />
+                ))}
+              </div>
+            )}
             {ecosystemFailedTickers.length > 0 && (
-              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+              <div
+                className={`${
+                  coreFailedTickers.length > 0 ? 'pt-2 border-t border-white/[0.06] ' : ''
+                }space-y-2`}
+              >
                 <div className="font-mono text-[9px] uppercase tracking-widest text-indigo-300/80 text-center">
                   Ecosystem / Overlays ({ecosystemFailedTickers.length})
                 </div>
@@ -4188,7 +4388,7 @@ function ThermodynamicAuditApp() {
                   {ecosystemFailedTickers.map((tk, idx) => (
                     <HarmonicProjectBubble
                       key={tk}
-                      item={audits[tk]}
+                      item={displayAudits[tk]}
                       isSelected={activeKey === tk}
                       isPinnedItem={pinnedStageSet.has(tk)}
                       onSelectTicker={stableSelectTicker}
@@ -4209,13 +4409,14 @@ function ThermodynamicAuditApp() {
       displayMetrics.sidebarBubbleSizePx,
       passedTickers.length,
       failedTickers.length,
+      timelineYear,
       basketGainsSummary.passCycleAvg,
       basketGainsSummary.failCycleAvg,
       corePassedTickers,
       ecosystemPassedTickers,
       coreFailedTickers,
       ecosystemFailedTickers,
-      audits,
+      displayAudits,
       activeKey,
       pinnedStageSet,
       stableSelectTicker,
@@ -4227,7 +4428,7 @@ function ThermodynamicAuditApp() {
     () => (
       <div
         data-testid="stacked-bottom-baskets"
-        className="w-full max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2 pt-6"
+        className="w-full max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-2 items-start gap-4 mt-2 pt-6"
       >
         <aside
           data-tutorial-id="passed-sidebar"
@@ -4260,7 +4461,7 @@ function ThermodynamicAuditApp() {
               {corePassedTickers.map((tk, idx) => (
                 <HarmonicProjectBubble
                   key={tk}
-                  item={audits[tk]}
+                  item={displayAudits[tk]}
                   isSelected={activeKey === tk}
                   isPinnedItem={pinnedStageSet.has(tk)}
                   onSelectTicker={stableSelectTicker}
@@ -4278,7 +4479,7 @@ function ThermodynamicAuditApp() {
                   {ecosystemPassedTickers.map((tk, idx) => (
                     <HarmonicProjectBubble
                       key={tk}
-                      item={audits[tk]}
+                      item={displayAudits[tk]}
                       isSelected={activeKey === tk}
                       isPinnedItem={pinnedStageSet.has(tk)}
                       onSelectTicker={stableSelectTicker}
@@ -4319,21 +4520,32 @@ function ThermodynamicAuditApp() {
           </button>
 
           <div className="w-full space-y-2.5 py-1">
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              {coreFailedTickers.map((tk, idx) => (
-                <HarmonicProjectBubble
-                  key={tk}
-                  item={audits[tk]}
-                  isSelected={activeKey === tk}
-                  isPinnedItem={pinnedStageSet.has(tk)}
-                  onSelectTicker={stableSelectTicker}
-                  onTogglePin={stableTogglePin}
-                  seedIndex={idx + 50}
-                />
-              ))}
-            </div>
+            {failedTickers.length === 0 && (
+              <div className="py-2 px-1 text-center font-mono text-[10px] leading-relaxed text-neutral-500">
+                Zero E = 0 assets in {timelineYear} &middot; Pre-Aug 15, 1971 Severance
+              </div>
+            )}
+            {coreFailedTickers.length > 0 && (
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                {coreFailedTickers.map((tk, idx) => (
+                  <HarmonicProjectBubble
+                    key={tk}
+                    item={displayAudits[tk]}
+                    isSelected={activeKey === tk}
+                    isPinnedItem={pinnedStageSet.has(tk)}
+                    onSelectTicker={stableSelectTicker}
+                    onTogglePin={stableTogglePin}
+                    seedIndex={idx + 50}
+                  />
+                ))}
+              </div>
+            )}
             {ecosystemFailedTickers.length > 0 && (
-              <div className="pt-2 border-t border-white/[0.06] space-y-2">
+              <div
+                className={`${
+                  coreFailedTickers.length > 0 ? 'pt-2 border-t border-white/[0.06] ' : ''
+                }space-y-2`}
+              >
                 <div className="font-mono text-[9.5px] uppercase tracking-widest text-indigo-300/80 text-center">
                   Ecosystem / Overlays ({ecosystemFailedTickers.length})
                 </div>
@@ -4341,7 +4553,7 @@ function ThermodynamicAuditApp() {
                   {ecosystemFailedTickers.map((tk, idx) => (
                     <HarmonicProjectBubble
                       key={tk}
-                      item={audits[tk]}
+                      item={displayAudits[tk]}
                       isSelected={activeKey === tk}
                       isPinnedItem={pinnedStageSet.has(tk)}
                       onSelectTicker={stableSelectTicker}
@@ -4359,13 +4571,14 @@ function ThermodynamicAuditApp() {
     [
       passedTickers.length,
       failedTickers.length,
+      timelineYear,
       basketGainsSummary.passCycleAvg,
       basketGainsSummary.failCycleAvg,
       corePassedTickers,
       ecosystemPassedTickers,
       coreFailedTickers,
       ecosystemFailedTickers,
-      audits,
+      displayAudits,
       activeKey,
       pinnedStageSet,
       stableSelectTicker,
@@ -4387,9 +4600,12 @@ function ThermodynamicAuditApp() {
       onAuxClick={(e) => {
         if (e.button === 1) e.preventDefault();
       }}
-      className="min-h-screen bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans"
+      className={`min-h-screen ${
+        !stackBasketsBelow && !isMultiStage ? 'md:h-screen md:max-h-screen md:overflow-hidden' : ''
+      } bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans`}
     >
       <style>{`
+        html { scrollbar-gutter: stable; }
         .font-sans { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
         .font-display { font-family: 'Space Grotesk', 'Inter', sans-serif; }
         .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; }
@@ -4791,16 +5007,13 @@ function ThermodynamicAuditApp() {
         data-testid="agent-reference-pillars"
         className="sr-only"
       >
+        <a href="/compendium">
+          Complete All-in-One Plain-Text Compendium (All 23 Thesis Axioms, Rubric, Gains &amp; Multi-Year Genius Audits 1913–Present)
+        </a>
         <a href="/?archive=1">Pillar 1: Complete Thermodynamic Audit Archive</a>
         <a href="/?rubric=1">Pillar 2: Deterministic 6-Invariant Grading Rubric and Consistency Proof</a>
         <a href="/?gains=1">Pillar 3: Live Thermodynamic Gains and US M2 Money Supply Benchmark</a>
         <a href="/?genesis=1">Pillar 4: First-Principles Origin Thesis (Physics Over Consensus)</a>
-        <a href="/api/agent/pillars">JSON Index: All 4 Reference Pillars</a>
-        <a href="/api/agent/archive">JSON Pillar 1: Archive</a>
-        <a href="/api/agent/rubric">JSON Pillar 2: Rubric and Consistency Proof</a>
-        <a href="/api/agent/gains">JSON Pillar 3: Live Gains and M2 Benchmark</a>
-        <a href="/api/agent/origin-thesis">JSON Pillar 4: Origin Thesis</a>
-        <a href="/llms.txt">LLMs Reference Guide</a>
       </nav>
 
       {/* =====================================================================
@@ -4809,9 +5022,9 @@ function ThermodynamicAuditApp() {
       <header
         className={`relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
           !isLandingIdle && isCompactHeight
-            ? 'pt-2.5 md:pt-3 pb-0.5'
+            ? 'pt-2 md:pt-2.5 pb-0.5'
             : !isLandingIdle && !isMultiStage
-            ? 'pt-3.5 md:pt-5 pb-1'
+            ? 'pt-3 md:pt-3.5 pb-0.5'
             : 'pt-3.5 md:pt-5 pb-2'
         }`}
       >
@@ -4941,7 +5154,10 @@ function ThermodynamicAuditApp() {
               />
             )}
 
-            <div className="relative inline-flex items-center justify-center">
+            <div
+              data-tutorial-id="mystery-beacon"
+              className="relative inline-flex items-center justify-center"
+            >
               <span
                 data-testid="truth-mystery-counter"
                 data-counter-value={mysteryCounterText}
@@ -5283,14 +5499,31 @@ function ThermodynamicAuditApp() {
           </div>
 
           <div
-            className={`relative w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
+            className={`relative z-40 ${
+              isLandingIdle ? 'mt-2 sm:mt-2.5' : 'mt-1.5 sm:mt-2'
+            } flex justify-center w-full px-4 sm:px-0`}
+          >
+            <GlobalTimeMachineSlider
+              value={timelineYear}
+              onChange={(nextYear) => {
+                trackDotDiscovery('hands_on_tool');
+                setSelectedEpochIdx(null);
+                setTimelineYear(nextYear);
+              }}
+              accent={accent}
+              disabled={isAuditing}
+            />
+          </div>
+
+          <div
+            className={`relative z-10 w-full max-w-xl md:max-w-[356px] lg:max-w-[500px] xl:max-w-xl px-4 sm:px-0 flex flex-col items-center ${
               isLandingIdle
                 ? isCompactHeight
-                  ? 'mt-3.5 sm:mt-4'
-                  : 'mt-5 sm:mt-6'
+                  ? 'mt-2 sm:mt-2.5'
+                  : 'mt-2.5 sm:mt-3'
                 : isCompactHeight
-                ? 'mt-3.5 sm:mt-4'
-                : 'mt-6 sm:mt-7'
+                ? 'mt-1.5 sm:mt-2'
+                : 'mt-2 sm:mt-2.5'
             }`}
           >
             <form
@@ -5442,15 +5675,13 @@ function ThermodynamicAuditApp() {
         }
         className={`relative z-10 flex-1 w-full ${
           stackBasketsBelow
-            ? 'px-4 sm:px-6'
-            : 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px]'
-        } ${
-          isCompactHeight ? 'pb-2 sm:pb-2.5' : 'pb-3 sm:pb-4'
+            ? 'px-4 sm:px-6 pb-3 sm:pb-4'
+            : isMultiStage
+            ? 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-4 md:pb-16'
+            : 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-1 md:pb-0'
         } flex flex-col items-center justify-start ${
           !isLandingIdle && !isMultiStage
-            ? isCompactHeight
-              ? 'pt-0.5 sm:pt-1'
-              : 'pt-0.5 sm:pt-2'
+            ? 'pt-0.5 sm:pt-1'
             : isMultiStage
             ? isCompactHeight
               ? 'pt-2 sm:pt-2.5'
@@ -5538,7 +5769,7 @@ function ThermodynamicAuditApp() {
                       Pinned ({count}/4):
                     </span>
                     {stageTickers.map((tk) => {
-                      const item = audits[tk];
+                      const item = displayAudits[tk];
                       if (!item) return null;
                       const itemAcc = getGradeAccent(item.grade);
                       const isCurr = activeKey === tk;
@@ -5654,8 +5885,8 @@ function ThermodynamicAuditApp() {
                           {deltaLinks.map((link) => {
                             const tkA = stageTickers[link.fromIdx];
                             const tkB = stageTickers[link.toIdx];
-                            const itemA = audits[tkA];
-                            const itemB = audits[tkB];
+                            const itemA = displayAudits[tkA];
+                            const itemB = displayAudits[tkB];
                             if (!itemA || !itemB) return null;
                             const accA = getGradeAccent(itemA.grade);
                             const accB = getGradeAccent(itemB.grade);
@@ -5683,8 +5914,8 @@ function ThermodynamicAuditApp() {
                         {deltaLinks.map((link) => {
                           const tkA = stageTickers[link.fromIdx];
                           const tkB = stageTickers[link.toIdx];
-                          const itemA = audits[tkA];
-                          const itemB = audits[tkB];
+                          const itemA = displayAudits[tkA];
+                          const itemB = displayAudits[tkB];
                           if (!itemA || !itemB) return null;
 
                           const isIncidentFocused = activeKey === tkA || activeKey === tkB;
@@ -5797,8 +6028,8 @@ function ThermodynamicAuditApp() {
                       {deltaLinks.map((link) => {
                         const tkA = stageTickers[link.fromIdx];
                         const tkB = stageTickers[link.toIdx];
-                        const itemA = audits[tkA];
-                        const itemB = audits[tkB];
+                        const itemA = displayAudits[tkA];
+                        const itemB = displayAudits[tkB];
                         if (!itemA || !itemB) return null;
 
                         const delta = Math.abs(
@@ -5906,7 +6137,7 @@ function ThermodynamicAuditApp() {
                     ))}
 
                     {stageTickers.map((tk, idx) => {
-                      const item = audits[tk];
+                      const item = displayAudits[tk];
                       const pos = layout.positions[idx] || {
                         x: layout.width / 2,
                         y: layout.height / 2
@@ -6146,7 +6377,7 @@ function ThermodynamicAuditApp() {
                             }}
                           >
                             {stageTickers.map((tk) => {
-                              const item = audits[tk];
+                              const item = displayAudits[tk];
                               const inv = item?.invariants?.find(
                                 (i) => i.id === expandedSyncInvId
                               );
@@ -6347,29 +6578,34 @@ function ThermodynamicAuditApp() {
               Math.min(
                 1.05,
                 (viewportMetrics.width - subLgSideReserve * 2 - 20) / stageSize,
-                (viewportMetrics.height - 352) / stageSize
+                (viewportMetrics.height - 392) / stageSize
               )
             );
-            const nonLgScale = !isLgDesktop
+            const lgFitScale = !stackBasketsBelow
+              ? Math.min(
+                  displayMetrics.arenaScale,
+                  Math.max(0.68, Math.round(((viewportMetrics.height - 404) / stageSize) * 100) / 100)
+                )
+              : displayMetrics.arenaScale;
+            const effectiveScale = !isLgDesktop
               ? viewportMetrics.width < 640
                 ? Math.min(0.86, Math.max(0.68, (viewportMetrics.width - 14) / stageSize))
                 : viewportMetrics.width < 768
                 ? 0.98
                 : Math.round(subLgLandscapeScale * 100) / 100
-              : displayMetrics.arenaScale;
-            const wrapperPx = isLgDesktop
-              ? displayMetrics.stageSizePx
-              : Math.round(stageSize * nonLgScale);
+              : lgFitScale;
+            const wrapperPx = Math.round(stageSize * effectiveScale);
 
             return (
               <div
                 key="single-stage"
                 ref={singleStageWrapRef}
                 onDragStart={(e) => e.preventDefault()}
-                className="animate-stage-enter w-full flex flex-col items-center justify-start min-w-0"
+                className="w-full flex flex-col items-center justify-start min-w-0"
               >
                 <div
-                  className="flex items-center justify-center shrink-0"
+                  key={`sphere-visual-${currentAudit.ticker}`}
+                  className="animate-select-fade flex items-center justify-center shrink-0"
                   style={{
                     width: `${wrapperPx}px`,
                     height: `${wrapperPx}px`,
@@ -6389,7 +6625,7 @@ function ThermodynamicAuditApp() {
                       width: `${stageSize}px`,
                       height: `${stageSize}px`,
                       transformOrigin: 'center center',
-                      transform: nonLgScale !== 1 ? `scale(${nonLgScale})` : undefined
+                      transform: effectiveScale !== 1 ? `scale(${effectiveScale})` : undefined
                     }}
                   >
               <svg
@@ -7030,7 +7266,6 @@ function ThermodynamicAuditApp() {
                 })()
               ) : (
                 <div
-                  key={`stage-prompt-${currentAudit.ticker}-${isPinned}`}
                   data-testid="stage-bottom-controls"
                   style={{
                     marginTop: `${
@@ -7043,7 +7278,7 @@ function ThermodynamicAuditApp() {
                         : displayMetrics.bottomControlsOffsetPx
                     }px`
                   }}
-                  className="animate-card-fade text-center space-y-2 pt-0.5"
+                  className="text-center space-y-2 pt-0.5"
                 >
                   <ProvenanceBadgesStrip
                     audit={currentAudit}
@@ -7126,7 +7361,11 @@ function ThermodynamicAuditApp() {
                           color: accent.secondary
                         }}
                       >
-                        <span>Archived copy active (0 credits). Spend credits on full refresh?</span>
+                        <span>
+                          {timelineYear === 'PRESENT'
+                            ? 'Archived copy active (0 credits). Spend credits on full refresh?'
+                            : `${timelineYear} snapshot active (0 credits). Spend credits to re-pull <= ${timelineYear} intel?`}
+                        </span>
                         <button
                           type="button"
                           onClick={() => handleFreshReaudit(activeKey, true)}
@@ -7173,7 +7412,18 @@ function ThermodynamicAuditApp() {
                           className={`w-3.5 h-3.5 color-glide ${isAuditing ? 'animate-spin' : ''}`}
                           style={{ color: accent.secondary }}
                         />
-                        <span>Update Intel (${currentAudit.ticker})</span>
+                        <span>
+                          {!hasDedicatedTimelineCoverage(
+                            (activeKey && audits[activeKey]) ||
+                              audits[currentAudit.ticker] ||
+                              currentAudit,
+                            timelineYear
+                          )
+                            ? `Pull ${timelineYear === 'PRESENT' ? 'Live' : timelineYear} Intel ($${currentAudit.ticker})`
+                            : timelineYear === 'PRESENT'
+                            ? `Update Intel ($${currentAudit.ticker})`
+                            : `Update ${timelineYear} Intel ($${currentAudit.ticker})`}
+                        </span>
                       </button>
                     )}
 
@@ -7202,8 +7452,13 @@ function ThermodynamicAuditApp() {
           3. MINIMAL THERMODYNAMIC FOOTER (BALANCED MOBILE DOCK + DESKTOP FOOTER)
          ===================================================================== */}
       <footer
-        className={`relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-16 ${
-          isCompactHeight ? 'md:py-2' : 'md:py-3.5'
+        data-testid="landauer-footer"
+        className={`${
+          !stackBasketsBelow
+            ? 'relative md:fixed md:bottom-0 md:inset-x-0 md:bg-[#0B0C0E]/90 md:backdrop-blur-md'
+            : 'relative'
+        } z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-36 ${
+          isCompactHeight ? 'md:py-2' : 'md:py-2.5'
         } border-t border-white/[0.05] text-[11px] font-mono text-neutral-500`}
       >
         {/* Mobile balanced matched-size bottom button dock */}
@@ -7349,7 +7604,11 @@ function ThermodynamicAuditApp() {
         onClick={startTutorial}
         tabIndex={showFloatingCornerControls ? 0 : -1}
         aria-hidden={!showFloatingCornerControls}
-        className={`color-glide fixed bottom-3.5 sm:bottom-4 left-3 sm:left-4 xl:left-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border border-white/12 font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+        className={`color-glide fixed ${
+          typeof navigator !== 'undefined' && isBottomChromeInAppBrowser(navigator.userAgent)
+            ? 'bottom-28 sm:bottom-4'
+            : 'bottom-[max(0.875rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] sm:bottom-4'
+        } left-3 sm:left-4 xl:left-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border border-white/12 font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
           showFloatingCornerControls
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-1.5 pointer-events-none'
@@ -7366,7 +7625,11 @@ function ThermodynamicAuditApp() {
         onClick={() => setIsDonateModalOpen(true)}
         tabIndex={showFloatingCornerControls ? 0 : -1}
         aria-hidden={!showFloatingCornerControls}
-        className={`color-glide fixed bottom-3.5 sm:bottom-4 right-3 sm:right-4 xl:right-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+        className={`color-glide fixed ${
+          typeof navigator !== 'undefined' && isBottomChromeInAppBrowser(navigator.userAgent)
+            ? 'bottom-28 sm:bottom-4'
+            : 'bottom-[max(0.875rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] sm:bottom-4'
+        } right-3 sm:right-4 xl:right-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
           showFloatingCornerControls
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-1.5 pointer-events-none'
@@ -7440,7 +7703,7 @@ function ThermodynamicAuditApp() {
                 />
               </div>
 
-              {hasEpochTimeMachine && (
+              {hasEpochTimeMachine ? (
                 <div
                   role="tablist"
                   aria-label="Thermodynamic Time Machine Epoch Scrubber"
@@ -7492,7 +7755,27 @@ function ThermodynamicAuditApp() {
                     );
                   })}
                 </div>
-              )}
+              ) : timelineYear !== 'PRESENT' ? (
+                <div
+                  data-testid="modal-global-timeline-banner"
+                  className="w-full flex items-center justify-center gap-2 py-0.5 font-mono text-[10.5px] text-neutral-300"
+                >
+                  <span className="tabular-nums">
+                    Time Machine: <strong style={{ color: scorecardAccent.primary }}>{timelineYear}</strong>
+                  </span>
+                  <span aria-hidden="true" className="text-neutral-600">
+                    &middot;
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setTimelineYear('PRESENT')}
+                    className="font-semibold hover:underline whitespace-nowrap cursor-pointer"
+                    style={{ color: scorecardAccent.primary }}
+                  >
+                    Return to Present &rarr;
+                  </button>
+                </div>
+              ) : null}
 
               <div className="w-full flex flex-nowrap items-center justify-between gap-2">
                 <div className="h-7 p-0.5 rounded-full bg-[#121418] border border-white/10 inline-flex items-center font-mono text-[10px] sm:text-[10.5px] leading-none shrink-0">
@@ -9518,6 +9801,8 @@ function ThermodynamicAuditApp() {
         stepIndex={tutorialStepIndex}
         steps={activeTutorialSteps}
         accent={accent}
+        mysteryCounterText={mysteryCounterText}
+        isEasterEggFound={dotDiscoveryState.genesisDiscoveredAtMs !== null}
         onChangeStep={handleTutorialStepChange}
         onExecuteAction={handleTutorialAction}
         onClose={closeTutorial}

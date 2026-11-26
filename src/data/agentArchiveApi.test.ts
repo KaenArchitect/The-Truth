@@ -25,6 +25,9 @@ test('findArchivedAudit resolves aliases cleanly and refuses unarchived tokens',
   const stx = findArchivedAudit(PRELOADED_AUDITS, 'Stacks');
   assert.equal(stx?.ticker, 'STX');
 
+  const usd = findArchivedAudit(PRELOADED_AUDITS, 'US Dollar');
+  assert.equal(usd?.ticker, 'USD');
+
   const missing = findArchivedAudit(PRELOADED_AUDITS, 'UNKNOWNCOIN999');
   assert.equal(missing, null);
 });
@@ -40,7 +43,7 @@ test('listArchivedAudits supports basket, category, and query filters strictly f
   );
   assert.deepEqual(
     overlays.map((a) => a.ticker).sort(),
-    ['GEEK', 'IGRA', 'LN', 'STX']
+    ['GEEK', 'IGRA', 'LN', 'STX', 'USD']
   );
 
   const failedZeroJoule = listArchivedAudits(

@@ -74,15 +74,22 @@ test('buildSsrRootInnerHtml renders exact live rubric grade brackets with 0 mism
   assert.match(archiveHtml, /Pillar 1 — Complete Verified Thermodynamic Archive/);
 });
 
-test('index.html hides .truth-ssr-snapshot synchronously in head for JS-enabled browsers and exposes 4-pillar alternate links', () => {
+test('index.html hides .truth-ssr-snapshot synchronously in head for JS-enabled browsers and exposes only the single plain-text compendium link', () => {
   const indexHtml = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
   assert.match(indexHtml, /document\.documentElement\.dataset\.js\s*=\s*['"]1['"]/);
   assert.match(indexHtml, /html,\s*body\s*\{\s*background-color:\s*#0B0C0E;\s*color:\s*#FFFFFF;\s*\}/i);
   assert.match(indexHtml, /html\[data-js=["']1["']\]\s*\.truth-ssr-snapshot\s*\{\s*display:\s*none\s*!important;\s*\}/);
-  assert.match(indexHtml, /href="\/api\/agent\/rubric"/);
-  assert.match(indexHtml, /href="\/api\/agent\/gains"/);
-  assert.match(indexHtml, /href="\/api\/agent\/origin-thesis"/);
+  assert.match(indexHtml, /href="\/compendium"/);
+  assert.match(indexHtml, /href="\/llms\.txt"/);
+  assert.doesNotMatch(indexHtml, /\/api\/agent\//);
+  assert.doesNotMatch(indexHtml, /\/mcp\b/);
+  assert.doesNotMatch(indexHtml, /\/openapi\.json/);
   assert.match(indexHtml, /<div id="root"><\/div>/);
+
+  const homeHtml = buildSsrRootInnerHtml('/', 'https://example.com', PRELOADED_AUDITS, ALIAS_MAP);
+  assert.match(homeHtml, /https:\/\/example\.com\/compendium/);
+  assert.doesNotMatch(homeHtml, /\/api\/agent\//);
 });
+
 
 

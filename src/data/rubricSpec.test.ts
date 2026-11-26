@@ -766,7 +766,18 @@ test('isInvariantVoidUnanchored and PRELOADED_AUDITS historicalSnapshots cover E
   assert.equal(merged.ETH.historicalSnapshots?.length, 3);
 
   // Historical long-form prose strictly enforces concise Normie < forensic Genius across all epochs & invariants
-  for (const tk of ['ETH', 'BTC', 'KAS'] as const) {
+  const usdSnaps = PRELOADED_AUDITS.USD.historicalSnapshots || [];
+  assert.equal(usdSnaps.length, 3);
+  assert.deepEqual(
+    usdSnaps.map((s, idx) => formatEpochScrubberLabel(s, idx === usdSnaps.length - 1)),
+    ['1913 Pre-Fed Specie', '1971 Bretton Woods', 'Post-1971 Fiat · LIVE']
+  );
+  assert.deepEqual(
+    usdSnaps.map((s) => s.terminalGrade),
+    ['D', 'D-', 'F']
+  );
+
+  for (const tk of ['ETH', 'BTC', 'KAS', 'USD'] as const) {
     const asset = PRELOADED_AUDITS[tk];
     for (const inv of asset.invariants) {
       assert.ok(

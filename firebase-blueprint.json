@@ -75,6 +75,16 @@
           "type": "array",
           "description": "Optional bounded list of up to 12 Google Search grounding citations."
         },
+        "historicalSnapshots": {
+          "type": "array",
+          "description": "Optional bounded list of up to 16 chronological Time Machine snapshots (tm-1913..tm-present)."
+        },
+        "auditedAtTimelineYear": {
+          "type": "string",
+          "description": "Optional Time Machine stop identifier indicating the root audit horizon ('1913'..'PRESENT').",
+          "minLength": 1,
+          "maxLength": 16
+        },
         "isArchived": {
           "type": "boolean",
           "description": "Indicates this audit document is published to the shared vault."

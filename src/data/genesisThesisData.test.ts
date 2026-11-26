@@ -13,13 +13,41 @@ import {
   getGenesisThesisParagraphs
 } from './genesisThesisData.ts';
 
-test('GENESIS_THESIS preserves verbatim equality with the 23-axiom GENIUS edition source', () => {
+test('GENESIS_THESIS preserves verbatim source fidelity while enforcing the 28 MJ Carnot-adjusted deficit in Axioms 08 and 09', () => {
   const sourcePath = path.resolve(
     process.cwd(),
     'public/assets/aistudio/Paste_November_23__2026_-_10_27PM_3f459f03'
   );
-  const expectedRaw = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n').trim();
-  assert.equal(GENESIS_THESIS_GENIUS_RAW_MARKDOWN.trim(), expectedRaw);
+  const sourceRaw = fs.readFileSync(sourcePath, 'utf8').replace(/\r\n/g, '\n').trim();
+  const stripAxioms08And09 = (md: string) =>
+    md.replace(
+      /### \[08 • EXPLICIT TAXATION[\s\S]*?(?=### \[10 • \$35\+ TRILLION ZERO-JOULE SOVEREIGN LIEN\])/,
+      ''
+    );
+
+  assert.equal(
+    stripAxioms08And09(GENESIS_THESIS_GENIUS_RAW_MARKDOWN.trim()),
+    stripAxioms08And09(sourceRaw)
+  );
+
+  const genius08 = GENESIS_THESIS_GENIUS_PARAGRAPHS[7];
+  const genius09 = GENESIS_THESIS_GENIUS_PARAGRAPHS[8];
+  const normie08 = GENESIS_THESIS_PARAGRAPHS[7];
+  const normie09 = GENESIS_THESIS_PARAGRAPHS[8];
+
+  assert.ok(genius08.laws[0].equation.includes('W_net = W_tax (20 MJ) − Q_friction (8 MJ) = 12 MJ'));
+  assert.ok(genius08.text.includes('12\\text{ MJ}'));
+  assert.ok(genius09.tag.includes('28 MJ DEFICIT'));
+  assert.ok(genius09.laws[0].equation.includes('Claims (40 MJ) − W_net (12 MJ) ⇒ Theft (28 MJ)'));
+  assert.ok(genius09.text.includes('**$28\\text{ MJ}$** worth of spending to cover the deficit'));
+  assert.ok(genius09.text.includes('silently siphon **$28\\text{ MJ}$** worth of purchasing power'));
+  assert.ok(!genius09.text.includes('missing $20\\text{ MJ}$'));
+
+  assert.ok(normie08.text.includes('12 MJ'));
+  assert.ok(normie09.tag.includes('28 MJ DEFICIT'));
+  assert.ok(normie09.text.includes('come up with 28 MJ to cover the deficit'));
+  assert.ok(normie09.text.includes('siphoning 28 MJ of purchasing power'));
+  assert.ok(!normie09.text.includes('20 MJ physical hole'));
 });
 
 test('GENESIS_THESIS preserves all 23 NORMIE and GENIUS axioms across 5 matching chapters', () => {

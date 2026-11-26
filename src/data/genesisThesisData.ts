@@ -131,19 +131,19 @@ export const GENESIS_THESIS_GENIUS_RAW_MARKDOWN = [
   '',
   '**Law:** Carnot Efficiency Ceiling & Bureaucratic Waste Heat Law',
   '',
-  '**Equation:** `η_max = 1 − T_cold / T_hot < 1   |   W_net = W_tax (20 MJ) − Q_friction (8 MJ)`',
+  '**Equation:** `η_max = 1 − T_cold / T_hot < 1   |   W_net = W_tax (20 MJ) − Q_friction (8 MJ) = 12 MJ`',
   '',
-  'Examine what happens mathematically to that $100\\text{ MJ}$ weekly physical output inside a managed fiat polity. When a state levies a transparent twenty percent explicit tax on labor or production, it transfers a $20\\text{ MJ}$ claim over real physical goods directly from the producer to the fiscal treasury. At least explicit taxation remains visible on a paystub and bounded by political consent. Yet no administrative state operates at 100% thermodynamic efficiency—just as the Second Law forbids a Carnot heat engine from converting 100% of thermal gradient into useful mechanical work without exhaust heat loss. Staffing overlapping compliance agencies, tax enforcement bureaucracies, lobbying corridors, regulatory clearinghouses, and contractor middlemen introduces immense administrative entropy: roughly **$8\\text{ MJ}$** out of that extracted claim dissipates purely as organizational waste heat—consuming buildings, paper, fuel, and human lifespans while producing zero additional wheat, zero kilowatt-hours of clean electricity, zero miles of paved steel rail, and zero bits of cryptographic ledger security.',
+  'Examine what happens mathematically to that $100\\text{ MJ}$ weekly physical output inside a managed fiat polity. When a state levies a transparent twenty percent explicit tax on labor or production, it transfers a $20\\text{ MJ}$ claim over real physical goods directly from the producer to the fiscal treasury. At least explicit taxation remains visible on a paystub and bounded by political consent. Yet no administrative state operates at 100% thermodynamic efficiency—just as the Second Law forbids a Carnot heat engine from converting 100% of thermal gradient into useful mechanical work without exhaust heat loss. Staffing overlapping compliance agencies, tax enforcement bureaucracies, lobbying corridors, regulatory clearinghouses, and contractor middlemen introduces immense administrative entropy: roughly **$8\\text{ MJ}$** out of that extracted claim dissipates purely as organizational waste heat—consuming buildings, paper, fuel, and human lifespans while producing zero additional wheat, zero kilowatt-hours of clean electricity, zero miles of paved steel rail, and zero bits of cryptographic ledger security—leaving only **$12\\text{ MJ}$** of net usable energy in the treasury.',
   '',
   '---',
   '',
-  '### [09 • UNFUNDED PROMISES (40 MJ ISSUED VS. 20 MJ WORK)]',
+  '### [09 • UNFUNDED PROMISES (40 MJ ISSUED VS. 12 MJ NET WORK — 28 MJ DEFICIT)]',
   '',
   '**Law:** Noether’s Time-Translation Theorem & Zero-Creation Constraint',
   '',
-  '**Equation:** `∂L / ∂t = 0 ⇒ dE / dt = 0   |   Claims (40 MJ) − Tax (20 MJ) ⇒ Theft (20 MJ)`',
+  '**Equation:** `∂L / ∂t = 0 ⇒ dE / dt = 0   |   Claims (40 MJ) − W_net (12 MJ) ⇒ Theft (28 MJ)`',
   '',
-  'Because no political coalition survives election cycles if it taxes citizens openly for the true physical sum of every subsidy, war, bailout, and entitlement it signs into law, states resolve the arithmetic shortfall by abusing the monopoly printing press. Suppose the state extracts $20\\text{ MJ}$ of real productive energy via open taxes while legislating $40\\text{ MJ}$ of spending promises across defense contractors, bondholders, and domestic programs. That missing $20\\text{ MJ}$ of real physical energy cannot materialize out of thin air—Noether’s Theorem and the First Law of Thermodynamics strictly forbid *creatio ex nihilo* energy generation. Instead, central banks and commercial credit desks conjure matching nominal currency units at zero energetic cost ($E = 0.00\\text{ J}$). Those weightless digital keystrokes enter the market first through primary dealers and sovereign bond desks (Cantillon advantage), bid directly against savers for finite groceries, copper, timber, and shelter, and silently siphon **$20\\text{ MJ}$** worth of purchasing power straight out of every worker’s saved biological hours—an invisible regressive heat tax collected continuously across every held banknote.',
+  'Because no political coalition survives election cycles if it taxes citizens openly for the true physical sum of every subsidy, war, bailout, and entitlement it signs into law, states resolve the arithmetic shortfall by abusing the monopoly printing press. Suppose the state extracts $20\\text{ MJ}$ of real productive energy via open taxes—leaving only $12\\text{ MJ}$ of net usable energy after $8\\text{ MJ}$ of bureaucratic Carnot friction—while legislating $40\\text{ MJ}$ of spending promises across defense contractors, bondholders, and domestic programs. The state now needs to come up with **$28\\text{ MJ}$** worth of spending to cover the deficit, yet that missing $28\\text{ MJ}$ of real physical energy cannot materialize out of thin air—Noether’s Theorem and the First Law of Thermodynamics strictly forbid *creatio ex nihilo* energy generation. Instead, central banks and commercial credit desks conjure matching nominal currency units at zero energetic cost ($E = 0.00\\text{ J}$). Those weightless digital keystrokes enter the market first through primary dealers and sovereign bond desks (Cantillon advantage), bid directly against savers for finite groceries, copper, timber, and shelter, and silently siphon **$28\\text{ MJ}$** worth of purchasing power straight out of every worker’s saved biological hours—an invisible regressive heat tax collected continuously across every held banknote.',
   '',
   '---',
   '',
@@ -513,12 +513,12 @@ const RAW_NORMIE_PARAGRAPHS: RawNormieParagraph[] = [
   {
     id: 8,
     tag: '08 • TAXATION (20 MJ) & CARNOT FRICTION (8 MJ)',
-    text: 'When a government levies an explicit 20% tax on a 100 MJ workweek, it takes a visible 20 MJ claim on real output. Yet just like a heat engine losing exhaust under Carnot limits, running overlapping compliance bureaucracies and middlemen burns roughly 8 MJ of that extracted effort as pure administrative waste heat—producing zero food, zero electricity, zero steel rail, and zero ledger security.'
+    text: 'When a government levies an explicit 20% tax on a 100 MJ workweek, it takes a visible 20 MJ claim on real output. Yet just like a heat engine losing exhaust under Carnot limits, running overlapping compliance bureaucracies and middlemen burns roughly 8 MJ of that extracted effort as pure administrative waste heat—producing zero food, zero electricity, zero steel rail, and zero ledger security, and leaving only 12 MJ of usable real energy.'
   },
   {
     id: 9,
-    tag: '09 • UNFUNDED PROMISES (40 MJ VS. 20 MJ)',
-    text: 'Because politicians lose elections if they openly tax citizens for every spending promise, states bridge the gap with the printing press. Legislating 40 MJ of promises against 20 MJ of real taxes leaves a 20 MJ physical hole that laws cannot conjure out of thin air. Central banks print zero-joule currency units instead, letting connected insiders spend new money first and silently siphoning 20 MJ of purchasing power out of workers’ savings.'
+    tag: '09 • UNFUNDED PROMISES (40 MJ VS. 12 MJ NET — 28 MJ DEFICIT)',
+    text: 'Because politicians lose elections if they openly tax citizens for every spending promise, states bridge the gap with the printing press. After 8 MJ of bureaucratic waste burns down a 20 MJ tax into just 12 MJ of usable energy, legislating 40 MJ of spending promises means the state must come up with 28 MJ to cover the deficit—a 28 MJ physical hole that laws cannot conjure out of thin air. Central banks print zero-joule currency units instead, letting connected insiders spend new money first and silently siphoning 28 MJ of purchasing power out of workers’ savings.'
   },
   {
     id: 10,

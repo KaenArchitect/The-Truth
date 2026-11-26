@@ -41,6 +41,8 @@ export interface HistoricalSnapshot {
   terminalGrade: string;
   verdictSummary: string;
   normieVerdictSummary?: string;
+  consensusFamily?: ConsensusFamily;
+  architecture?: string;
   invariants: Record<string, HistoricalSnapshotInvariant>;
 }
 
@@ -87,6 +89,7 @@ export interface AuditData {
   archivedByUid?: string;
   isUpperLayerOverlayOrChannel?: boolean;
   usesSecretTemplate?: boolean;
+  auditedAtTimelineYear?: string;
 }
 
 export interface InvariantLogEntry {
@@ -779,12 +782,15 @@ export function evaluateThermodynamicGate(snapshot: HistoricalSnapshot): Histori
     0
   );
 
+  const existingRank = GRADE_RANK[snapshot.terminalGrade] ?? 99;
+  const dPlusRank = GRADE_RANK['D+'];
+
   return {
     ...snapshot,
     foundationalMassValid: true,
     arbitrageCapTriggered: arbitrageTriggered,
     totalScore: Number(rawSum.toFixed(2)),
-    terminalGrade: arbitrageTriggered ? 'D+' : snapshot.terminalGrade,
+    terminalGrade: arbitrageTriggered && existingRank < dPlusRank ? 'D+' : snapshot.terminalGrade,
     invariants: updatedInvariants
   };
 }
@@ -831,50 +837,113 @@ export function formatEpochScrubberLabel(
   return `${prefix}${cleanedLabel}${isFinalLive ? ' · LIVE' : ''}`.trim();
 }
 
+function snapshotChronologicalRank(snap: HistoricalSnapshot): number {
+  const id = String(snap.epochId || '').toLowerCase();
+  if (
+    id === 'tm-present' ||
+    id.endsWith('-live') ||
+    id === 'kas-2026-toccata' ||
+    id === 'usd-post-1971-fiat'
+  ) {
+    return 2026;
+  }
+  if (id === 'eth-2022-post-merge-pos') return 2022;
+  const tmMatch = /^tm-(19\d{2}|20\d{2})$/.exec(id);
+  if (tmMatch) return Number(tmMatch[1]);
+  const idYear = id.match(/\b(19\d{2}|20\d{2})\b/);
+  if (idYear) return Number(idYear[1]);
+  const dateYear = String(snap.dateOrHeight || '').match(/\b(19\d{2}|20\d{2})\b/);
+  if (dateYear) return Number(dateYear[1]);
+  return 2025;
+}
+
+function mergeTwoSnapshots(
+  curSnap: HistoricalSnapshot,
+  refSnap: HistoricalSnapshot | undefined
+): HistoricalSnapshot {
+  if (!refSnap) return curSnap;
+
+  const mergedInvariants: Record<string, HistoricalSnapshotInvariant> = {
+    ...refSnap.invariants,
+    ...curSnap.invariants
+  };
+
+  Object.keys(mergedInvariants).forEach((invId) => {
+    const curInv = curSnap.invariants?.[invId];
+    const refInv = refSnap.invariants?.[invId];
+    if (!curInv && refInv) {
+      mergedInvariants[invId] = refInv;
+      return;
+    }
+    if (curInv && refInv) {
+      mergedInvariants[invId] = {
+        ...refInv,
+        ...curInv,
+        normieParagraph: curInv.normieParagraph || refInv.normieParagraph,
+        geniusParagraph: curInv.geniusParagraph || refInv.geniusParagraph,
+        receipts:
+          curInv.receipts && curInv.receipts.length > 0 ? curInv.receipts : refInv.receipts
+      };
+    }
+  });
+
+  return {
+    ...refSnap,
+    ...curSnap,
+    scrubberLabel: curSnap.scrubberLabel || refSnap.scrubberLabel,
+    normieVerdictSummary: curSnap.normieVerdictSummary || refSnap.normieVerdictSummary,
+    consensusFamily: curSnap.consensusFamily || refSnap.consensusFamily,
+    architecture: curSnap.architecture || refSnap.architecture,
+    invariants: mergedInvariants
+  };
+}
+
 export function mergeHistoricalSnapshots(
   primary: HistoricalSnapshot[] | undefined,
   reference: HistoricalSnapshot[] | undefined
 ): HistoricalSnapshot[] | undefined {
-  if (!primary || primary.length === 0) return reference;
-  if (!reference || reference.length === 0) return primary;
+  const hasPrimary = Array.isArray(primary) && primary.length > 0;
+  const hasReference = Array.isArray(reference) && reference.length > 0;
+  if (!hasPrimary && !hasReference) return undefined;
+  if (!hasPrimary) return reference;
+  if (!hasReference) return primary;
 
-  const refById = new Map(reference.map((s) => [s.epochId, s]));
-  return primary.map((snap) => {
-    const refSnap = refById.get(snap.epochId);
-    if (!refSnap) return snap;
-
-    const mergedInvariants: Record<string, HistoricalSnapshotInvariant> = {
-      ...refSnap.invariants,
-      ...snap.invariants
-    };
-
-    Object.keys(mergedInvariants).forEach((invId) => {
-      const curInv = snap.invariants?.[invId];
-      const refInv = refSnap.invariants?.[invId];
-      if (!curInv && refInv) {
-        mergedInvariants[invId] = refInv;
-        return;
-      }
-      if (curInv && refInv) {
-        mergedInvariants[invId] = {
-          ...refInv,
-          ...curInv,
-          normieParagraph: curInv.normieParagraph || refInv.normieParagraph,
-          geniusParagraph: curInv.geniusParagraph || refInv.geniusParagraph,
-          receipts:
-            curInv.receipts && curInv.receipts.length > 0 ? curInv.receipts : refInv.receipts
-        };
-      }
-    });
-
-    return {
-      ...refSnap,
-      ...snap,
-      scrubberLabel: snap.scrubberLabel || refSnap.scrubberLabel,
-      normieVerdictSummary: snap.normieVerdictSummary || refSnap.normieVerdictSummary,
-      invariants: mergedInvariants
-    };
+  const primaryById = new Map<string, HistoricalSnapshot>();
+  primary!.forEach((s) => {
+    if (s && s.epochId) primaryById.set(s.epochId, s);
   });
+
+  const seenIds = new Set<string>();
+  const combined: Array<{ snap: HistoricalSnapshot; orderIdx: number }> = [];
+  let seq = 0;
+
+  // Preserve reference snapshots first (updating in-place when primary overrides same epochId)
+  reference!.forEach((refSnap) => {
+    if (!refSnap || !refSnap.epochId || seenIds.has(refSnap.epochId)) return;
+    seenIds.add(refSnap.epochId);
+    const override = primaryById.get(refSnap.epochId);
+    combined.push({
+      snap: override ? mergeTwoSnapshots(override, refSnap) : refSnap,
+      orderIdx: seq++
+    });
+  });
+
+  // Union any additional snapshots from primary whose epochId was not in reference
+  primary!.forEach((curSnap) => {
+    if (!curSnap || !curSnap.epochId || seenIds.has(curSnap.epochId)) return;
+    seenIds.add(curSnap.epochId);
+    combined.push({
+      snap: curSnap,
+      orderIdx: seq++
+    });
+  });
+
+  combined.sort((a, b) => {
+    const rankDiff = snapshotChronologicalRank(a.snap) - snapshotChronologicalRank(b.snap);
+    return rankDiff !== 0 ? rankDiff : a.orderIdx - b.orderIdx;
+  });
+
+  return combined.slice(0, 16).map((item) => item.snap);
 }
 
 export function buildHistoricalEpochInvariantProse(
@@ -1463,10 +1532,20 @@ export function enforceEnergyArbitrageLawOnAudit(rawAuditObj: AuditData): AuditD
   ).slice(0, 20);
 
   const invs = auditObj.invariants.map((inv) => ({ ...inv }));
-  const sovScore = Number(invs[0]?.score ?? 1);
+  let sovScore = Number(invs[0]?.score ?? 1);
   const costScore = Number(invs[1]?.score ?? 0);
 
-  if (costScore <= 0 || isFiatCurrency) {
+  const isHistoricalSpecieEra =
+    isFiatCurrency &&
+    costScore > 0 &&
+    (auditObj.auditedAtTimelineYear === '1913' ||
+      auditObj.auditedAtTimelineYear === '1971' ||
+      (auditObj.consensusFamily === 'ENERGY_ARBITRAGED_POW' &&
+        /\b(1913|1971|GOLD SPECIE|GOLD STANDARD|BRETTON WOODS)\b/i.test(
+          auditObj.architecture || ''
+        )));
+
+  if (costScore <= 0 || (isFiatCurrency && !isHistoricalSpecieEra)) {
     return {
       ...auditObj,
       ticker: effectiveTk || auditObj.ticker,
@@ -1480,6 +1559,11 @@ export function enforceEnergyArbitrageLawOnAudit(rawAuditObj: AuditData): AuditD
       totalScore: 0,
       grade: 'F'
     };
+  }
+
+  if (isHistoricalSpecieEra && sovScore > 0) {
+    sovScore = 0;
+    invs[0] = { ...invs[0], score: 0 };
   }
 
   if (sovScore <= 0) {
@@ -1627,10 +1711,21 @@ export function clampSingleInvariantByPhysics(
     targetAudit?.ticker,
     fam
   );
-  if (
+  const isFiatPayload =
     !isPhysicalMetal &&
-    isFiatCurrencyAuditPayload(targetAudit?.name, targetAudit?.architecture, targetAudit?.ticker)
-  ) {
+    isFiatCurrencyAuditPayload(targetAudit?.name, targetAudit?.architecture, targetAudit?.ticker);
+  const isHistoricalSpecieTarget =
+    isFiatPayload &&
+    (targetAudit?.auditedAtTimelineYear === '1913' ||
+      targetAudit?.auditedAtTimelineYear === '1971' ||
+      (targetAudit?.consensusFamily === 'ENERGY_ARBITRAGED_POW' &&
+        /\b(1913|1971|GOLD SPECIE|GOLD STANDARD|BRETTON WOODS)\b/i.test(
+          targetAudit?.architecture || ''
+        )));
+  if (isFiatPayload && !isHistoricalSpecieTarget) {
+    return 0;
+  }
+  if (isHistoricalSpecieTarget && invIdx === 0) {
     return 0;
   }
   const archAndNameText = `${targetAudit?.name || ''} ${targetAudit?.architecture || ''} ${
@@ -2035,17 +2130,27 @@ export function normalizeAuditPayload(
   sources: GroundingSource[] = [],
   previousScore: number | null = null,
   hasPreloadedBase = false,
-  options: { preserveSecretGeniusProse?: boolean } = {}
+  options: {
+    preserveSecretGeniusProse?: boolean;
+    timelineYear?: string;
+    contemporaryVelocityContrast?: string;
+  } = {}
 ): AuditData {
+  const isHistoricalAudit = Boolean(options.timelineYear && options.timelineYear !== 'PRESENT');
+  const numericTimelineYear =
+    isHistoricalAudit && /^\d{4}$/.test(String(options.timelineYear))
+      ? Number(options.timelineYear)
+      : undefined;
   const invariantsInput = Array.isArray(parsed.invariants) ? parsed.invariants : [];
   const rawCostFloor = Math.max(0, Math.min(1, Number(invariantsInput[1]?.score) || 0));
   const forceZeroJoule =
     rawCostFloor <= 0 ||
-    (parsed.consensusFamily === 'ZERO_JOULE_BFT' && rawCostFloor < 0.15);
+    (parsed.consensusFamily === 'ZERO_JOULE_BFT' && rawCostFloor < 0.1);
 
   const cleanInvariants: InvariantData[] = [0, 1, 2, 3, 4, 5].map((idx) => {
     const inv = invariantsInput[idx] || {};
-    const baselineInv = existingBaseline?.invariants?.[idx];
+    // Never fall back to Present-era baseline prose/receipts when normalizing a historical epoch pull
+    const baselineInv = isHistoricalAudit ? undefined : existingBaseline?.invariants?.[idx];
     const clampedScore = forceZeroJoule
       ? 0
       : Math.max(0, Math.min(1, Number(inv.score) || 0));
@@ -2086,25 +2191,31 @@ export function normalizeAuditPayload(
     'BLOCKDAG_POW',
     'LINEAR_POW',
     'PHYSICAL_COMMODITY',
+    'ENERGY_ARBITRAGED_POW',
     'ZERO_JOULE_BFT'
   ];
   const candidateTicker = existingBaseline?.ticker || parsed.ticker || rawQuery;
   const isPhysicalMetal = isPhysicalMetalAuditPayload(
     parsed.name || existingBaseline?.name,
-    parsed.architecture || existingBaseline?.architecture,
+    parsed.architecture || (!isHistoricalAudit ? existingBaseline?.architecture : undefined),
     candidateTicker,
-    parsed.consensusFamily || existingBaseline?.consensusFamily,
+    parsed.consensusFamily || (!isHistoricalAudit ? existingBaseline?.consensusFamily : undefined),
     rawQuery
   );
   const isFiatCurrency =
     !isPhysicalMetal &&
     isFiatCurrencyAuditPayload(
       parsed.name || existingBaseline?.name,
-      parsed.architecture || existingBaseline?.architecture,
+      parsed.architecture || (!isHistoricalAudit ? existingBaseline?.architecture : undefined),
       candidateTicker,
       rawQuery
     );
-  const effectiveForceZeroJoule = forceZeroJoule || isFiatCurrency;
+  const allowHistoricalSpecieBacking =
+    isFiatCurrency &&
+    !forceZeroJoule &&
+    rawCostFloor > 0 &&
+    (options.timelineYear === '1913' || options.timelineYear === '1971');
+  const effectiveForceZeroJoule = forceZeroJoule || (isFiatCurrency && !allowHistoricalSpecieBacking);
   const archAndNameText = `${parsed.name || ''} ${parsed.architecture || ''} ${rawQuery}`.toUpperCase();
   const isOverlay =
     !isPhysicalMetal &&
@@ -2113,10 +2224,13 @@ export function normalizeAuditPayload(
       isOverlayArchitectureText(parsed.name, parsed.architecture, rawQuery));
   const isSequentialCarrierOverlay =
     isOverlay &&
+    !allowHistoricalSpecieBacking &&
     !/\b(KASPA|KRC-20|KCC-20|GHOSTDAG|BLOCKDAG|IGRA|VIADUCT)\b/.test(archAndNameText);
 
   const detectedFamily: ConsensusFamily = effectiveForceZeroJoule
     ? 'ZERO_JOULE_BFT'
+    : allowHistoricalSpecieBacking
+    ? 'ENERGY_ARBITRAGED_POW'
     : isPhysicalMetal
     ? 'PHYSICAL_COMMODITY'
     : isSequentialCarrierOverlay
@@ -2125,7 +2239,9 @@ export function normalizeAuditPayload(
       parsed.consensusFamily !== 'ZERO_JOULE_BFT' &&
       validFamilies.includes(parsed.consensusFamily as ConsensusFamily)
     ? (parsed.consensusFamily as ConsensusFamily)
-    : existingBaseline?.consensusFamily && existingBaseline.consensusFamily !== 'ZERO_JOULE_BFT'
+    : !isHistoricalAudit &&
+      existingBaseline?.consensusFamily &&
+      existingBaseline.consensusFamily !== 'ZERO_JOULE_BFT'
     ? existingBaseline.consensusFamily
     : !isOverlay && cleanInvariants[5].score >= 0.85
     ? 'BLOCKDAG_POW'
@@ -2135,6 +2251,13 @@ export function normalizeAuditPayload(
     cleanInvariants.forEach((inv) => {
       inv.score = 0;
     });
+  } else if (allowHistoricalSpecieBacking) {
+    cleanInvariants[0].score = 0;
+    cleanInvariants[1].score = Number(Math.min(0.35, cleanInvariants[1].score).toFixed(2));
+    cleanInvariants[2].score = Number(Math.min(0.65, cleanInvariants[2].score).toFixed(2));
+    cleanInvariants[3].score = Number(Math.min(0.65, cleanInvariants[3].score).toFixed(2));
+    cleanInvariants[4].score = Number(Math.min(0.45, cleanInvariants[4].score).toFixed(2));
+    cleanInvariants[5].score = Number(Math.min(0.15, cleanInvariants[5].score).toFixed(2));
   } else {
     const hasPremineOrPrealloc = !isPhysicalMetal && parsed.hasGenesisPremineOrVcOrIco === true;
     const hasDevTaxOrKillSwitch = !isPhysicalMetal && parsed.hasProtocolDevTaxOrKillSwitch === true;
@@ -2225,15 +2348,17 @@ export function normalizeAuditPayload(
     stripTrailingDash(parsed.name) || existingBaseline?.name || cleanTicker;
   const resolvedArchitecture =
     stripTrailingDash(parsed.architecture) ||
-    existingBaseline?.architecture ||
-    'Audited Consensus Architecture';
+    (!isHistoricalAudit ? existingBaseline?.architecture : undefined) ||
+    (isHistoricalAudit ? `Audited Architecture (${options.timelineYear} Horizon)` : 'Audited Consensus Architecture');
   const resolvedCertainty = String(parsed.certainty || 'HIGH CERTAINTY').toUpperCase();
 
   const rawConclusion = stripTrailingDash(parsed.conclusion);
   const resolvedConclusion =
     rawConclusion.length >= 80
       ? rawConclusion
-      : `Evaluating ${resolvedName} (${cleanTicker}) through the GRADE evidence certainty framework yields a ${resolvedCertainty} rating across all six thermodynamic invariants (${cleanInvariants
+      : `Evaluating ${resolvedName} (${cleanTicker}) through the GRADE evidence certainty framework${
+          isHistoricalAudit ? ` as of ${options.timelineYear}` : ''
+        } yields a ${resolvedCertainty} rating across all six thermodynamic invariants (${cleanInvariants
           .map((inv) => `${inv.id}: ${formatScore(inv.score)}`)
           .join(', ')}), resulting in a total score of ${formatScore(
           exactSum
@@ -2259,7 +2384,11 @@ export function normalizeAuditPayload(
       conclusion: resolvedConclusion,
       invariants: cleanInvariants
     },
-    options
+    {
+      preserveSecretGeniusProse: options.preserveSecretGeniusProse,
+      maxYear: numericTimelineYear,
+      contemporaryVelocityContrast: options.contemporaryVelocityContrast
+    }
   );
 
   return {
@@ -2284,7 +2413,8 @@ export function normalizeAuditPayload(
       new Set([cleanTicker, normalizedQuery, resolvedName.toUpperCase().replace(/[^A-Z0-9]/g, '')])
     ).filter(Boolean),
     ...(isOverlay ? { isUpperLayerOverlayOrChannel: true } : {}),
-    ...(options.preserveSecretGeniusProse ? { usesSecretTemplate: true } : {})
+    ...(options.preserveSecretGeniusProse ? { usesSecretTemplate: true } : {}),
+    ...(options.timelineYear ? { auditedAtTimelineYear: options.timelineYear } : {})
   };
 }
 
@@ -2310,7 +2440,11 @@ export function buildCanonicalSingleInvariantEssayParagraph(
     usesSecretTemplate?: boolean;
   },
   invIdx: number,
-  options: { preserveSecretGeniusProse?: boolean } = {}
+  options: {
+    preserveSecretGeniusProse?: boolean;
+    maxYear?: number;
+    contemporaryVelocityContrast?: string;
+  } = {}
 ): string {
   const invs = auditObj.invariants || [];
   const name = auditObj.name || auditObj.ticker || 'Asset';
@@ -2398,12 +2532,27 @@ export function buildCanonicalSingleInvariantEssayParagraph(
     : `Examining ${name}’s State Machine Topology (${formatScore(
         inv5?.score
       )}/1.0) and Thermodynamic Velocity (${formatScore(inv6?.score)}/1.0, M = 1.0 benchmark): ${p5}`;
-  const hasKasContrast =
-    ticker === 'KAS' ||
-    /Kaspa[’']s stateless, contention-free|Proof-of-Work BlockDAG[^\n.]*M\s*=\s*1\.0/i.test(p6);
-  const contrastTail = hasKasContrast
-    ? ''
-    : ' In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settles parallel UTXO state transitions natively on Layer 1 at 10+ blocks per second without validator blacklists, partition halts, or orphan work destruction (M = 1.0).';
+
+  const isPreCrescendoHistorical =
+    typeof options.maxYear === 'number' && Number.isFinite(options.maxYear) && options.maxYear < 2025;
+
+  let contrastTail = '';
+  if (isPreCrescendoHistorical) {
+    if (
+      options.contemporaryVelocityContrast &&
+      !/\bIn contrast,/i.test(p6)
+    ) {
+      contrastTail = ` ${options.contemporaryVelocityContrast.trim()}`;
+    }
+  } else {
+    const hasKasContrast =
+      ticker === 'KAS' ||
+      /Kaspa[’']s stateless, contention-free|Proof-of-Work BlockDAG[^\n.]*M\s*=\s*1\.0/i.test(p6);
+    contrastTail = hasKasContrast
+      ? ''
+      : ' In contrast, Kaspa’s stateless, contention-free Proof-of-Work BlockDAG settles parallel UTXO state transitions natively on Layer 1 at 10+ blocks per second without validator blacklists, partition halts, or orphan work destruction (M = 1.0).';
+  }
+
   return `${p5Formatted} ${p6}${contrastTail}`.trim();
 }
 
@@ -2419,7 +2568,11 @@ export function buildCanonicalGeniusParagraphs(
     invariants: InvariantData[];
     usesSecretTemplate?: boolean;
   },
-  options: { preserveSecretGeniusProse?: boolean } = {}
+  options: {
+    preserveSecretGeniusProse?: boolean;
+    maxYear?: number;
+    contemporaryVelocityContrast?: string;
+  } = {}
 ): string[] {
   const invs = auditObj.invariants || [];
   const allReceipts = invs
@@ -2442,7 +2595,7 @@ export function buildCanonicalGeniusParagraphs(
       ? conclusionText
       : `Evaluating these findings through the GRADE evidence certainty framework yields a ${certainty} rating, as every architectural metric—including ${
           allReceipts || 'verified consensus constants'
-        }—is empirically verifiable in the protocol codebase, genesis configuration files, and official network records. ${conclusionText}`.trim();
+        }—is empirically verifiable in official records. ${conclusionText}`.trim();
 
   return [
     buildCanonicalSingleInvariantEssayParagraph(auditObj, 0, options),

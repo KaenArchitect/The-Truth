@@ -21,6 +21,7 @@ import {
   formatScore,
   isResponseTextTruncated,
   isValidCompleteAuditPayload,
+  mergeHistoricalSnapshots,
   normalizeAuditPayload,
   resolveCanonicalAssetTicker,
   safeParseAuditJson,
@@ -66,18 +67,8 @@ import {
   getDocs as fsGetDocs
 } from 'firebase/firestore';
 import { classifyAuditQueryForSandbox } from './src/data/auditProvenance.ts';
-import {
-  MCP_ARCHIVE_TOOL_SCHEMAS,
-  answerArchiveResearchQuestion,
-  buildAgentGainsReference,
-  buildAgentOriginThesisReference,
-  buildAgentRubricReference,
-  buildArchiveComparison,
-  buildOpenGraphMetaForUrl,
-  findArchivedAudit,
-  listArchivedAudits,
-  summarizeArchivedAudit
-} from './src/data/agentArchiveApi.ts';
+import { buildOpenGraphMetaForUrl } from './src/data/agentArchiveApi.ts';
+import { buildFullPlainTextCompendium } from './src/data/fullPlainTextCompendium.ts';
 import { buildSsrRootInnerHtml, injectSsrRootHtml } from './src/data/ssrSnapshotHtml.ts';
 import {
   verifyFirebaseBearerToken,
@@ -87,6 +78,19 @@ import {
   injectCanonicalSocialMeta,
   resolvePublicOriginFromHeaders
 } from './src/server/socialOrigin.ts';
+import {
+  parseGlobalTimelineYear,
+  projectAuditAtYear,
+  resolveAssetGenesisYear,
+  type GlobalTimelineYear
+} from './src/data/globalTimeMachine.ts';
+import {
+  attachHistoricalAuditToBaseline,
+  findAnachronisticYearsInPayload,
+  getHistoricalAuditHorizon,
+  hasDedicatedTimelineCoverage,
+  scrubResidualAnachronisticReferences
+} from './src/data/historicalAuditScope.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -130,7 +134,18 @@ function indexAuditAliases(audit: AuditData): void {
   const enforced = enforceEnergyArbitrageLawOnAudit(audit);
   const tk = resolveCanonicalAssetTicker(enforced.ticker) || normalizeLookupKey(enforced.ticker);
   if (!tk) return;
-  const normalizedAudit: AuditData = { ...enforced, ticker: tk };
+  const existing = serverAuditCache.get(tk) || PRELOADED_AUDITS[tk];
+  const mergedSnapshots = mergeHistoricalSnapshots(
+    enforced.historicalSnapshots,
+    existing?.historicalSnapshots
+  );
+  const normalizedAudit: AuditData = {
+    ...enforced,
+    ticker: tk,
+    ...(mergedSnapshots && mergedSnapshots.length > 0
+      ? { historicalSnapshots: mergedSnapshots }
+      : {})
+  };
   serverAuditCache.set(tk, normalizedAudit);
   serverAliasCache.set(tk, tk);
   const origNorm = normalizeLookupKey(audit.ticker);
@@ -466,25 +481,44 @@ async function fetchFreshGroundedWebIntel(
   ai: GoogleGenAI,
   targetQuery: string,
   existingBaseline: AuditData | null,
-  isFiatQuery = false
+  isFiatQuery = false,
+  timelineYear: GlobalTimelineYear = 'PRESENT'
 ): Promise<{ intelText: string; sources: GroundingSource[] }> {
+  const horizon = getHistoricalAuditHorizon(timelineYear);
+  const cutoffPhrase = horizon.isHistorical
+    ? `STRICTLY ON OR BEFORE ${horizon.cutoffDateLabel} (<= ${horizon.numericYear})`
+    : 'up through November 2026';
+
   const groundingQuery = isFiatQuery
-    ? `Perform an exhaustive forensic central-bank, legal-tender, and clearing-rail intelligence pull up through November 2026 for sovereign fiat currency "${targetQuery}". Gather exact, verifiable historical & current receipts across all 6 invariants:
+    ? horizon.isHistorical
+      ? `Perform an exhaustive forensic central-bank, coinage/bank-act, convertibility, reserve-requirement, and clearing-rail historical intelligence pull ${cutoffPhrase} for sovereign currency "${targetQuery}".
+CRITICAL CHRONOLOGY RULE: Gather ONLY statutes, Bank Acts, gold/silver convertibility or float regimes, statutory cash/secondary reserve ratios, money-supply figures, and clearinghouse rails that existed ON OR BEFORE ${horizon.numericYear}! DO NOT include ANY Bank Act, reserve phase-out, RTGS system, crisis, or event from ${horizon.numericYear + 1} or later (for example, if <= 1971, cite the 1934 Bank of Canada Act, 1933 gold suspension, May 1970 float, and 1967 Bank Act reserve ratios—NEVER cite the 1980 or 1992 Bank Act, 1999 LVTS, 2008 QE, 2020 COVID QE, or 2021 Lynx!).
+1. Genesis & Sovereignty (<= ${horizon.numericYear}): Exact central-bank or Dominion/Treasury statutory charter/legislation in force in ${horizon.numericYear}, legal-tender statutes, and sovereign issuance/confiscation powers up to ${horizon.numericYear}.
+2. Cost Floor & Convertibility (<= ${horizon.numericYear}): Exact gold/silver specie convertibility status as of ${horizon.numericYear} (on-demand citizen specie parity vs suspended domestic redemption / free float), exact statutory commercial-bank reserve-requirement percentages in force in ${horizon.numericYear}, and money-supply expansion up to ${horizon.numericYear}.
+3. Immutability (<= ${horizon.numericYear}): Historical parity changes, devaluations, or gold-window suspensions on or before ${horizon.numericYear}, plus reversible bank-ledger / clearinghouse settlement rules as of ${horizon.numericYear}.
+4. Availability (<= ${horizon.numericYear}): Exact clearinghouse / telegraph / central-bank settlement operating hours, weekend/holiday closures, exchange controls, or bank holidays on or before ${horizon.numericYear}.
+5. State Topology (<= ${horizon.numericYear}): Tiered central-bank + chartered commercial-bank account ledger structure, statutory seizure/garnishment/exchange-control powers in force in ${horizon.numericYear}.
+6. Velocity (<= ${horizon.numericYear}): Contemporaneous cheque/draft/telegraph clearinghouse settlement lag (multi-day regional clearing) vs physical specie transport as of ${horizon.numericYear}.`
+      : `Perform an exhaustive forensic central-bank, legal-tender, and clearing-rail intelligence pull up through November 2026 for sovereign fiat currency "${targetQuery}". Gather exact, verifiable historical & current receipts across all 6 invariants:
 1. Genesis & Sovereignty: Central bank statutory charter/legislation (e.g., 1913 Federal Reserve Act, Maastricht Treaty, BOJ Act), Treasury/finance-ministry issuance control, legal-tender coercion statutes, and executive freeze/confiscation or bail-in frameworks.
 2. Cost Floor (E = 0): Historical & recent Quantitative Easing / balance-sheet expansion totals, commercial bank reserve-requirement rules (e.g. 0% reserves), broad M2 money-supply expansion rates, and zero marginal issuance cost of electronic central-bank/commercial credit.
 3. Immutability: Historical debasements & broken commodity pegs (e.g. 1933 EO 6102 gold seizure, 1971 Nixon Shock closing gold convertibility, ERM/peg breaks, currency redenominations), plus reversible bank ledger / chargeback & court-ordered clawback mechanics.
 4. Availability: Payment-rail operating hours & holidays (Fedwire/CHIPS/TARGET2/BOJ-NET weekend closures), SWIFT sanctions cutoffs, domestic capital controls, bank holidays, and ATM withdrawal freezes during crises.
 5. State Topology: Permissioned tiered ledger topology (central-bank Tier-1 master accounts vs fractional-reserve commercial bank IOUs), native OFAC/sanctions blacklists, freezes, garnishments, and AML/KYC identity gating.
 6. Velocity: Real settlement finality vs credit-IOU messaging across Fedwire, CHIPS, SWIFT, ACH, SEPA, or CIPS (T+1 to T+3 batch finality delays, zero thermodynamic Proof-of-Work finality).`
-    : `Perform an exhaustive forensic engineering & GitHub intelligence pull up through November 2026 for "${targetQuery}"${
+    : `Perform an exhaustive forensic engineering, monetary, & codebase intelligence pull ${cutoffPhrase} for "${targetQuery}"${
         existingBaseline ? ` (${existingBaseline.name} / $${existingBaseline.ticker})` : ''
-      }. Gather exact, verifiable receipts across all 6 physical invariants:
-1. Genesis & Sovereignty: Exact premine/ICO/VC/foundation token splits, coinbase developer taxes/lockboxes, founding corporations, governance wars, and bridge/admin multisig keys.
-2. Consensus & Cost Floor: Exact LIVE active mainnet block production mechanism (PoW hash algorithm, ASIC vs CPU share, block subsidy, max supply cap, fee burns/clawbacks—explicitly distinguishing live mainnet consensus from unactivated future proposals!).
-3. Immutability: Exact GitHub repositories & source/config flags, header/PoPoW sync vs S3/snapshot sync, rolling finality checkpoints or max-reorg depth caps, node pruning horizon, and dated inflation/counterfeiting CVEs or ZK circuit soundness bugs.
-4. Wartime Partition & Outages: Exact difficulty adjustment window or BFT supermajority halt threshold, behavior on >2h cable cut & resplice, and dated mainnet blackouts, stalls, chain splits, or bridge freezes.
-5. State Topology: UTXO vs shared-account VM, covenant/script opcodes, unprunable nullifier/key-image bloat, mandatory state rent/reserves, and native Freeze/Clawback/DenyList hooks.
-6. Velocity: Exact block interval (seconds & BPS), block size/weight cap, real non-vote L1 TPS, wallet spend locks, and linear orphan waste or indexer/attester lag.`;
+      }.${
+        horizon.isHistorical
+          ? ` CRITICAL CHRONOLOGY RULE: Gather ONLY codebase commits, consensus rules, mining hardware, CVEs, outages, or commodity extraction facts that existed ON OR BEFORE ${horizon.numericYear}. NEVER mention any year, hardfork, upgrade, exploit, or protocol from ${horizon.numericYear + 1} or later!`
+          : ''
+      } Gather exact, verifiable receipts across all 6 physical invariants:
+1. Genesis & Sovereignty: Exact premine/ICO/VC/foundation token splits, coinbase developer taxes/lockboxes, founding corporations, governance wars, and bridge/admin multisig keys${horizon.isHistorical ? ` as of <= ${horizon.numericYear}` : ''}.
+2. Consensus & Cost Floor: Exact ACTIVE block production or physical extraction mechanism ${horizon.isHistorical ? `as of ${horizon.numericYear}` : 'today'} (PoW hash algorithm, ASIC vs GPU/CPU share, block subsidy, max supply cap, fee burns/clawbacks).
+3. Immutability: Exact GitHub repositories & source/config flags, header/PoPoW sync vs snapshot sync, checkpoints or max-reorg depth caps, node pruning horizon, and dated inflation/counterfeiting CVEs ${horizon.isHistorical ? `on or before ${horizon.numericYear}` : ''}.
+4. Wartime Partition & Outages: Exact difficulty adjustment window or BFT supermajority halt threshold, behavior on >2h cable cut & resplice, and dated mainnet blackouts, stalls, chain splits, or bridge freezes ${horizon.isHistorical ? `on or before ${horizon.numericYear}` : ''}.
+5. State Topology: UTXO vs shared-account VM, covenant/script opcodes, unprunable nullifier/key-image bloat, mandatory state rent/reserves, and native Freeze/Clawback/DenyList hooks ${horizon.isHistorical ? `as of ${horizon.numericYear}` : ''}.
+6. Velocity: Exact block interval (seconds & BPS), block size/weight cap, real non-vote L1 TPS, wallet spend locks, and linear orphan waste or physical freight lag ${horizon.isHistorical ? `as of ${horizon.numericYear}` : ''}.`;
 
   try {
     const response = await withBackoff(() =>
@@ -492,7 +526,9 @@ async function fetchFreshGroundedWebIntel(
         model: 'gemini-4-hydrogen',
         contents: groundingQuery,
         config: {
-          systemInstruction: isFiatQuery
+          systemInstruction: horizon.isHistorical
+            ? `You are a strict historical monetary, protocol, and commodity forensic researcher locked to the year ${horizon.numericYear} (${horizon.cutoffDateLabel}). Report ONLY statutes, reserve ratios, clearinghouses, codebase parameters, and events that occurred ON OR BEFORE ${horizon.numericYear}. Filter out and OMIT every single statute, Bank Act, clearing rail, protocol upgrade, or event dated ${horizon.numericYear + 1} or later—never mention future years even for comparison.`
+            : isFiatQuery
             ? 'You are a forensic monetary-history, central-bank, and payment-rail researcher. Produce a detailed, high-density 6-section dossier packed with exact central-bank statutes, M2/balance-sheet expansion figures, broken gold-window dates, payment-rail batch windows (Fedwire, CHIPS, TARGET2, SWIFT, ACH), and real asset-freeze/capital-control precedents from live Google Search results.'
             : 'You are a forensic cryptocurrency codebase and physical commodity researcher. Produce a detailed, high-density 6-section technical dossier packed with exact GitHub repository names, config constants, genesis/supply numbers, upgrade heights, CVEs, and dated incident postmortems from live Google Search results. Clearly separate live mainnet consensus from unactivated roadmap proposals.',
           tools: [{ googleSearch: {} }],
@@ -515,12 +551,17 @@ async function fetchSingleInvariantWebIntel(
   ai: GoogleGenAI,
   targetAudit: AuditData,
   invObj: { id: string; title?: string; shortName?: string; telemetry: string },
-  customClaim = ''
+  customClaim = '',
+  timelineYear: GlobalTimelineYear = 'PRESENT'
 ): Promise<{ intelText: string; sources: GroundingSource[] }> {
+  const horizon = getHistoricalAuditHorizon(timelineYear);
   const invTitle = invObj.title || invObj.shortName || `Invariant ${invObj.id}`;
+  const cutoffNote = horizon.isHistorical
+    ? `STRICTLY ON OR BEFORE ${horizon.cutoffDateLabel} (<= ${horizon.numericYear}; OMIT any statutes, upgrades, or events from ${horizon.numericYear + 1} or later!)`
+    : 'up through November 2026 (separate live active mainnet behavior from unactivated proposals)';
   const focusPrompt = customClaim
-    ? `Fact-check this specific user claim/evidence regarding ${targetAudit.name} ($${targetAudit.ticker}) concerning ${invTitle}: "${customClaim}". Verify exact GitHub commits, PRs, consensus parameters, mainnet status (live active mainnet vs unactivated proposal), CVEs, or postmortems up through November 2026.`
-    : `Pull fresh engineering, GitHub repository, consensus parameter, and live mainnet intelligence up through November 2026 for ${targetAudit.name} ($${targetAudit.ticker}) strictly focused on ${invTitle} (Current telemetry: ${invObj.telemetry}). Separate live active mainnet behavior from unactivated proposals.`;
+    ? `Fact-check this specific user claim/evidence regarding ${targetAudit.name} ($${targetAudit.ticker}) concerning ${invTitle}: "${customClaim}". Verify exact statutes, reserve rules, GitHub commits, consensus parameters, or postmortems ${cutoffNote}.`
+    : `Pull fresh forensic intelligence ${cutoffNote} for ${targetAudit.name} ($${targetAudit.ticker}) strictly focused on ${invTitle} (Current telemetry: ${invObj.telemetry}).`;
 
   try {
     const response = await withBackoff(() =>
@@ -528,8 +569,9 @@ async function fetchSingleInvariantWebIntel(
         model: 'gemini-4-hydrogen',
         contents: focusPrompt,
         config: {
-          systemInstruction:
-            'You are a concise forensic cryptocurrency codebase and commodity researcher. Return dense, verifiable facts citing exact repository names, config constants, block heights, dates, and live mainnet status.',
+          systemInstruction: horizon.isHistorical
+            ? `You are a concise forensic monetary and protocol researcher locked strictly to <= ${horizon.numericYear}. Return ONLY verifiable facts, statutes, reserve rules, or codebase constants existing on or before ${horizon.numericYear}. Never mention any year > ${horizon.numericYear}.`
+            : 'You are a concise forensic cryptocurrency codebase and commodity researcher. Return dense, verifiable facts citing exact repository names, config constants, block heights, dates, and live mainnet status.',
           tools: [{ googleSearch: {} }],
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           maxOutputTokens: 16384
@@ -551,12 +593,14 @@ function buildFullAuditPrompt(
   targetQuery: string,
   intelText: string,
   existingBaseline: AuditData | null,
-  isFiatQuery = false
+  isFiatQuery = false,
+  timelineYear: GlobalTimelineYear = 'PRESENT'
 ): string {
+  const horizon = getHistoricalAuditHorizon(timelineYear);
   const baselineContext = existingBaseline
-    ? `\nEXISTING VERIFIED TECHNICAL EVIDENCE FOR $${existingBaseline.ticker} (${existingBaseline.name}):
+    ? `\nEXISTING VERIFIED ${horizon.isHistorical ? `<= ${horizon.numericYear} HISTORICAL ` : ''}TECHNICAL EVIDENCE FOR $${existingBaseline.ticker} (${existingBaseline.name}):
 Architecture: ${existingBaseline.architecture} | Consensus Family: ${existingBaseline.consensusFamily}
-Verified Codebase & Mainnet Receipts: ${existingBaseline.invariants
+Verified Receipts: ${existingBaseline.invariants
         .flatMap((i) => i.receipts || [])
         .join(' • ')}.
 Verified Technical Evidence Per Invariant:
@@ -571,39 +615,62 @@ ${existingBaseline.invariants
   .join('\n')}
 
 RE-AUDIT CALIBRATION & DEPTH RULES:
-1. DO NOT blindly copy prior scores—independently grade EVERY single invariant ("01" through "06") strictly against the canonical quantitative rubric brackets in your system instructions using both verified codebase facts and newly retrieved 2026 intelligence!
-2. Set hasGenesisPremineOrVcOrIco = true if this specific asset pre-minted/pre-allocated genesis or token supply to founders, foundations, ICO buyers, or VCs; set hasProtocolDevTaxOrKillSwitch = true if protocol consensus enforces a mandatory coinbase dev/treasury tax or on-chain asset freeze/kill-switch.
-3. NEVER downgrade an active Proof-of-Work hardware mainnet chain (E > 0) into ZERO_JOULE_BFT or 0.00 Cost Floor merely because of unactivated hybrid-PoS research proposals—evaluate live active mainnet block production today!
+1. DO NOT blindly copy prior scores—independently grade EVERY single invariant ("01" through "06") strictly against the canonical quantitative rubric brackets in your system instructions using verified ${
+        horizon.isHistorical ? `<= ${horizon.numericYear} historical` : 'live 2026'
+      } intelligence!
+2. Set hasGenesisPremineOrVcOrIco = true if this specific asset pre-minted/pre-allocated genesis or token supply to founders, foundations, ICO buyers, VCs, or central-bank monopolies; set hasProtocolDevTaxOrKillSwitch = true if consensus/law enforces a mandatory coinbase tax or sovereign asset freeze/kill-switch.
+3. Evaluate active production state ${horizon.isHistorical ? `strictly as of ${horizon.numericYear} (zero post-${horizon.numericYear} facts!)` : 'today on live mainnet'}.
 4. Every single invariant's "geniusParagraph" (01 through 06) MUST be a full, unabridged 180–240 word forensic deep-dive (never summarize into short 2-3 sentence blurbs!).\n`
     : '';
 
   const freshIntelContext = intelText
-    ? `\nLIVE GOOGLE SEARCH GROUNDED INTELLIGENCE (RETRIEVED TODAY):\n${intelText}\n`
+    ? `\nGOOGLE SEARCH GROUNDED INTELLIGENCE (${
+        horizon.isHistorical ? `FILTERED STRICTLY TO <= ${horizon.numericYear} — IGNORE ANY POST-${horizon.numericYear} ITEM IF PRESENT` : 'RETRIEVED TODAY'
+      }):\n${intelText}\n`
+    : '';
+
+  const historicalHorizonBlock = horizon.isHistorical
+    ? `\nMANDATORY GLOBAL TIME MACHINE HORIZON (${horizon.cutoffDateLabel}):
+- ${horizon.strictChronologyDirective}
+- ${horizon.eraMonetaryRule}
+- ZERO POST-${horizon.numericYear} YEARS ALLOWED: Every single calendar year mentioned anywhere in your JSON output MUST be <= ${horizon.numericYear}. Do NOT mention any year >= ${horizon.numericYear + 1} even in passing!\n`
     : '';
 
   const fiatGuidance = isFiatQuery
-    ? `- CRITICAL FIAT CURRENCY OVERLAY RULE: "${targetQuery}" is a sovereign fiat currency audited under the exact same 6-invariant thermodynamic rubric and placed in ECOSYSTEM OVERLAYS. Always set consensusFamily = "ZERO_JOULE_BFT", isUpperLayerOverlayOrChannel = true, hasGenesisPremineOrVcOrIco = true, hasProtocolDevTaxOrKillSwitch = true, carrierLayerOneVelocityCap = 0, grade = "F", totalScore = 0.0, and every invariant score ("01" through "06") = 0.00. Always set "ticker" to the canonical 3-letter ISO-4217 currency code (e.g., "USD", "EUR", "GBP", "JPY", "CHF", "CNY", etc.). Ground each paragraph in real central-bank legislation, M2/balance-sheet expansion metrics, broken commodity/gold pegs, correspondent clearing-rail schedules (Fedwire/CHIPS/TARGET2/SWIFT/ACH/SEPA), sanctions/freeze authorities, and fractional-reserve credit mechanics—do NOT invent GitHub repositories or blockchain CVEs.\n`
+    ? horizon.isHistorical && (timelineYear === '1913' || timelineYear === '1971')
+      ? `- CRITICAL ${timelineYear} SOVEREIGN CURRENCY RULE: "${targetQuery}" is a sovereign currency audited strictly at the ${timelineYear} historical stop (${horizon.cutoffDateLabel}). Always set "ticker" to the canonical 3-letter ISO-4217 currency code (e.g., "CAD", "USD", "GBP", "CHF", "JPY") and set isUpperLayerOverlayOrChannel = true, hasGenesisPremineOrVcOrIco = true, hasProtocolDevTaxOrKillSwitch = true. Apply ${horizon.eraMonetaryRule} Ground every paragraph and receipt strictly in <= ${horizon.numericYear} legislation, reserve ratios, convertibility status, and contemporaneous clearinghouses—NEVER cite post-${horizon.numericYear} Bank Acts (such as the 1992 Bank Act on a 1971 CAD audit!), post-${horizon.numericYear} electronic RTGS rails, or blockchain repos.\n`
+      : `- CRITICAL FIAT CURRENCY OVERLAY RULE: "${targetQuery}" is a sovereign fiat currency audited under the exact same 6-invariant thermodynamic rubric and placed in ECOSYSTEM OVERLAYS. Always set consensusFamily = "ZERO_JOULE_BFT", isUpperLayerOverlayOrChannel = true, hasGenesisPremineOrVcOrIco = true, hasProtocolDevTaxOrKillSwitch = true, carrierLayerOneVelocityCap = 0, grade = "F", totalScore = 0.0, and every invariant score ("01" through "06") = 0.00. Always set "ticker" to the canonical 3-letter ISO-4217 currency code (e.g., "USD", "EUR", "GBP", "JPY", "CHF", "CNY", "CAD", etc.). Ground each paragraph in real central-bank legislation, reserve-requirement rules, M2/balance-sheet expansion metrics, broken commodity/gold pegs, correspondent clearing-rail schedules, sanctions/freeze authorities, and fractional-reserve credit mechanics${
+          horizon.isHistorical ? ` strictly on or before ${horizon.numericYear} (zero post-${horizon.numericYear} laws or rails!)` : ''
+        }—do NOT invent GitHub repositories or blockchain CVEs.\n`
     : '';
 
-  return `Run a complete, rigorous 6-Invariant Thermodynamic Audit on the cryptocurrency network, token, sovereign fiat currency, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
-${baselineContext}${freshIntelContext}
+  const inv06ContrastRule = resolveSecretGeniusTemplateFromEnv(process.env)
+    ? 'AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON in your system instructions word-for-word in structure, opening cadence, sentence sequence, and vocabulary—do NOT drift from that Secret template or lexicon'
+    : horizon.isHistorical
+    ? `Secret Origin Thesis Paragraph Template in your system instructions (exact canonical opening cadence, physics laws/equations, and vocabulary for each invariant 01–06; never add generic AI intros; conclude Invariant 06 with a contemporaneous <= ${horizon.numericYear} contrast such as "${horizon.contemporaryVelocityContrast}" and NEVER mention post-${horizon.numericYear} protocols or years!)`
+    : 'Secret Origin Thesis Paragraph Template in your system instructions (exact canonical opening cadence, physics laws/equations, and vocabulary for each invariant 01–06; never add generic AI intros; for non-KAS assets, conclude Invariant 06 with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0, and NEVER self-contrast $KAS)';
+
+  return `Run a complete, rigorous 6-Invariant Thermodynamic Audit${
+    horizon.isHistorical ? ` STRICTLY AT THE HISTORICAL YEAR ${horizon.numericYear} (${horizon.cutoffDateLabel})` : ''
+  } on the cryptocurrency network, token, sovereign currency, Layer-2 overlay/channel protocol, OR physical metal/commodity: "${targetQuery}".
+${historicalHorizonBlock}${baselineContext}${freshIntelContext}
 IMPORTANT:
 ${fiatGuidance}- CRITICAL PHYSICAL METAL / ELEMENT RULE: All physical Periodic Table metals and elements (such as Gold/Au/XAU, Silver/Ag/XAG, Copper/Cu/XCU, Platinum/Pt/XPT, Palladium/Pd/XPD, Titanium/Ti, Tungsten/W, Rhodium/Rh, Uranium/U, Nickel/Ni, Aluminum/Al, Zinc/Zn, Lithium/Li, etc.) are PRIMARY LAYER-1 substrates ("PHYSICAL_COMMODITY"). Always set consensusFamily = "PHYSICAL_COMMODITY", isUpperLayerOverlayOrChannel = false, hasGenesisPremineOrVcOrIco = false, and hasProtocolDevTaxOrKillSwitch = false—NEVER classify a physical metal as an overlay or tokenized wrapper unless the user explicitly requested a custodial/wrapped token like PAXG or XAUT. Always set "ticker" to the canonical short symbol ("CU" for Copper, "XAU" for Gold, "XAG" for Silver, "XPT" for Platinum, "XPD" for Palladium, "BTC" for Bitcoin, etc.) rather than a full word. Note: "CU" / "XCU" means Physical Copper (Cu-29).
-- Classify consensusFamily strictly as "BLOCKDAG_POW", "LINEAR_POW", "PHYSICAL_COMMODITY", or "ZERO_JOULE_BFT" based on LIVE ACTIVE MAINNET consensus today (never classify live hardware PoW as ZERO_JOULE_BFT due to unactivated roadmap proposals, and NEVER classify a payment-channel mesh or state-channel overlay over sequential PoW as BLOCKDAG_POW—set isUpperLayerOverlayOrChannel = true and consensusFamily = "LINEAR_POW"!).
+- Classify consensusFamily strictly as "BLOCKDAG_POW", "LINEAR_POW", "PHYSICAL_COMMODITY", "ENERGY_ARBITRAGED_POW", or "ZERO_JOULE_BFT" based on ACTIVE consensus/backing ${
+    horizon.isHistorical ? `in ${horizon.numericYear}` : 'today'
+  } (never classify active hardware PoW as ZERO_JOULE_BFT due to unactivated proposals, and NEVER classify a payment-channel mesh or state-channel overlay over sequential PoW as BLOCKDAG_POW—set isUpperLayerOverlayOrChannel = true and consensusFamily = "LINEAR_POW"!).
 - CARRIER-SUBORDINATED VELOCITY LAW (M_overlay < M_carrier < 1.0): Off-chain HTLC/PTLC channel signature exchanges burn 0.0 Joules (deferred IOUs, NOT M = 1.0 Proof-of-Work!). If "${targetQuery}" is a Layer-2 payment-channel network, state-channel protocol, rollup, or inscription overlay, set isUpperLayerOverlayOrChannel = true, set carrierLayerOneVelocityCap to its base Layer-1 carrier's Velocity score (e.g., 0.20 for Bitcoin, 1.00 for Kaspa), and score Invariant 06 STRICTLY BELOW its sequential L1 carrier (0.05–0.18, e.g., 0.15)!
 - Strictly obey the project-agnostic quantitative rubric brackets in your system instructions!
 - MANDATORY LENGTH & FORENSIC RIGOR FOR ALL 6 INVARIANTS ("01" through "06"):
-  * "paragraph": Concise, clear 55–75 word Normie Mode explanation.
-  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph strictly following the ${
-    resolveSecretGeniusTemplateFromEnv(process.env)
-      ? 'AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON in your system instructions word-for-word in structure, opening cadence, sentence sequence, and vocabulary—do NOT drift from that Secret template or lexicon'
-      : 'Secret Origin Thesis Paragraph Template in your system instructions (exact canonical opening cadence, physics laws/equations, and vocabulary for each invariant 01–06; never add generic AI intros; for non-KAS assets, conclude Invariant 06 with a direct contrast against Kaspa’s stateless, contention-free Proof-of-Work BlockDAG at 10+ BPS, M = 1.0, and NEVER self-contrast $KAS)'
-  }, citing exact primary institutional/codebase receipts, statutory/config constants, supply/tax/expansion numbers, mathematical consensus/retarget/quorum/clearing formulas, partition + freeze/resplice behavior, and dated historical incidents/postmortems (ending with a simple dash "-").
+  * "paragraph": Concise, clear 55–75 word Normie Mode explanation${horizon.isHistorical ? ` strictly grounded in <= ${horizon.numericYear} facts` : ''}.
+  * "geniusParagraph": Uncompromising, exhaustive 180–240 word (minimum 1,000 characters EACH) Genius Mode forensic audit paragraph strictly following the ${inv06ContrastRule}, citing exact primary institutional/codebase receipts, statutory/config constants, supply/tax/expansion numbers, mathematical consensus/retarget/quorum/clearing formulas, partition + freeze/resplice behavior, and dated historical incidents/postmortems${
+    horizon.isHistorical ? ` on or before ${horizon.numericYear}` : ''
+  } (ending with a simple dash "-").
   * "conclusion": Comprehensive 130–180 word GRADE Evidence Certainty synthesis following the ${
     resolveSecretGeniusTemplateFromEnv(process.env)
       ? 'AUTHORITATIVE SECRET GENIUS PARAGRAPH TEMPLATE & LEXICON in your system instructions'
       : 'canonical CONCLUSION cadence ("Evaluating these findings through the GRADE evidence certainty framework yields a <CERTAINTY> rating...")'
-  }, enumerating key codebase/institutional receipts, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
+  }, enumerating key codebase/institutional receipts${horizon.isHistorical ? ` (strictly <= ${horizon.numericYear})` : ''}, all 6 individual invariant scores (01 through 06), total score out of 6.00, and terminal compliance grade.
 Examine in exact order (01 through 06) and put a simple dash "-" at the end of each invariant's paragraph/geniusParagraph and as the last element of each invariant's receipts array ("-") to separate the invariants:
 1. Existential Sovereignty & Entity Decoupling -
 2. Thermodynamic Cost Floor E > 0 -
@@ -818,7 +885,14 @@ async function createApp(): Promise<express.Express> {
     res.json({ record, windowTrajectories: getCachedWindowTrajectories() });
   });
 
-  app.put('/api/gains-cohort', (req: Request, res: Response) => {
+  app.put('/api/gains-cohort', async (req: Request, res: Response) => {
+    const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!verifiedUser) {
+      res.status(401).json({
+        error: 'Verified sign-in is required to persist shared cohort updates.'
+      });
+      return;
+    }
     const body = (req.body || {}) as {
       passed?: unknown[];
       failed?: unknown[];
@@ -840,8 +914,10 @@ async function createApp(): Promise<express.Express> {
 
   app.post('/api/gains-cohort/sync', async (req: Request, res: Response) => {
     try {
+      const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
       const body = (req.body || {}) as { spotOverrides?: Record<string, number> };
-      const result = await syncLivePricesAndPersistGainsCohort(body.spotOverrides);
+      const trustedSpotOverrides = verifiedUser ? body.spotOverrides : undefined;
+      const result = await syncLivePricesAndPersistGainsCohort(trustedSpotOverrides);
       res.json(result);
     } catch (err) {
       res.status(502).json({
@@ -850,7 +926,9 @@ async function createApp(): Promise<express.Express> {
     }
   });
 
-  app.post('/api/gains-cohort/reset', (_req: Request, res: Response) => {
+  app.post('/api/gains-cohort/reset', async (req: Request, res: Response) => {
+    const admin = await requireVerifiedAdmin(req, res);
+    if (!admin) return;
     const record = resetPersistedGainsCohort();
     res.json({ record });
   });
@@ -877,6 +955,7 @@ async function createApp(): Promise<express.Express> {
       existingBaseline?: AuditData | null;
       bypassCache?: boolean;
       sandbox?: boolean;
+      timelineYear?: string | null;
       userId?: string | null;
       clientId?: string | null;
     };
@@ -886,6 +965,11 @@ async function createApp(): Promise<express.Express> {
       res.status(400).json({ error: 'Query must be between 1 and 120 characters.' });
       return;
     }
+
+    const timelineYear = parseGlobalTimelineYear(
+      typeof body.timelineYear === 'string' ? body.timelineYear : 'PRESENT'
+    );
+    const horizon = getHistoricalAuditHorizon(timelineYear);
 
     const principal = await resolveVerifiedRequestPrincipal(req, body);
     const userPullLimit = resolveDailyPullLimit({
@@ -909,7 +993,7 @@ async function createApp(): Promise<express.Express> {
 
     if (!bypassCache) {
       const hit = lookupCachedAudit(rawQuery);
-      if (hit) {
+      if (hit && hasDedicatedTimelineCoverage(hit, timelineYear)) {
         const currentQuota = getUserDailyQuotaStatus(
           dailyQuotaLedger,
           principal.allKeys,
@@ -926,6 +1010,7 @@ async function createApp(): Promise<express.Express> {
             audit: hit,
             sources: hit.freshSources || hit.sources || [],
             cachedHit: true,
+            timelineYear,
             sandbox: Boolean(body.sandbox),
             quota: currentQuota
           })}\n\n`
@@ -943,12 +1028,13 @@ async function createApp(): Promise<express.Express> {
     }
 
     // 1) UNRESTRICTED METALS & NETWORKS SCOPE VALIDATION (only rejects empty/invalid inputs)
-    const scopeQuery = existingBaseline ? existingBaseline.ticker || rawQuery : rawQuery;
+    const existingRootAudit = existingBaseline || lookupCachedAudit(rawQuery);
+    const scopeQuery = existingRootAudit ? existingRootAudit.ticker || rawQuery : rawQuery;
     const marketDir = await getMarketCapDirectory();
     const scopeResult = evaluateMarketScope({
       query: scopeQuery,
       cachedAuditHit: false,
-      isExplicitReaudit: Boolean(existingBaseline),
+      isExplicitReaudit: Boolean(existingRootAudit),
       marketEntries: marketDir.entries
     });
 
@@ -1036,22 +1122,32 @@ async function createApp(): Promise<express.Express> {
     };
 
     try {
-      const commodityMatch = !existingBaseline
+      // Never feed Present-era (e.g. 1992/2026) baseline prose into Gemini when pulling a historical stop!
+      const promptBaseline: AuditData | null = horizon.isHistorical
+        ? existingRootAudit && hasDedicatedTimelineCoverage(existingRootAudit, timelineYear)
+          ? projectAuditAtYear(existingRootAudit, timelineYear)
+          : null
+        : existingBaseline;
+
+      const commodityMatch = !existingRootAudit
         ? resolvePhysicalCommodityQuery(rawQuery, normalizeLookupKey(rawQuery))
         : null;
       const isRawPhysicalMetalQuery = Boolean(
         commodityMatch && !TOKENIZED_COMMODITY_WRAPPER_TICKERS.has(commodityMatch.symbol)
       );
       const fiatMatch =
-        !existingBaseline && !commodityMatch
+        !existingRootAudit && !commodityMatch
           ? resolveFiatCurrencyQuery(rawQuery, normalizeLookupKey(rawQuery))
           : null;
-      const isFiatQuery = Boolean(fiatMatch) || (
-        Boolean(existingBaseline) &&
-        resolveFiatCurrencyQuery(existingBaseline?.ticker || '', normalizeLookupKey(existingBaseline?.ticker || '')) !== null
-      );
-      const querySubject = existingBaseline
-        ? `${existingBaseline.name} (${existingBaseline.ticker})`
+      const isFiatQuery =
+        Boolean(fiatMatch) ||
+        (Boolean(existingRootAudit) &&
+          resolveFiatCurrencyQuery(
+            existingRootAudit?.ticker || '',
+            normalizeLookupKey(existingRootAudit?.ticker || '')
+          ) !== null);
+      const querySubject = existingRootAudit
+        ? `${existingRootAudit.name} (${existingRootAudit.ticker})`
         : isRawPhysicalMetalQuery && commodityMatch
         ? `${commodityMatch.name} (${commodityMatch.symbol})`
         : fiatMatch
@@ -1061,8 +1157,9 @@ async function createApp(): Promise<express.Express> {
       const freshBundle = await fetchFreshGroundedWebIntel(
         ai,
         querySubject,
-        existingBaseline,
-        isFiatQuery
+        promptBaseline,
+        isFiatQuery,
+        timelineYear
       );
       sendEvent({
         type: 'intel',
@@ -1073,11 +1170,12 @@ async function createApp(): Promise<express.Express> {
       const userPrompt = buildFullAuditPrompt(
         querySubject,
         freshBundle.intelText,
-        existingBaseline,
-        isFiatQuery
+        promptBaseline,
+        isFiatQuery,
+        timelineYear
       );
 
-      const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env);
+      const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env, timelineYear);
       const hasSecretTemplate = Boolean(resolveSecretGeniusTemplateFromEnv(process.env));
 
       let parsed: RawGeminiAuditPayload | null = null;
@@ -1141,22 +1239,82 @@ async function createApp(): Promise<express.Express> {
         throw new Error('Incomplete 6-invariant payload returned — please retry.');
       }
 
+      // Enforce strict <= horizon.numericYear chronological integrity on historical Time Machine pulls
+      if (horizon.isHistorical) {
+        const candidateTicker = String(parsed.ticker || existingRootAudit?.ticker || rawQuery);
+        const estimatedGenesis = resolveAssetGenesisYear(candidateTicker, {
+          ticker: candidateTicker,
+          name: String(parsed.name || existingRootAudit?.name || ''),
+          architecture: String(parsed.architecture || '')
+        } as AuditData);
+
+        if (estimatedGenesis <= horizon.numericYear) {
+          const leakedYears = findAnachronisticYearsInPayload(parsed, horizon.numericYear);
+          if (leakedYears.length > 0) {
+            try {
+              const repairPrompt = `CRITICAL CHRONOLOGY VIOLATION DETECTED IN YOUR ${horizon.numericYear} HISTORICAL AUDIT:
+Your JSON draft contained post-${horizon.numericYear} anachronistic year references: ${leakedYears.join(', ')}.
+${horizon.strictChronologyDirective}
+${horizon.eraMonetaryRule}
+Rewrite ONLY the affected fields in the JSON below so EVERY single statute, Bank Act, reserve ratio, clearing rail, protocol detail, receipt, and date is STRICTLY on or before ${horizon.numericYear} (ZERO calendar years > ${horizon.numericYear} anywhere in the JSON!), while preserving full 180–240 word geniusParagraph forensic depth and trailing "-" separators:
+
+${JSON.stringify(parsed)}`;
+
+              const repairResp = await withBackoff(() =>
+                ai.models.generateContent({
+                  model: 'gemini-4-hydrogen',
+                  contents: repairPrompt,
+                  config: {
+                    systemInstruction: runtimeSystemInstruction,
+                    responseMimeType: 'application/json',
+                    responseSchema: GEMINI_SCHEMA,
+                    thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+                    maxOutputTokens: 32768
+                  }
+                })
+              );
+              const repairedText = (repairResp.text || '').trim();
+              if (repairedText) {
+                const repairedCandidate = safeParseAuditJson<RawGeminiAuditPayload>(repairedText);
+                if (isValidCompleteAuditPayload(repairedCandidate)) {
+                  parsed = repairedCandidate;
+                }
+              }
+            } catch (repairErr) {
+              console.warn('Historical chronology repair pass skipped:', repairErr);
+            }
+            parsed = scrubResidualAnachronisticReferences(parsed, horizon.numericYear);
+          }
+        }
+      }
+
       const normalizedQuery = normalizeLookupKey(rawQuery);
-      const previousScore = existingBaseline ? Number(existingBaseline.totalScore) : null;
-      const cleanTickerGuess = existingBaseline?.ticker || normalizedQuery.slice(0, 8);
+      const previousScore = promptBaseline ? Number(promptBaseline.totalScore) : null;
+      const cleanTickerGuess =
+        existingRootAudit?.ticker || normalizedQuery.slice(0, 8);
       const builtAudit = normalizeAuditPayload(
         parsed,
         rawQuery,
         normalizedQuery,
-        existingBaseline,
+        promptBaseline,
         freshBundle.sources,
         previousScore,
         Boolean(PRELOADED_AUDITS[cleanTickerGuess]),
-        { preserveSecretGeniusProse: hasSecretTemplate }
+        {
+          preserveSecretGeniusProse: hasSecretTemplate,
+          timelineYear,
+          contemporaryVelocityContrast: horizon.contemporaryVelocityContrast
+        }
+      );
+
+      const mergedAudit = attachHistoricalAuditToBaseline(
+        existingRootAudit,
+        builtAudit,
+        timelineYear
       );
 
       if (!isSandboxRequest) {
-        indexAuditAliases(builtAudit);
+        indexAuditAliases(mergedAudit);
         persistServerCacheToDisk();
       }
 
@@ -1169,9 +1327,10 @@ async function createApp(): Promise<express.Express> {
       );
       sendEvent({
         type: 'done',
-        audit: builtAudit,
+        audit: mergedAudit,
         sources: freshBundle.sources,
         cachedHit: false,
+        timelineYear,
         sandbox: isSandboxRequest,
         quota: updatedQuota
       });
@@ -1205,6 +1364,7 @@ async function createApp(): Promise<express.Express> {
       invId?: string;
       userInput?: string;
       isGeniusMode?: boolean;
+      timelineYear?: string | null;
     };
 
     const mode = body.mode;
@@ -1212,6 +1372,16 @@ async function createApp(): Promise<express.Express> {
     const invId = String(body.invId || '').trim();
     const userInput = String(body.userInput || '').trim();
     const isGeniusMode = Boolean(body.isGeniusMode);
+    const timelineYear = parseGlobalTimelineYear(
+      typeof body.timelineYear === 'string' ? body.timelineYear : 'PRESENT'
+    );
+    const horizon = getHistoricalAuditHorizon(timelineYear);
+    const invChronologyBlock = horizon.isHistorical
+      ? `\nGLOBAL TIME MACHINE HORIZON LOCK (<= ${horizon.numericYear} — ${horizon.cutoffDateLabel}):
+- ${horizon.strictChronologyDirective}
+- ${horizon.eraMonetaryRule}
+- NEVER cite any calendar year > ${horizon.numericYear}!\n`
+      : '';
 
     if (!mode || !['REAUDIT', 'CHALLENGE', 'BREAKDOWN'].includes(mode)) {
       res.status(400).json({ error: 'Invalid mode. Expected REAUDIT, CHALLENGE, or BREAKDOWN.' });
@@ -1261,7 +1431,7 @@ async function createApp(): Promise<express.Express> {
 
     const targetInv = targetAudit.invariants[invIdx];
     const rubricSpec = GRADING_RUBRIC_SPEC[invIdx];
-    const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env);
+    const runtimeSystemInstruction = buildGeminiSystemPrompt(process.env, timelineYear);
     const singleInvTemplateDirective = buildSingleInvariantSecretGeniusDirective(
       targetInv.id,
       targetAudit.ticker,
@@ -1270,9 +1440,17 @@ async function createApp(): Promise<express.Express> {
 
     try {
       if (mode === 'REAUDIT') {
-        const freshBundle = await fetchSingleInvariantWebIntel(ai, targetAudit, targetInv);
-        const singlePrompt = `Perform a surgical, low-token SINGLE-INVARIANT Thermodynamic Re-Audit ONLY for Invariant ${targetInv.id} ("${targetInv.title}") on ${targetAudit.name} ($${targetAudit.ticker}).
-Asset Architecture: ${targetAudit.architecture} | Consensus Family: ${targetAudit.consensusFamily} | Current Invariant 02 Cost Floor: ${formatScore(
+        const freshBundle = await fetchSingleInvariantWebIntel(
+          ai,
+          targetAudit,
+          targetInv,
+          '',
+          timelineYear
+        );
+        const singlePrompt = `Perform a surgical, low-token SINGLE-INVARIANT Thermodynamic Re-Audit${
+          horizon.isHistorical ? ` STRICTLY AT YEAR ${horizon.numericYear} (<= ${horizon.numericYear})` : ''
+        } ONLY for Invariant ${targetInv.id} ("${targetInv.title}") on ${targetAudit.name} ($${targetAudit.ticker}).
+${invChronologyBlock}Asset Architecture: ${targetAudit.architecture} | Consensus Family: ${targetAudit.consensusFamily} | Current Invariant 02 Cost Floor: ${formatScore(
           targetAudit.invariants[1]?.score
         )}/1.0.
 Existing Verified Evidence for Invariant ${targetInv.id}:
@@ -1288,12 +1466,16 @@ ${singleInvTemplateDirective}
 
 ${
   freshBundle.intelText
-    ? `FRESH GOOGLE SEARCH & GITHUB INTEL (RETRIEVED TODAY):\n${freshBundle.intelText}\n`
+    ? `FRESH GOOGLE SEARCH INTEL (${horizon.isHistorical ? `<= ${horizon.numericYear} HORIZON` : 'RETRIEVED TODAY'}):\n${freshBundle.intelText}\n`
     : ''
 }
 INSTRUCTIONS:
-1. Grade ONLY Invariant ${targetInv.id} strictly against the rubric brackets above and live active mainnet reality (never credit unactivated proposals as live, and obey M_overlay < M_L1 < 1.0 on overlays and E = 0 => 0.00 on zero-joule networks).
-2. Keep internal reasoning concise so output is never cut off. Return a complete 55–75 word "paragraph" (Normie Mode), a complete 180–230 word "geniusParagraph" matching the Secret template & lexicon above word-for-word in cadence and structure (citing exact repos/constants/dates), up to 4 "receipts", and a complete 2–3 sentence "verdictNote" explaining what fresh intel confirmed or changed.`;
+1. Grade ONLY Invariant ${targetInv.id} strictly against the rubric brackets above and ${
+          horizon.isHistorical ? `<= ${horizon.numericYear} historical reality (zero post-${horizon.numericYear} facts!)` : 'live active mainnet reality'
+        }.
+2. Keep internal reasoning concise so output is never cut off. Return a complete 55–75 word "paragraph" (Normie Mode), a complete 180–230 word "geniusParagraph" matching the template cadence and structure above (citing exact <= ${
+          horizon.numericYear
+        } statutes/repos/constants/dates), up to 4 "receipts", and a complete 2–3 sentence "verdictNote" explaining what fresh intel confirmed or changed.`;
 
         let parsed: Record<string, unknown> | null = null;
         for (let pass = 0; pass < 2; pass++) {
@@ -1341,15 +1523,18 @@ INSTRUCTIONS:
           ai,
           targetAudit,
           targetInv,
-          userInput
+          userInput,
+          timelineYear
         );
 
-        const challengePrompt = `A user is CHALLENGING the thermodynamic audit of ${targetAudit.name} ($${targetAudit.ticker}) on Invariant ${targetInv.id}: "${targetInv.title}" (Current Score: ${formatScore(
+        const challengePrompt = `A user is CHALLENGING the thermodynamic audit${
+          horizon.isHistorical ? ` AT HISTORICAL YEAR ${horizon.numericYear} (<= ${horizon.numericYear})` : ''
+        } of ${targetAudit.name} ($${targetAudit.ticker}) on Invariant ${targetInv.id}: "${targetInv.title}" (Current Score: ${formatScore(
           targetInv.score
         )} / 1.0 • Current Invariant 02 Cost Floor: ${formatScore(
           targetAudit.invariants[1]?.score
         )} / 1.0 • Consensus Family: ${targetAudit.consensusFamily}).
-
+${invChronologyBlock}
 USER CHALLENGE / NEW EVIDENCE SUBMITTED:
 "${userInput}"
 
@@ -1366,18 +1551,18 @@ ${singleInvTemplateDirective}
 
 ${
   freshBundle.intelText
-    ? `LIVE GOOGLE SEARCH FACT-CHECK OF USER CLAIM:\n${freshBundle.intelText}\n`
+    ? `LIVE GOOGLE SEARCH FACT-CHECK OF USER CLAIM (${horizon.isHistorical ? `<= ${horizon.numericYear}` : 'CURRENT'}):\n${freshBundle.intelText}\n`
     : ''
 }
 ADJUDICATION RULES (ZERO SYCOPHANCY — PURE PHYSICS & CODEBASE LAW):
-1. Fact-check the user's claim rigorously. Do NOT cave to marketing hype, unactivated roadmap promises, or category errors (e.g., off-chain 0-Joule signatures do NOT produce M = 1.0; if Invariant 02 Cost Floor E = 0, all non-Cost-Floor invariants MUST stay 0.00; any genesis premine/ICO/VC/dev-tax forces 01 Sovereignty = 0.00; overlays obey M_overlay < M_L1 < 1.0).
-2. ENERGY-ARBITRAGE COUPLING LAW: NEVER claim that genesis distribution (Invariant 01) is decoupled from Thermodynamic Cost Floor (Invariant 02)! Any genesis premine, token pre-allocation, VC/ICO mint, or mandatory protocol developer tax (Invariant 01 = 0.00) injects 0-Joule units into the fungible supply, creating a parasitic energy arbitrage within the Cost Floor where people who put in zero work benefit from and dilute the physical electricity burned by miners—capping Invariant 02 at <= 0.30 (premine/pre-allocation) or <= 0.35 (dev tax) and capping Terminal Grade at <= D+. If a user challenges an inflated Cost Floor (>0.35) on a premined, pre-allocated, or dev-taxed network, ACCEPT the challenge and recalibrate Invariant 02 into 0.15–0.35!
-3. If the user provides genuinely verifiable live mainnet evidence or exposes a real factual/calibration error under the canonical rubric brackets above, set verdict = "ACCEPTED" or "PARTIAL", set scoreChanged = true (or false if only telemetry/text updates), provide the calibrated updatedScore, and update the invariant's paragraph, updatedGeniusParagraph (180–230 words strictly preserving the Secret template cadence, structure, and lexicon above), telemetry, quickSummary, and receipts.
+1. Fact-check the user's claim rigorously${horizon.isHistorical ? ` strictly within the <= ${horizon.numericYear} historical horizon` : ''}. Do NOT cave to marketing hype, unactivated roadmap promises, post-${horizon.numericYear} anachronisms, or category errors (e.g., off-chain 0-Joule signatures do NOT produce M = 1.0; if Invariant 02 Cost Floor E = 0, all non-Cost-Floor invariants MUST stay 0.00; any genesis premine/ICO/VC/statutory monopoly/dev-tax forces 01 Sovereignty = 0.00; overlays obey M_overlay < M_L1 < 1.0).
+2. ENERGY-ARBITRAGE COUPLING LAW: NEVER claim that genesis distribution (Invariant 01) is decoupled from Thermodynamic Cost Floor (Invariant 02)! Any genesis premine, token pre-allocation, VC/ICO mint, statutory monopoly, or mandatory protocol developer tax (Invariant 01 = 0.00) injects 0-Joule units into the fungible supply, capping Invariant 02 at <= 0.30 (premine/pre-allocation/specie monopoly) or <= 0.35 (dev tax) and capping Terminal Grade at <= D+.
+3. If the user provides genuinely verifiable ${horizon.isHistorical ? `<= ${horizon.numericYear}` : 'live mainnet'} evidence or exposes a real factual/calibration error under the canonical rubric brackets above, set verdict = "ACCEPTED" or "PARTIAL", set scoreChanged = true (or false if only telemetry/text updates), provide the calibrated updatedScore, and update the invariant's paragraph, updatedGeniusParagraph (180–230 words strictly preserving the template cadence, structure, and <= ${horizon.numericYear} horizon), telemetry, quickSummary, and receipts.
 4. If the user's claim fails physics or rubric rules, set verdict = "REJECTED", scoreChanged = false, updatedScore = ${
           targetInv.score
         }, and deliver an uncompromising forensic rebuttal in "rebuttalOrAnalysis" (${
           isGeniusMode
-            ? '140–220 words using the exact Secret template lexicon, physics laws, codebase constants, math, and rubric brackets'
+            ? '140–220 words using the exact template lexicon, physics laws, constants, math, and rubric brackets'
             : '75–120 words in clear, direct Normie-friendly plain English backed by hard facts'
         }).
 5. COMPLETENESS & EFFICIENCY RULE: Keep internal thinking concise so your JSON output NEVER hits the token ceiling or cuts off mid-sentence. Every sentence in "rebuttalOrAnalysis" MUST finish cleanly with terminal punctuation. When verdict = "REJECTED" and scoreChanged = false, pass "" for updatedTelemetry, updatedQuickSummary, updatedParagraph, and updatedGeniusParagraph, and [] for updatedReceipts.`;
@@ -1424,10 +1609,12 @@ ADJUDICATION RULES (ZERO SYCOPHANCY — PURE PHYSICS & CODEBASE LAW):
       }
 
       // BREAKDOWN on gemini-4-hydrogen
-      const breakdownPrompt = `Provide a deeper, surgical technical breakdown for ${targetAudit.name} ($${targetAudit.ticker}) strictly focused on Invariant ${targetInv.id}: "${targetInv.title}" (Score: ${formatScore(
+      const breakdownPrompt = `Provide a deeper, surgical technical breakdown${
+        horizon.isHistorical ? ` STRICTLY AT HISTORICAL YEAR ${horizon.numericYear} (<= ${horizon.numericYear})` : ''
+      } for ${targetAudit.name} ($${targetAudit.ticker}) strictly focused on Invariant ${targetInv.id}: "${targetInv.title}" (Score: ${formatScore(
         targetInv.score
       )} / 1.0 • Telemetry: ${targetInv.telemetry}).
-
+${invChronologyBlock}
 EXISTING AUDIT CONTEXT:
 - Normie Summary: ${targetInv.paragraph}
 - Genius Dossier: ${targetInv.geniusParagraph || targetInv.paragraph}
@@ -1438,7 +1625,7 @@ ${isGeniusMode ? `${singleInvTemplateDirective}\n\n` : ''}SPECIFIC USER BREAKDOW
 ${
   userInput
     ? `"${userInput}"`
-    : `"Unpack the deeper architectural mechanics, exact codebase/protocol rules, edge-case failure modes, and mathematical trade-offs explaining why $${targetAudit.ticker} scores ${formatScore(
+    : `"Unpack the deeper architectural mechanics, exact ${horizon.isHistorical ? `<= ${horizon.numericYear} statutes/protocol rules` : 'codebase/protocol rules'}, edge-case failure modes, and mathematical trade-offs explaining why $${targetAudit.ticker} scores ${formatScore(
         targetInv.score
       )}/1.0 on ${targetInv.title}."`
 }
@@ -1446,8 +1633,8 @@ ${
 OUTPUT STYLE (${isGeniusMode ? 'GENIUS FORENSIC MODE' : 'NORMIE PLAIN-ENGLISH MODE'}):
 ${
   isGeniusMode
-    ? 'Write 2–3 dense, uncompromising forensic paragraphs (180–280 words total) anchored directly in the Secret template, structure, canonical voice, and exact lexicon above—citing exact repository files, config parameters, equations, attack vectors, and physical trade-offs without fluff or markdown headers. Keep internal thinking concise so every paragraph finishes cleanly.'
-    : 'Write 2 clear, vivid, plain-English paragraphs (110–170 words total) using intuitive real-world analogies and concrete facts so anyone can immediately grasp the exact engineering reality without jargon. Keep internal thinking concise so every paragraph finishes cleanly.'
+    ? `Write 2–3 dense, uncompromising forensic paragraphs (180–280 words total) anchored directly in the template structure, canonical voice, and exact <= ${horizon.numericYear} historical/technical facts without fluff or markdown headers. Keep internal thinking concise so every paragraph finishes cleanly.`
+    : `Write 2 clear, vivid, plain-English paragraphs (110–170 words total) using intuitive real-world analogies and concrete <= ${horizon.numericYear} facts so anyone can immediately grasp the exact engineering reality without jargon. Keep internal thinking concise so every paragraph finishes cleanly.`
 }`;
 
       let bodyText = 'Detailed breakdown generated.';
@@ -1515,12 +1702,10 @@ ${
     return out;
   };
 
-  const preloadedTickerSet = new Set(Object.keys(PRELOADED_AUDITS));
-
-  app.use(['/api/agent', '/mcp', '/sitemap.xml', '/llms.txt'], (_req, res, next) => {
+  app.use(['/compendium', '/llms.txt', '/llms-full.txt', '/truth.txt', '/sitemap.xml'], (_req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Session-Id');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
     if (_req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -1528,671 +1713,25 @@ ${
     next();
   });
 
-  app.get('/api/agent/archive', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const map = getServerArchiveMap();
-    const basket =
-      typeof req.query.basket === 'string'
-        ? (req.query.basket.toUpperCase() as 'ALL' | 'PASSED' | 'FAILED')
-        : 'ALL';
-    const category =
-      typeof req.query.category === 'string'
-        ? (req.query.category.toUpperCase() as never)
-        : 'ALL';
-    const family = typeof req.query.family === 'string' ? req.query.family : undefined;
-    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-
-    const audits = listArchivedAudits(map, { basket, category, family, q }, preloadedTickerSet);
-    const origin = resolvePublicOrigin(req);
-    res.json({
-      ok: true,
-      archiveOnly: true,
-      creditsUsed: 0,
-      totalArchived: Object.keys(map).length,
-      returnedCount: audits.length,
-      passedCount: audits.filter((a) => a.basket === 'PASSED').length,
-      failedCount: audits.filter((a) => a.basket === 'FAILED').length,
-      audits: audits.map((a) => ({
-        ...a,
-        absoluteUrl: `${origin}${a.deepLinkUrl}`
-      }))
-    });
-  });
-
-  app.get('/api/agent/audit/:ticker', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const map = getServerArchiveMap();
-    const aliases = getServerAliasObject();
-    const rawTicker = String(req.params.ticker || '').trim();
-    const hit = findArchivedAudit(map, rawTicker, aliases);
-    if (!hit) {
-      res.status(404).json({
-        ok: false,
-        archiveOnly: true,
-        archived: false,
-        creditsUsed: 0,
-        error: `Asset "${rawTicker}" is not in The Truth Archive. Strictly archive-only mode never triggers AI generation or fabricates scores.`,
-        availableCount: Object.keys(map).length
+  // Single ultra-light plain-text compendium containing 100% of the Origin Thesis,
+  // Deterministic Grading Rubric, Live Cohort & US M2 Gains, all 8 Global Time Machine
+  // Epoch Scoreboards (1913–Present), and Full Genius & Normie Audits across every year.
+  app.get(
+    ['/compendium', '/llms.txt', '/llms-full.txt', '/truth.txt'],
+    async (req: Request, res: Response) => {
+      await syncFirestoreArchivedAuditsToCache();
+      const origin = resolvePublicOrigin(req);
+      const plainText = buildFullPlainTextCompendium(origin, getServerArchiveMap(), {
+        cohortRecord: getPersistedGainsCohort(),
+        m2Dataset: getCachedM2BenchmarkDataset()
       });
-      return;
+      res
+        .status(200)
+        .setHeader('Content-Type', 'text/plain; charset=utf-8')
+        .setHeader('Cache-Control', 'public, max-age=300')
+        .send(plainText);
     }
-
-    const origin = resolvePublicOrigin(req);
-    const summary = summarizeArchivedAudit(hit, preloadedTickerSet);
-    res.json({
-      ok: true,
-      archiveOnly: true,
-      archived: true,
-      defaultMode: 'GENIUS',
-      creditsUsed: 0,
-      absoluteUrl: `${origin}${summary.deepLinkUrl}`,
-      summary,
-      audit: hit
-    });
-  });
-
-  app.get('/api/agent/compare', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const map = getServerArchiveMap();
-    const aliases = getServerAliasObject();
-    const rawTickers = String(req.query.tickers || req.query.compare || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const mode = String(req.query.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-
-    const result = buildArchiveComparison(map, rawTickers, {
-      mode,
-      dynamicAliases: aliases,
-      preloadedTickers: preloadedTickerSet,
-      cohortRecord: getPersistedGainsCohort()
-    });
-
-    if (!result.ok) {
-      res.status(result.missingTickers.length > 0 ? 404 : 400).json(result);
-      return;
-    }
-
-    const origin = resolvePublicOrigin(req);
-    res.json({
-      ...result,
-      absoluteUrl: `${origin}${result.deepLinkUrl}`
-    });
-  });
-
-  app.get('/api/agent/rubric', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const origin = resolvePublicOrigin(req);
-    const rubric = buildAgentRubricReference(getServerArchiveMap());
-    res.json({
-      ...rubric,
-      absoluteUrl: `${origin}${rubric.deepLinkUrl}`
-    });
-  });
-
-  app.get('/api/agent/gains', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const origin = resolvePublicOrigin(req);
-    const gains = buildAgentGainsReference(
-      getServerArchiveMap(),
-      getPersistedGainsCohort(),
-      getCachedM2BenchmarkDataset()
-    );
-    res.json({
-      ...gains,
-      absoluteUrl: `${origin}${gains.deepLinkUrl}`
-    });
-  });
-
-  app.get('/api/agent/origin-thesis', (req: Request, res: Response) => {
-    const origin = resolvePublicOrigin(req);
-    const mode = String(req.query.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-    const thesis = buildAgentOriginThesisReference(mode);
-    res.json({
-      ...thesis,
-      absoluteUrl: `${origin}${thesis.deepLinkUrl}`
-    });
-  });
-
-  app.get('/api/agent/pillars', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const origin = resolvePublicOrigin(req);
-    const map = getServerArchiveMap();
-    const rubric = buildAgentRubricReference(map);
-    const gains = buildAgentGainsReference(
-      map,
-      getPersistedGainsCohort(),
-      getCachedM2BenchmarkDataset()
-    );
-    const thesis = buildAgentOriginThesisReference('GENIUS');
-    res.json({
-      ok: true,
-      archiveOnly: true,
-      creditsUsed: 0,
-      pillars: {
-        archive: {
-          title: 'Pillar 1 — Verified Thermodynamic Audit Archive',
-          uiUrl: `${origin}/?archive=1`,
-          apiUrl: `${origin}/api/agent/archive`,
-          totalArchived: Object.keys(map).length
-        },
-        rubric: {
-          title: 'Pillar 2 — Deterministic 6-Invariant Grading Rubric & Consistency Proof',
-          uiUrl: `${origin}/?rubric=1`,
-          apiUrl: `${origin}/api/agent/rubric`,
-          standardGradeCurveSummary: rubric.standardGradeCurveSummary,
-          sovereigntyCompromisedCurveSummary: rubric.sovereigntyCompromisedCurveSummary,
-          allConsistent: rubric.consistencyVerification.allConsistent,
-          verifiedCount: rubric.consistencyVerification.verifiedCount,
-          mismatchCount: rubric.consistencyVerification.mismatchCount
-        },
-        gains: {
-          title: 'Pillar 3 — Live Thermodynamic Gains & US M2 Money Supply Benchmark',
-          uiUrl: `${origin}/?gains=1`,
-          apiUrl: `${origin}/api/agent/gains`,
-          cycleSummary: gains.horizons.CYCLE,
-          latestM2Trillions: gains.m2Benchmark.latestM2Trillions,
-          m2AllTimeSummary: gains.m2Benchmark.horizons.ALL_TIME
-        },
-        originThesis: {
-          title: 'Pillar 4 — First Principles: Physics Over Consensus (23 Axioms)',
-          uiUrl: `${origin}/?genesis=1`,
-          apiUrl: `${origin}/api/agent/origin-thesis`,
-          axiomCount: thesis.axiomCount,
-          chapters: thesis.chapters
-        }
-      }
-    });
-  });
-
-  const handleAgentResearch = async (req: Request, res: Response, rawQuestion: string, rawMode: string) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const question = String(rawQuestion || '').trim();
-    if (!question || question.length > 500) {
-      res.status(400).json({
-        ok: false,
-        archiveOnly: true,
-        creditsUsed: 0,
-        error: 'Provide a research question between 1 and 500 characters.'
-      });
-      return;
-    }
-
-    const mode = String(rawMode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-    const map = getServerArchiveMap();
-    const aliases = getServerAliasObject();
-    const answer = answerArchiveResearchQuestion(map, question, {
-      mode,
-      dynamicAliases: aliases,
-      preloadedTickers: preloadedTickerSet,
-      cohortRecord: getPersistedGainsCohort()
-    });
-
-    const origin = resolvePublicOrigin(req);
-    res.status(answer.ok ? 200 : 404).json({
-      ...answer,
-      absoluteUrl: answer.deepLinkUrl ? `${origin}${answer.deepLinkUrl}` : null
-    });
-  };
-
-  app.get('/api/agent/research', async (req: Request, res: Response) => {
-    const q = String(req.query.question || req.query.q || '');
-    const mode = String(req.query.mode || '');
-    await handleAgentResearch(req, res, q, mode);
-  });
-
-  app.post('/api/agent/research', async (req: Request, res: Response) => {
-    const body = (req.body || {}) as { question?: string; query?: string; mode?: string };
-    await handleAgentResearch(req, res, String(body.question || body.query || ''), String(body.mode || ''));
-  });
-
-  app.get('/mcp', (req: Request, res: Response) => {
-    const origin = resolvePublicOrigin(req);
-    res.json({
-      name: 'the-truth-thermodynamic-archive',
-      version: '1.0.0',
-      transport: 'streamable-http-jsonrpc',
-      archiveOnly: true,
-      creditsUsedPerCall: 0,
-      endpoint: `${origin}/mcp`,
-      tools: MCP_ARCHIVE_TOOL_SCHEMAS
-    });
-  });
-
-  app.post('/mcp', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const rpc = (req.body || {}) as {
-      jsonrpc?: string;
-      id?: string | number | null;
-      method?: string;
-      params?: Record<string, unknown>;
-    };
-    const id = rpc.id ?? null;
-    const method = String(rpc.method || '');
-    const map = getServerArchiveMap();
-    const aliases = getServerAliasObject();
-    const origin = resolvePublicOrigin(req);
-
-    if (method === 'initialize') {
-      res.json({
-        jsonrpc: '2.0',
-        id,
-        result: {
-          protocolVersion: '2025-03-26',
-          capabilities: { tools: { listChanged: false } },
-          serverInfo: {
-            name: 'The Truth Thermodynamic Archive MCP',
-            version: '1.0.0'
-          }
-        }
-      });
-      return;
-    }
-
-    if (method === 'notifications/initialized') {
-      res.status(204).end();
-      return;
-    }
-
-    if (method === 'tools/list') {
-      res.json({
-        jsonrpc: '2.0',
-        id,
-        result: { tools: MCP_ARCHIVE_TOOL_SCHEMAS }
-      });
-      return;
-    }
-
-    if (method === 'tools/call') {
-      const toolName = String(rpc.params?.name || '');
-      const args = (rpc.params?.arguments || {}) as Record<string, unknown>;
-
-      if (toolName === 'list_archived_audits') {
-        const list = listArchivedAudits(
-          map,
-          {
-            basket: typeof args.basket === 'string' ? (args.basket.toUpperCase() as never) : 'ALL',
-            category:
-              typeof args.category === 'string' ? (args.category.toUpperCase() as never) : 'ALL',
-            family: typeof args.family === 'string' ? args.family : undefined,
-            q: typeof args.q === 'string' ? args.q : undefined
-          },
-          preloadedTickerSet
-        );
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  {
-                    archiveOnly: true,
-                    creditsUsed: 0,
-                    count: list.length,
-                    audits: list.map((a) => ({ ...a, absoluteUrl: `${origin}${a.deepLinkUrl}` }))
-                  },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'get_archived_audit') {
-        const hit = findArchivedAudit(map, String(args.ticker || ''), aliases);
-        if (!hit) {
-          res.json({
-            jsonrpc: '2.0',
-            id,
-            result: {
-              isError: true,
-              content: [
-                {
-                  type: 'text',
-                  text: `Asset "${String(
-                    args.ticker || ''
-                  )}" is not in The Truth Archive. Strictly archive-only MCP refuses to run live AI pulls.`
-                }
-              ]
-            }
-          });
-          return;
-        }
-        const summary = summarizeArchivedAudit(hit, preloadedTickerSet);
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  {
-                    archiveOnly: true,
-                    creditsUsed: 0,
-                    absoluteUrl: `${origin}${summary.deepLinkUrl}`,
-                    summary,
-                    audit: hit
-                  },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'compare_archived_audits') {
-        const tickers = Array.isArray(args.tickers) ? args.tickers.map(String) : [];
-        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-        const comp = buildArchiveComparison(map, tickers, {
-          mode,
-          dynamicAliases: aliases,
-          preloadedTickers: preloadedTickerSet,
-          cohortRecord: getPersistedGainsCohort()
-        });
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            isError: !comp.ok,
-            content: [
-              {
-                type: 'text',
-                text: comp.ok
-                  ? JSON.stringify({ ...comp, absoluteUrl: `${origin}${comp.deepLinkUrl}` }, null, 2)
-                  : comp.error
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'get_grading_rubric') {
-        const rubric = buildAgentRubricReference(map);
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  { ...rubric, absoluteUrl: `${origin}${rubric.deepLinkUrl}` },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'get_live_gains_and_m2') {
-        const gains = buildAgentGainsReference(
-          map,
-          getPersistedGainsCohort(),
-          getCachedM2BenchmarkDataset()
-        );
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  { ...gains, absoluteUrl: `${origin}${gains.deepLinkUrl}` },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'get_origin_thesis') {
-        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-        const thesis = buildAgentOriginThesisReference(mode);
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  { ...thesis, absoluteUrl: `${origin}${thesis.deepLinkUrl}` },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      if (toolName === 'research_archive') {
-        const mode = String(args.mode || '').toUpperCase() === 'NORMIE' ? 'NORMIE' : 'GENIUS';
-        const ans = answerArchiveResearchQuestion(map, String(args.question || ''), {
-          mode,
-          dynamicAliases: aliases,
-          preloadedTickers: preloadedTickerSet,
-          cohortRecord: getPersistedGainsCohort()
-        });
-        res.json({
-          jsonrpc: '2.0',
-          id,
-          result: {
-            isError: !ans.ok,
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(
-                  {
-                    ...ans,
-                    absoluteUrl: ans.deepLinkUrl ? `${origin}${ans.deepLinkUrl}` : null
-                  },
-                  null,
-                  2
-                )
-              }
-            ]
-          }
-        });
-        return;
-      }
-
-      res.json({
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32601, message: `Unknown archive tool "${toolName}".` }
-      });
-      return;
-    }
-
-    res.json({
-      jsonrpc: '2.0',
-      id,
-      error: { code: -32601, message: `Unsupported MCP method "${method}".` }
-    });
-  });
-
-  app.get('/openapi.json', (req: Request, res: Response) => {
-    const origin = resolvePublicOrigin(req);
-    res.json({
-      openapi: '3.1.0',
-      info: {
-        title: 'The Truth — 4-Pillar Thermodynamic Reference Agent API',
-        version: '1.1.0',
-        description:
-          'Strictly read-only, 0-credit API exposing the 4 canonical reference pillars of The Truth: (1) Archive, (2) Deterministic Grading Rubric & Consistency Proof, (3) Live Gains & US M2 Benchmark, and (4) First-Principles Origin Thesis.'
-      },
-      servers: [{ url: origin }],
-      paths: {
-        '/api/agent/pillars': {
-          get: {
-            operationId: 'getReferencePillarsIndex',
-            summary: 'Fetch a compact index and headline proof across all 4 canonical reference pillars.',
-            responses: { '200': { description: '4-pillar summary index' } }
-          }
-        },
-        '/api/agent/archive': {
-          get: {
-            operationId: 'listArchivedAudits',
-            summary: 'Pillar 1: List all archived audits (strictly archive-only, 0 AI credits).',
-            parameters: [
-              { name: 'basket', in: 'query', schema: { type: 'string', enum: ['ALL', 'PASSED', 'FAILED'] } },
-              { name: 'category', in: 'query', schema: { type: 'string' } },
-              { name: 'family', in: 'query', schema: { type: 'string' } },
-              { name: 'q', in: 'query', schema: { type: 'string' } }
-            ],
-            responses: { '200': { description: 'List of archived audit summaries' } }
-          }
-        },
-        '/api/agent/audit/{ticker}': {
-          get: {
-            operationId: 'getArchivedAudit',
-            summary: 'Pillar 1: Fetch full 6-invariant thermodynamic audit for an archived asset.',
-            parameters: [{ name: 'ticker', in: 'path', required: true, schema: { type: 'string' } }],
-            responses: {
-              '200': { description: 'Full archived audit' },
-              '404': { description: 'Not archived (strictly refuses live AI pull)' }
-            }
-          }
-        },
-        '/api/agent/compare': {
-          get: {
-            operationId: 'compareArchivedAudits',
-            summary: 'Pillar 1: Run side-by-side 6-invariant comparison across 2–4 archived assets.',
-            parameters: [
-              { name: 'tickers', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
-            ],
-            responses: {
-              '200': { description: 'Side-by-side comparison matrix and PoS vs PoW analysis' },
-              '404': { description: 'One or more requested tickers are not archived' }
-            }
-          }
-        },
-        '/api/agent/rubric': {
-          get: {
-            operationId: 'getGradingRubric',
-            summary:
-              'Pillar 2: Fetch exact 6-invariant quantitative scoring brackets, Standard vs Sovereignty-Compromised grade curves, and 100% mathematical consistency verification across all archived assets.',
-            responses: { '200': { description: 'Deterministic rubric and per-asset consistency proof' } }
-          }
-        },
-        '/api/agent/gains': {
-          get: {
-            operationId: 'getLiveGainsAndM2',
-            summary:
-              'Pillar 3: Fetch Passed (E > 0) vs Failed (E = 0) cohort returns across Cycle, All-Time, 180D, 1Y, 2Y, and 4Y windows plus KAS, BTC, Gold, and S&P 500 vs FRED US M2 money supply.',
-            responses: { '200': { description: 'Live cohort gains and US M2 benchmark dataset' } }
-          }
-        },
-        '/api/agent/origin-thesis': {
-          get: {
-            operationId: 'getOriginThesis',
-            summary:
-              'Pillar 4: Fetch the 23-axiom First-Principles Origin Thesis ("Physics Over Consensus"), Observer Physics, Quantum Darwinism, 100 MJ human workweek ledger, Satoshi’s Betrayal, and Unified Audit Functional.',
-            parameters: [
-              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['GENIUS', 'NORMIE'] } }
-            ],
-            responses: { '200': { description: 'Full 23-axiom origin thesis' } }
-          }
-        },
-        '/api/agent/research': {
-          get: {
-            operationId: 'researchThermodynamicArchiveGet',
-            summary: 'Answer coin, rubric consistency, M2 gains, or origin thesis questions via GET.',
-            parameters: [
-              { name: 'q', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'mode', in: 'query', schema: { type: 'string', enum: ['NORMIE', 'GENIUS'] } }
-            ],
-            responses: { '200': { description: 'Deterministic reference answer' } }
-          },
-          post: {
-            operationId: 'researchThermodynamicArchive',
-            summary: 'Answer coin comparison, rubric, M2 gains, or PoS-vs-PoW questions using deterministic reference data.',
-            requestBody: {
-              required: true,
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    required: ['question'],
-                    properties: {
-                      question: { type: 'string' },
-                      mode: { type: 'string', enum: ['NORMIE', 'GENIUS'] }
-                    }
-                  }
-                }
-              }
-            },
-            responses: {
-              '200': { description: 'Grounded archive-only answer with comparison matrix and deep-link' },
-              '404': { description: 'Unarchived asset requested' }
-            }
-          }
-        }
-      }
-    });
-  });
-
-  app.get('/llms.txt', async (req: Request, res: Response) => {
-    await syncFirestoreArchivedAuditsToCache();
-    const origin = resolvePublicOrigin(req);
-    const map = getServerArchiveMap();
-    const ordered = sortAuditTickersByGrade(map);
-    const rubric = buildAgentRubricReference(map);
-    const content = `# The Truth — Thermodynamic Audit
-> Sovereign Thermodynamic Verification Engine grading Layer-1 protocols, overlays, and physical commodities strictly against six immutable laws of physics.
-
-## 4 Canonical Reference Pillars (Zero-Credit Deterministic Access)
-AI assistants, link readers (ChatGPT, Claude, Perplexity), and MCP agents should reference these 4 canonical pillars directly rather than simulating orbital UI interactions:
-1. **The Archive** (All ${ordered.length} verified 6-invariant audits)
-   - HTML View: ${origin}/?archive=1
-   - JSON Endpoint: ${origin}/api/agent/archive
-   - Single Asset JSON: ${origin}/api/agent/audit/{TICKER}
-   - Side-by-Side Comparison JSON: ${origin}/api/agent/compare?tickers=KAS,BTC,ETH,SOL&mode=GENIUS
-2. **The Deterministic Grading Rubric & Consistency Proof** (${rubric.consistencyVerification.verifiedCount}/${rubric.consistencyVerification.totalAudited} verified, ${rubric.consistencyVerification.mismatchCount} mismatches)
-   - HTML View: ${origin}/?rubric=1
-   - JSON Endpoint: ${origin}/api/agent/rubric
-   - Standard Curve (Sovereignty > 0): ${rubric.standardGradeCurveSummary}
-   - Sovereignty-Compromised Curve (Sovereignty = 0): ${rubric.sovereigntyCompromisedCurveSummary}
-   - Zero-Joule Floor (Cost Floor = 0): automatic Grade F (0.00 / 6.00)
-3. **Live Thermodynamic Gains & US M2 Money Supply Benchmark** (Passed E > 0 vs Failed E = 0 + KAS, BTC, Gold, S&P 500 vs FRED M2)
-   - HTML View: ${origin}/?gains=1
-   - JSON Endpoint: ${origin}/api/agent/gains
-4. **First-Principles Origin Thesis ("Physics Over Consensus")** (23 axioms across 5 Parts: Six Invariants, 100 MJ Human Work Ledger, Cosmic & Observer Physics / Quantum Darwinism, Satoshi’s Betrayal, and Unified Audit Functional)
-   - HTML View: ${origin}/?genesis=1
-   - JSON Endpoint: ${origin}/api/agent/origin-thesis
-
-## Unified Discovery & Tooling
-- 4-Pillar Summary Bundle (GET): ${origin}/api/agent/pillars
-- Deterministic Research QA (GET or POST): ${origin}/api/agent/research?q=Is%20grading%20consistent
-- Streamable HTTP MCP Endpoint: ${origin}/mcp
-- OpenAPI 3.1 Spec: ${origin}/openapi.json
-- XML Sitemap: ${origin}/sitemap.xml
-
-## Currently Archived Tickers (${ordered.length})
-${ordered.join(', ')}
-`;
-    res.status(200).setHeader('Content-Type', 'text/plain; charset=utf-8').send(content);
-  });
+  );
 
   app.get('/sitemap.xml', async (req: Request, res: Response) => {
     await syncFirestoreArchivedAuditsToCache();
@@ -2200,6 +1739,8 @@ ${ordered.join(', ')}
     const ordered = sortAuditTickersByGrade(getServerArchiveMap());
     const urls = [
       `${origin}/`,
+      `${origin}/compendium`,
+      `${origin}/llms.txt`,
       `${origin}/?archive=1`,
       `${origin}/?rubric=1`,
       `${origin}/?gains=1`,

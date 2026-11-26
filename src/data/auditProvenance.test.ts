@@ -34,7 +34,7 @@ test('getAuditProvenance labels hardcoded core L1/commodities as Deterministic R
 });
 
 test('getAuditCategory and getAuditProvenance separate Ecosystem / Overlays tickers cleanly', () => {
-  for (const tk of ['GEEK', 'IGRA', 'LN', 'STX']) {
+  for (const tk of ['GEEK', 'IGRA', 'LN', 'STX', 'USD']) {
     assert.equal(getAuditCategory(PRELOADED_AUDITS[tk]), 'ECOSYSTEM_OVERLAY');
     const prov = getAuditProvenance(PRELOADED_AUDITS[tk], { preloadedTickers });
     assert.equal(prov.categoryBadge, 'Ecosystem / Overlays');
@@ -53,7 +53,8 @@ test('getAuditCategory and getAuditProvenance separate Ecosystem / Overlays tick
   assert.ok(!coreTickers.includes('IGRA'));
   assert.ok(!coreTickers.includes('LN'));
   assert.ok(!coreTickers.includes('STX'));
-  assert.deepEqual(ecosystemTickers.sort(), ['GEEK', 'IGRA', 'LN', 'STX']);
+  assert.ok(!coreTickers.includes('USD'));
+  assert.deepEqual(ecosystemTickers.sort(), ['GEEK', 'IGRA', 'LN', 'STX', 'USD']);
 });
 
 test('Failed basket partitioning accurately places L2s, sidechains, stablecoins, and tokens in Ecosystem / Overlays while keeping L1 hosts in Core', () => {

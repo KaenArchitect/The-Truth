@@ -1,5 +1,26 @@
 export const TUTORIAL_STORAGE_KEY = 'truth_tutorial_seen_v1';
 
+/**
+ * Minimum clearance (in CSS px) reserved at the bottom of mobile viewports (< 768px)
+ * so sticky bottom toolbars and in-app browser ad banners (e.g. Facebook / Instagram
+ * WebViews) never cover the tutorial text box or its Back / Next / Done buttons.
+ */
+export const MOBILE_BOTTOM_AD_SAFE_OFFSET_PX = 136;
+export const IN_APP_AD_BROWSER_BOTTOM_OFFSET_PX = 160;
+
+export function isBottomChromeInAppBrowser(userAgent = ''): boolean {
+  if (!userAgent) return false;
+  return /FBAN|FBAV|FB_IAB|FBIOS|Messenger|Instagram|BytedanceWebview|musical_ly|TikTok|Line\/|MicroMessenger/i.test(
+    userAgent
+  );
+}
+
+export function getMobileBottomClearancePx(userAgent = ''): number {
+  return isBottomChromeInAppBrowser(userAgent)
+    ? IN_APP_AD_BROWSER_BOTTOM_OFFSET_PX
+    : MOBILE_BOTTOM_AD_SAFE_OFFSET_PX;
+}
+
 export type TutorialTargetId =
   | 'search-dock'
   | 'passed-sidebar'
@@ -8,7 +29,8 @@ export type TutorialTargetId =
   | 'mode-controls'
   | 'rubric-button'
   | 'pin-compare'
-  | 'gains-archive';
+  | 'gains-archive'
+  | 'mystery-beacon';
 
 export type TutorialActionId =
   | 'focus-search'
@@ -28,6 +50,7 @@ export interface TutorialStep {
   actionLabel?: string;
   actionId?: TutorialActionId;
   preferredPlacement?: 'bottom' | 'right' | 'left' | 'top';
+  isEasterEggStep?: boolean;
 }
 
 export const TUTORIAL_STEPS: TutorialStep[] = [
@@ -125,6 +148,20 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     ],
     actionLabel: 'Launch Live Gains',
     actionId: 'open-gains-modal',
+    preferredPlacement: 'bottom'
+  },
+  {
+    id: 'easter-egg-signal',
+    stepNumber: 7,
+    targetId: 'mystery-beacon',
+    isEasterEggStep: true,
+    title: '7. Signal Detected · Hidden Easter Egg',
+    summary:
+      'Notice the cryptic 0/6 counter and glowing dot beside The Truth? Something deeper is sealed behind the interface.',
+    instructions: [
+      'Explore 6 distinct capabilities across the terminal—each unique discovery increments the 0/6 anomaly counter toward resonance.',
+      'Watch what starts pulsing beside the title at 6/6, and remember: applying sustained coherent energy (or persistent impulses) at the point of origin breaks containment.'
+    ],
     preferredPlacement: 'bottom'
   }
 ];
@@ -240,6 +277,17 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     actionLabel: 'Open Gains',
     actionId: 'open-gains-modal',
     preferredPlacement: 'top'
+  },
+  {
+    id: 'mobile-easter-egg',
+    stepNumber: 11,
+    targetId: 'mystery-beacon',
+    isEasterEggStep: true,
+    title: '11. Hidden Easter Egg (0/6)',
+    summary:
+      'Spot the 0/6 counter & glowing dot by The Truth? Explore all 6 tools—sustained energy unlocks a secret vault.',
+    instructions: [],
+    preferredPlacement: 'bottom'
   }
 ];
 
@@ -249,7 +297,8 @@ export function getTutorialStepsForViewport(viewportWidth: number): TutorialStep
 
 const HEADER_TUTORIAL_TARGETS = new Set<TutorialTargetId>([
   'search-dock',
-  'mode-controls'
+  'mode-controls',
+  'mystery-beacon'
 ]);
 
 export function computeMobileScrollTargetY(
@@ -258,7 +307,8 @@ export function computeMobileScrollTargetY(
   elementHeight: number,
   viewportHeight: number,
   cardHeight = 198,
-  maxScrollY = Number.POSITIVE_INFINITY
+  maxScrollY = Number.POSITIVE_INFINITY,
+  bottomClearancePx = MOBILE_BOTTOM_AD_SAFE_OFFSET_PX
 ): number {
   const vh = Math.max(480, viewportHeight);
   const clampScroll = (y: number) => Math.max(0, Math.min(maxScrollY, Math.round(y)));
@@ -267,9 +317,11 @@ export function computeMobileScrollTargetY(
     return 0;
   }
 
-  const mobileCardH = Math.min(cardHeight || 198, Math.round(vh * 0.4));
-  const bottomSlotTop = Math.max(12, vh - mobileCardH - 12);
+  const mobileCardH = Math.min(cardHeight || 198, Math.round(vh * 0.38));
+  const safeBottomOffset = Math.max(MOBILE_BOTTOM_AD_SAFE_OFFSET_PX, bottomClearancePx);
+  const bottomSlotTop = Math.max(12, vh - mobileCardH - safeBottomOffset);
   const safeAboveSheetBottom = bottomSlotTop - 20;
+  const topSlotClearTop = 12 + mobileCardH + 24;
 
   if (elementHeight + 20 <= safeAboveSheetBottom - 16) {
     const desiredViewportTop = Math.max(
@@ -280,10 +332,15 @@ export function computeMobileScrollTargetY(
     const resultingBottom = elementDocTop - scrollY + elementHeight + 10;
 
     if (resultingBottom > bottomSlotTop - 8) {
-      const topSlotClearTop = 12 + mobileCardH + 24;
       return clampScroll(elementDocTop - topSlotClearTop);
     }
     return scrollY;
+  }
+
+  // When an element is too tall to fit above the elevated bottom sheet (e.g. inside a shrunk
+  // mobile WebView), place it cleanly beneath the top coach-card slot so the card docks at top: 12px.
+  if (topSlotClearTop + elementHeight + 12 <= vh) {
+    return clampScroll(elementDocTop - topSlotClearTop);
   }
 
   return clampScroll(elementDocTop + elementHeight / 2 - vh / 2);
@@ -312,14 +369,16 @@ export function computeSpotlightCardPosition(
   targetRect: SpotlightRect | null,
   viewport: { width: number; height: number },
   cardSize: { width: number; height: number } = { width: 380, height: 320 },
-  preferred: 'bottom' | 'right' | 'left' | 'top' = 'bottom'
+  preferred: 'bottom' | 'right' | 'left' | 'top' = 'bottom',
+  mobileBottomClearancePx = MOBILE_BOTTOM_AD_SAFE_OFFSET_PX
 ): CardCoords {
   const vw = Math.max(320, viewport.width);
   const vh = Math.max(480, viewport.height);
 
   if (vw < 768) {
-    const mobileCardH = Math.min(cardSize.height || 180, Math.round(vh * 0.4));
-    const bottomTop = Math.max(12, vh - mobileCardH - 12);
+    const mobileCardH = Math.min(cardSize.height || 180, Math.round(vh * 0.38));
+    const safeBottomOffset = Math.max(MOBILE_BOTTOM_AD_SAFE_OFFSET_PX, mobileBottomClearancePx);
+    const bottomTop = Math.max(12, vh - mobileCardH - safeBottomOffset);
     const topSlotBottom = 12 + mobileCardH;
 
     if (targetRect && targetRect.height > 0) {
@@ -336,9 +395,15 @@ export function computeSpotlightCardPosition(
       }
       if (overlapsBottom && overlapsTop) {
         // Choose whichever slot leaves more room for the target
-        const bottomOverlap = Math.max(0, Math.min(targetBottom, vh - 12) - Math.max(targetRect.top, bottomTop));
-        const topOverlap = Math.max(0, Math.min(targetBottom, topSlotBottom) - Math.max(targetRect.top, 12));
-        if (topOverlap < bottomOverlap) {
+        const bottomOverlap = Math.max(
+          0,
+          Math.min(targetBottom, bottomTop + mobileCardH) - Math.max(targetRect.top, bottomTop)
+        );
+        const topOverlap = Math.max(
+          0,
+          Math.min(targetBottom, topSlotBottom) - Math.max(targetRect.top, 12)
+        );
+        if (topOverlap <= bottomOverlap) {
           return {
             top: 12,
             left: 12,

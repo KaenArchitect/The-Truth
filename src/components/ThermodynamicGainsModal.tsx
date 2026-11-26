@@ -34,6 +34,7 @@ import { M2BenchmarkPanel } from './M2BenchmarkPanel.tsx';
 import { formatScore, type AuditData } from '../data/rubricSpec.ts';
 import {
   firebaseAuth,
+  getFirebaseIdToken,
   persistGainsCohortToFirestore,
   subscribeGainsCohortFromFirestore
 } from '../lib/firebase.ts';
@@ -215,9 +216,9 @@ export function ThermodynamicGainsModal({
     };
   }, []);
 
-  // Automatically keep backend & Firestore cohort storage synced with the live PASSED/FAILED baskets
+  // Automatically keep backend & Firestore cohort storage synced with the live PASSED/FAILED baskets for verified signed-in users
   useEffect(() => {
-    if (!hasLoadedBackend) return undefined;
+    if (!hasLoadedBackend || !firebaseAuth?.currentUser?.emailVerified) return undefined;
     const syncedSig = getCohortSyncSignature(cohortRecord);
     const persistedSig = persistedCohortRecord ? getCohortSyncSignature(persistedCohortRecord) : '';
     if (syncedSig === persistedSig || lastAutoSyncedSigRef.current === syncedSig) {
@@ -226,18 +227,26 @@ export function ThermodynamicGainsModal({
 
     lastAutoSyncedSigRef.current = syncedSig;
     let active = true;
-    fetch('/api/gains-cohort', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        passed: cohortRecord.passed,
-        failed: cohortRecord.failed,
-        sourceLabel: cohortRecord.sourceLabel,
-        isCustomized: Boolean(persistedCohortRecord?.isCustomized)
-      })
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload: { record?: Partial<GainsCohortRecord> } | null) => {
+    void (async () => {
+      try {
+        const idToken = await getFirebaseIdToken();
+        if (!active || !idToken) return;
+        const res = await fetch('/api/gains-cohort', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`
+          },
+          body: JSON.stringify({
+            passed: cohortRecord.passed,
+            failed: cohortRecord.failed,
+            sourceLabel: cohortRecord.sourceLabel,
+            isCustomized: Boolean(persistedCohortRecord?.isCustomized)
+          })
+        });
+        const payload = res.ok
+          ? ((await res.json()) as { record?: Partial<GainsCohortRecord> } | null)
+          : null;
         if (!active || !payload?.record) return;
         const saved = sanitizeGainsCohortRecord(payload.record);
         lastAutoSyncedSigRef.current = getCohortSyncSignature(
@@ -247,8 +256,10 @@ export function ThermodynamicGainsModal({
         if (firebaseAuth?.currentUser?.emailVerified) {
           void persistGainsCohortToFirestore(saved).catch(() => {});
         }
-      })
-      .catch(() => {});
+      } catch {
+        // Non-fatal
+      }
+    })();
 
     return () => {
       active = false;
@@ -290,9 +301,14 @@ export function ThermodynamicGainsModal({
         .catch(() => {});
 
       // Persist synced basket lists + backend CoinGecko & Yahoo Finance spots/release baselines
+      const idToken = firebaseAuth?.currentUser?.emailVerified ? await getFirebaseIdToken() : null;
+      const syncHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        syncHeaders.Authorization = `Bearer ${idToken}`;
+      }
       const syncRes = await fetch('/api/gains-cohort/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: syncHeaders,
         body: JSON.stringify({ spotOverrides: clientSpots })
       });
       if (syncRes.ok) {

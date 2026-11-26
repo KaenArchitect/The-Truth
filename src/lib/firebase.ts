@@ -202,6 +202,13 @@ export async function persistAuditDocumentToFirestore(
       queryAliases: (mergedAliases.length > 0 ? mergedAliases : [tk]).slice(0, 20),
       archivedInvLogs,
       sources: (auditToSave.freshSources || auditToSave.sources || []).slice(0, 12),
+      ...(Array.isArray(auditToSave.historicalSnapshots) && auditToSave.historicalSnapshots.length > 0
+        ? { historicalSnapshots: auditToSave.historicalSnapshots.slice(0, 16) }
+        : {}),
+      ...(typeof auditToSave.auditedAtTimelineYear === 'string' &&
+      auditToSave.auditedAtTimelineYear.trim().length > 0
+        ? { auditedAtTimelineYear: auditToSave.auditedAtTimelineYear.trim().slice(0, 16) }
+        : {}),
       isArchived: true as const,
       archivedAtMs: Date.now(),
       archivedAtLabel: new Date()
