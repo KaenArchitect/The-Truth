@@ -6,6 +6,7 @@ import {
   MOBILE_TUTORIAL_STEPS,
   TUTORIAL_STEPS,
   TUTORIAL_STORAGE_KEY,
+  buildSpotlightCutoutPath,
   clampTutorialStepIndex,
   computeMobileScrollTargetY,
   computeSpotlightCardPosition,
@@ -14,8 +15,8 @@ import {
   isBottomChromeInAppBrowser
 } from './tutorialSteps.ts';
 
-test('TUTORIAL_STEPS covers all 6 core capabilities plus the hidden Easter Egg step with sequential numbers', () => {
-  assert.equal(TUTORIAL_STEPS.length, 7);
+test('TUTORIAL_STEPS covers all 7 core capabilities (including Time Machine) plus the hidden Easter Egg step with sequential numbers', () => {
+  assert.equal(TUTORIAL_STEPS.length, 8);
   assert.equal(TUTORIAL_STORAGE_KEY, 'truth_tutorial_seen_v1');
 
   const ids = new Set<string>();
@@ -28,6 +29,12 @@ test('TUTORIAL_STEPS covers all 6 core capabilities plus the hidden Easter Egg s
     ids.add(step.id);
   });
 
+  const timeMachineStep = TUTORIAL_STEPS.find((s) => s.id === 'time-machine');
+  assert.ok(timeMachineStep, 'Expected desktop Time Machine tutorial step');
+  assert.equal(timeMachineStep.targetId, 'time-machine');
+  assert.equal(timeMachineStep.actionId, 'demo-time-machine');
+  assert.match(timeMachineStep.title, /Time Machine/i);
+
   const easterEggStep = TUTORIAL_STEPS[TUTORIAL_STEPS.length - 1];
   assert.equal(easterEggStep.isEasterEggStep, true);
   assert.equal(easterEggStep.targetId, 'mystery-beacon');
@@ -35,27 +42,43 @@ test('TUTORIAL_STEPS covers all 6 core capabilities plus the hidden Easter Egg s
   assert.match(easterEggStep.summary, /0\/6/);
 });
 
-test('MOBILE_TUTORIAL_STEPS breaks the tutorial into 11 concise non-blocking micro-steps including the Easter Egg', () => {
-  assert.equal(MOBILE_TUTORIAL_STEPS.length, 11);
+test('MOBILE_TUTORIAL_STEPS breaks the tutorial into 12 concise non-blocking micro-steps including Time Machine and Easter Egg', () => {
+  assert.equal(MOBILE_TUTORIAL_STEPS.length, 12);
   const ids = new Set<string>();
 
   MOBILE_TUTORIAL_STEPS.forEach((step, idx) => {
     assert.equal(step.stepNumber, idx + 1);
-    assert.ok(step.title.length > 5 && step.title.length <= 42);
-    assert.ok(step.summary.length > 20 && step.summary.length <= 130);
+    assert.ok(step.title.length > 5 && step.title.length <= 42, `Title length out of bounds: ${step.title}`);
+    assert.ok(step.summary.length > 20 && step.summary.length <= 130, `Summary length out of bounds: ${step.summary}`);
     assert.equal(step.instructions.length, 0);
     assert.ok(!ids.has(step.id), `Duplicate mobile tutorial step id: ${step.id}`);
     ids.add(step.id);
   });
 
+  const mobileTimeMachine = MOBILE_TUTORIAL_STEPS.find((s) => s.id === 'mobile-time-machine');
+  assert.ok(mobileTimeMachine, 'Expected mobile Time Machine tutorial step');
+  assert.equal(mobileTimeMachine.targetId, 'time-machine');
+  assert.equal(mobileTimeMachine.actionId, 'demo-time-machine');
+
   const mobileEasterEgg = MOBILE_TUTORIAL_STEPS[MOBILE_TUTORIAL_STEPS.length - 1];
   assert.equal(mobileEasterEgg.isEasterEggStep, true);
   assert.equal(mobileEasterEgg.targetId, 'mystery-beacon');
   assert.match(mobileEasterEgg.title, /Easter Egg/i);
+  assert.match(mobileEasterEgg.summary, /0\/6/);
 
   assert.equal(getTutorialStepsForViewport(390), MOBILE_TUTORIAL_STEPS);
   assert.equal(getTutorialStepsForViewport(768), TUTORIAL_STEPS);
   assert.equal(getTutorialStepsForViewport(1440), TUTORIAL_STEPS);
+
+  // Neutral Bitcoin ($BTC) demo across desktop & mobile (zero $KAS tutorial bias)
+  for (const step of [...TUTORIAL_STEPS, ...MOBILE_TUTORIAL_STEPS]) {
+    const combined = `${step.title} ${step.summary} ${step.instructions.join(' ')} ${step.actionLabel || ''}`;
+    assert.ok(!/\bKAS\b/i.test(combined), `Unexpected KAS reference in tutorial step ${step.id}`);
+  }
+  assert.equal(TUTORIAL_STEPS[1].actionLabel, 'Inspect $BTC Breakdown');
+  assert.equal(TUTORIAL_STEPS[1].actionId, 'load-btc-fission');
+  assert.equal(TUTORIAL_STEPS[5].actionLabel, 'Demo $BTC vs $ETH');
+  assert.equal(MOBILE_TUTORIAL_STEPS[2].actionLabel, 'Inspect $BTC');
 });
 
 test('clampTutorialStepIndex clamps out-of-range indices cleanly', () => {
@@ -63,9 +86,21 @@ test('clampTutorialStepIndex clamps out-of-range indices cleanly', () => {
   assert.equal(clampTutorialStepIndex(0), 0);
   assert.equal(clampTutorialStepIndex(3), 3);
   assert.equal(clampTutorialStepIndex(99), TUTORIAL_STEPS.length - 1);
-  assert.equal(clampTutorialStepIndex(10, MOBILE_TUTORIAL_STEPS.length), 10);
-  assert.equal(clampTutorialStepIndex(99, MOBILE_TUTORIAL_STEPS.length), 10);
+  assert.equal(clampTutorialStepIndex(11, MOBILE_TUTORIAL_STEPS.length), 11);
+  assert.equal(clampTutorialStepIndex(99, MOBILE_TUTORIAL_STEPS.length), 11);
   assert.equal(clampTutorialStepIndex(2.8), 2);
+});
+
+test('buildSpotlightCutoutPath generates crisp even-odd outer + rounded inner cutout paths', () => {
+  assert.equal(buildSpotlightCutoutPath(1440, 900, null), 'M0 0H1440V900H0Z');
+  const cutout = buildSpotlightCutoutPath(1440, 900, {
+    top: 100,
+    left: 200,
+    width: 400,
+    height: 60
+  });
+  assert.ok(cutout.startsWith('M0 0H1440V900H0ZM218 100H582A18 18'));
+  assert.ok(cutout.endsWith('Z'));
 });
 
 test('isBottomChromeInAppBrowser detects Facebook, Messenger, Instagram, and TikTok WebViews', () => {
@@ -160,10 +195,11 @@ test('computeSpotlightCardPosition lifts mobile text boxes well above bottom bro
   assert.ok(mobileCenterSpherePos.top + 175 < 307);
 });
 
-test('computeMobileScrollTargetY keeps header, mystery-beacon, center-arena, and sidebars clear of elevated mobile coach card', () => {
+test('computeMobileScrollTargetY keeps header, time-machine, mystery-beacon, center-arena, and sidebars clear of elevated mobile coach card', () => {
   // Top header controls always return to scrollY = 0
   assert.equal(computeMobileScrollTargetY('search-dock', 320, 48, 844, 198, 900), 0);
   assert.equal(computeMobileScrollTargetY('mode-controls', 160, 32, 844, 198, 900), 0);
+  assert.equal(computeMobileScrollTargetY('time-machine', 220, 32, 844, 198, 900), 0);
   assert.equal(computeMobileScrollTargetY('mystery-beacon', 140, 44, 844, 198, 900), 0);
 
   // Bottom footer controls (Rubric & Live Gains on mobile) scroll cleanly below the top card sheet

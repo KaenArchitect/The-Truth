@@ -850,11 +850,13 @@ async function createApp(): Promise<express.Express> {
   });
 
   app.get('/api/gains-cohort', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
     try {
       const wantsLive = req.query.live !== '0';
+      const forceRefresh = req.query.refresh === '1';
       if (wantsLive) {
         const result = await Promise.race([
-          ensureFreshLiveGainsCohort(),
+          ensureFreshLiveGainsCohort(forceRefresh),
           new Promise<{
             record: ReturnType<typeof getPersistedGainsCohort>;
             liveSpotMap: Record<string, number>;
@@ -913,11 +915,30 @@ async function createApp(): Promise<express.Express> {
   });
 
   app.post('/api/gains-cohort/sync', async (req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
     try {
       const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
-      const body = (req.body || {}) as { spotOverrides?: Record<string, number> };
+      const body = (req.body || {}) as {
+        spotOverrides?: Record<string, number>;
+        extraItems?: Array<Record<string, unknown>>;
+      };
       const trustedSpotOverrides = verifiedUser ? body.spotOverrides : undefined;
-      const result = await syncLivePricesAndPersistGainsCohort(trustedSpotOverrides);
+      const clientExtras = Array.isArray(body.extraItems) ? body.extraItems : [];
+      const cachedServerExtras: Array<Record<string, unknown>> = [];
+      serverAuditCache.forEach((val, key) => {
+        if (!PRELOADED_AUDITS[key]) {
+          cachedServerExtras.push({
+            ticker: val.ticker || key,
+            name: val.name,
+            grade: val.grade,
+            auditScore: val.totalScore
+          });
+        }
+      });
+      const result = await syncLivePricesAndPersistGainsCohort(trustedSpotOverrides, [
+        ...(clientExtras as never[]),
+        ...(cachedServerExtras as never[])
+      ]);
       res.json(result);
     } catch (err) {
       res.status(502).json({

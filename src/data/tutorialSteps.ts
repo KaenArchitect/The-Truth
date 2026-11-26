@@ -1,3 +1,5 @@
+import { DOT_DISCOVERY_TARGET_COUNT } from './dotDiscoveryGame.ts';
+
 export const TUTORIAL_STORAGE_KEY = 'truth_tutorial_seen_v1';
 
 /**
@@ -27,6 +29,7 @@ export type TutorialTargetId =
   | 'failed-sidebar'
   | 'center-arena'
   | 'mode-controls'
+  | 'time-machine'
   | 'rubric-button'
   | 'pin-compare'
   | 'gains-archive'
@@ -34,8 +37,9 @@ export type TutorialTargetId =
 
 export type TutorialActionId =
   | 'focus-search'
-  | 'load-kas-fission'
+  | 'load-btc-fission'
   | 'toggle-genius'
+  | 'demo-time-machine'
   | 'demo-constellation'
   | 'open-wartime-sim'
   | 'open-gains-modal';
@@ -62,7 +66,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     summary:
       'Evaluate cryptocurrencies, Layer-2 networks, fiat currencies, or physical commodities against six non-negotiable laws of thermodynamics on a strict 0.0 to 6.0 scale.',
     instructions: [
-      'Type any ticker or name (e.g., KAS, BTC, USD, EUR, GOLD, SILVER, LIGHTNING) and press Audit / Pull.',
+      'Type any ticker or name (e.g., BTC, ETH, USD, EUR, GOLD, SILVER, LIGHTNING) and press Audit / Pull.',
       'Preloaded and community-archived assets load instantaneously at zero API credit cost.',
       'Unarchived assets trigger a live Gemini 4 + Google Search forensic audit streamed invariant by invariant.'
     ],
@@ -82,8 +86,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
       'Click any orb in either column to load its full center breakdown, or click the pin icon to compare it.',
       'Use the cycle return link beneath each column header to inspect real market divergence between cohorts.'
     ],
-    actionLabel: 'Inspect $KAS Breakdown',
-    actionId: 'load-kas-fission',
+    actionLabel: 'Inspect $BTC Breakdown',
+    actionId: 'load-btc-fission',
     preferredPlacement: 'right'
   },
   {
@@ -98,8 +102,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
       'Click any satellite bubble to open its codebase receipts, forensic narrative, and 1-invariant Challenge Console.',
       'Submit counter-evidence or click the invariant symbol next to the title inside any modal to challenge or re-verify a single score.'
     ],
-    actionLabel: 'Open $KAS Fission',
-    actionId: 'load-kas-fission',
+    actionLabel: 'Open $BTC Fission',
+    actionId: 'load-btc-fission',
     preferredPlacement: 'bottom'
   },
   {
@@ -119,10 +123,26 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     preferredPlacement: 'bottom'
   },
   {
-    id: 'constellation-compare',
+    id: 'time-machine',
     stepNumber: 5,
+    targetId: 'time-machine',
+    title: '5. Thermodynamic Time Machine (1913 → Present)',
+    summary:
+      'Scrub across eight historical monetary epochs (1913, 1971, 2000, 2008, 2016, 2020, 2024, and Present) to evaluate every asset and cohort strictly within its era.',
+    instructions: [
+      'Click or drag any year stop—or click and hold the active year pill—to inspect monetary shifts like the 1971 gold severance or 2016 Proof-of-Work Ethereum.',
+      'Protocols that had not launched yet automatically filter out, while active assets re-score using era-authentic consensus rules (e.g., $ETH in 2016 vs. Present).',
+      'Inside any multi-era asset modal, tap its Epoch Scrubber pills—or click Present on the timeline—to jump back to live consensus.'
+    ],
+    actionLabel: 'Preview 2016 Epoch',
+    actionId: 'demo-time-machine',
+    preferredPlacement: 'bottom'
+  },
+  {
+    id: 'constellation-compare',
+    stepNumber: 6,
     targetId: 'pin-compare',
-    title: '5. Multi-Asset Constellation Compare',
+    title: '6. Multi-Asset Constellation Compare',
     summary:
       'Pin two to four assets simultaneously to contrast their waveforms, total score deltas, and invariant-by-invariant evidence side by side.',
     instructions: [
@@ -130,20 +150,20 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
       'Constellations automatically arrange pinned bubbles (including horizontal zig-zag at 4 pins) to fit the largest bubbles on your screen.',
       'Select any button in the Sync Invariant bar below the stage to expand synchronized comparison cards.'
     ],
-    actionLabel: 'Demo $KAS vs $SOL',
+    actionLabel: 'Demo $BTC vs $ETH',
     actionId: 'demo-constellation',
     preferredPlacement: 'bottom'
   },
   {
     id: 'simulators-and-vault',
-    stepNumber: 6,
+    stepNumber: 7,
     targetId: 'gains-archive',
-    title: '6. Wartime Partition Lab, Live Gains & Vault',
+    title: '7. Wartime Partition Lab, Live Gains & Vault',
     summary:
       'Stress-test consensus availability under undersea fiber cuts, explore 4.5-year market returns across cohorts, and browse the shared archive.',
     instructions: [
       'Click Contest / Wartime Sim under any audited asset to run the interactive Continent Partition & Cable Resplice lab.',
-      'Open Live Gains to compare the E > 0 cohort against E = 0 across All Time (since release), 180-Day, 1-Year, 2-Year, and 4-Year timeframes.',
+      'Open Live Gains to compare the E > 0 cohort against E = 0, Bitcoin, and US M2 across All Time, 180-Day, 1-Year, 2-Year, and 4-Year timeframes.',
       'Open Archive to browse cached audits, export JSON snapshots, or sign in with Google to publish new audits.'
     ],
     actionLabel: 'Launch Live Gains',
@@ -152,15 +172,14 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
   },
   {
     id: 'easter-egg-signal',
-    stepNumber: 7,
+    stepNumber: 8,
     targetId: 'mystery-beacon',
     isEasterEggStep: true,
-    title: '7. Signal Detected · Hidden Easter Egg',
-    summary:
-      'Notice the cryptic 0/6 counter and glowing dot beside The Truth? Something deeper is sealed behind the interface.',
+    title: '8. Signal Detected · Hidden Easter Egg',
+    summary: `Notice the cryptic 0/${DOT_DISCOVERY_TARGET_COUNT} counter—echoing the 6 physical invariants—and glowing dot beside The Truth? Something deeper is sealed behind the interface.`,
     instructions: [
-      'Explore 6 distinct capabilities across the terminal—each unique discovery increments the 0/6 anomaly counter toward resonance.',
-      'Watch what starts pulsing beside the title at 6/6, and remember: applying sustained coherent energy (or persistent impulses) at the point of origin breaks containment.'
+      `Explore any ${DOT_DISCOVERY_TARGET_COUNT} distinct capabilities across the terminal—including scrubbing the Time Machine—to increment the 0/${DOT_DISCOVERY_TARGET_COUNT} anomaly counter toward resonance.`,
+      `Watch what starts pulsing beside the title at ${DOT_DISCOVERY_TARGET_COUNT}/${DOT_DISCOVERY_TARGET_COUNT}, and remember: applying sustained coherent energy (or persistent impulses) at the point of origin breaks containment.`
     ],
     preferredPlacement: 'bottom'
   }
@@ -172,7 +191,7 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     stepNumber: 1,
     targetId: 'search-dock',
     title: '1. Audit Any Asset',
-    summary: 'Enter any crypto, fiat (USD, EUR), L2, or physical metal (KAS, BTC, GOLD) and tap Audit / Pull.',
+    summary: 'Enter any crypto, fiat (USD, EUR), L2, or physical metal (BTC, ETH, GOLD) and tap Audit / Pull.',
     instructions: [],
     actionLabel: 'Focus Search',
     actionId: 'focus-search',
@@ -196,8 +215,8 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     summary:
       'Proof-of-Work assets anchored in irreversible energy oscillate as living waves. Tap any orb to inspect.',
     instructions: [],
-    actionLabel: 'Inspect $KAS',
-    actionId: 'load-kas-fission',
+    actionLabel: 'Inspect $BTC',
+    actionId: 'load-btc-fission',
     preferredPlacement: 'top'
   },
   {
@@ -218,8 +237,8 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     summary:
       'Tap the sphere to split Sovereignty, Cost Floor, Immutability, Availability, Topology, and Velocity.',
     instructions: [],
-    actionLabel: 'Split $KAS',
-    actionId: 'load-kas-fission',
+    actionLabel: 'Split $BTC',
+    actionId: 'load-btc-fission',
     preferredPlacement: 'top'
   },
   {
@@ -255,22 +274,34 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     preferredPlacement: 'bottom'
   },
   {
-    id: 'mobile-pin-compare',
+    id: 'mobile-time-machine',
     stepNumber: 9,
+    targetId: 'time-machine',
+    title: '9. Time Machine (1913–Present)',
+    summary:
+      'Scrub 1913 to Present to audit historical monetary eras (1971 fiat shift, 2016 PoW ETH) vs. today.',
+    instructions: [],
+    actionLabel: 'Preview 2016',
+    actionId: 'demo-time-machine',
+    preferredPlacement: 'bottom'
+  },
+  {
+    id: 'mobile-pin-compare',
+    stepNumber: 10,
     targetId: 'pin-compare',
-    title: '9. Pin & Compare Assets',
+    title: '10. Pin & Compare Assets',
     summary:
       'Pin 2–4 assets to compare score deltas in formations and expand Sync Invariant breakdown cards.',
     instructions: [],
-    actionLabel: 'Demo KAS vs SOL',
+    actionLabel: 'Demo BTC vs ETH',
     actionId: 'demo-constellation',
     preferredPlacement: 'top'
   },
   {
     id: 'mobile-sim-gains',
-    stepNumber: 10,
+    stepNumber: 11,
     targetId: 'gains-archive',
-    title: '10. Wartime Lab, Gains & Vault',
+    title: '11. Wartime Lab, Gains & Vault',
     summary:
       'Test cable cuts in Wartime Sim, view cohort returns in Live Gains, or export/publish in Archive.',
     instructions: [],
@@ -280,12 +311,11 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
   },
   {
     id: 'mobile-easter-egg',
-    stepNumber: 11,
+    stepNumber: 12,
     targetId: 'mystery-beacon',
     isEasterEggStep: true,
-    title: '11. Hidden Easter Egg (0/6)',
-    summary:
-      'Spot the 0/6 counter & glowing dot by The Truth? Explore all 6 tools—sustained energy unlocks a secret vault.',
+    title: `12. Hidden Easter Egg (0/${DOT_DISCOVERY_TARGET_COUNT})`,
+    summary: `Spot the 0/${DOT_DISCOVERY_TARGET_COUNT} counter & dot by The Truth? Explore any ${DOT_DISCOVERY_TARGET_COUNT} tools (including Time Machine) to unlock a secret vault.`,
     instructions: [],
     preferredPlacement: 'bottom'
   }
@@ -298,6 +328,7 @@ export function getTutorialStepsForViewport(viewportWidth: number): TutorialStep
 const HEADER_TUTORIAL_TARGETS = new Set<TutorialTargetId>([
   'search-dock',
   'mode-controls',
+  'time-machine',
   'mystery-beacon'
 ]);
 
@@ -351,6 +382,36 @@ export interface SpotlightRect {
   left: number;
   width: number;
   height: number;
+}
+
+/**
+ * Builds a single even-odd SVG path string covering the viewport with a rounded spotlight cutout.
+ * Replaces offscreen <svg><mask> alpha rasterization for zero-jank 60fps spotlight transitions.
+ */
+export function buildSpotlightCutoutPath(
+  viewportWidth: number,
+  viewportHeight: number,
+  rect: SpotlightRect | null,
+  radius = 18
+): string {
+  const vw = Math.max(1, Math.round(viewportWidth));
+  const vh = Math.max(1, Math.round(viewportHeight));
+  const outer = `M0 0H${vw}V${vh}H0Z`;
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return outer;
+  }
+  const x = Number(rect.left.toFixed(2));
+  const y = Number(rect.top.toFixed(2));
+  const w = Number(rect.width.toFixed(2));
+  const h = Number(rect.height.toFixed(2));
+  const r = Number(Math.max(0, Math.min(radius, w / 2, h / 2)).toFixed(2));
+  const xRight = Number((x + w).toFixed(2));
+  const yBottom = Number((y + h).toFixed(2));
+  const xInL = Number((x + r).toFixed(2));
+  const xInR = Number((x + w - r).toFixed(2));
+  const yInT = Number((y + r).toFixed(2));
+  const yInB = Number((y + h - r).toFixed(2));
+  return `${outer}M${xInL} ${y}H${xInR}A${r} ${r} 0 0 1 ${xRight} ${yInT}V${yInB}A${r} ${r} 0 0 1 ${xInR} ${yBottom}H${xInL}A${r} ${r} 0 0 1 ${x} ${yInB}V${yInT}A${r} ${r} 0 0 1 ${xInL} ${y}Z`;
 }
 
 export interface CardCoords {

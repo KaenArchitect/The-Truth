@@ -17,6 +17,7 @@ import {
   formatPctSigned,
   formatUsdPrice,
   getCohortSyncSignature,
+  mergeResolvedEntriesIntoCohortRecord,
   resolveCohortBaselinePrice,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
@@ -30,6 +31,8 @@ import {
   computeM2AssetSummaries,
   type M2BenchmarkDataset
 } from '../data/m2BenchmarkData.ts';
+import { computeBtcHorizonSummary } from '../data/btcBenchmarkData.ts';
+import { BtcBenchmarkPanel } from './BtcBenchmarkPanel.tsx';
 import { M2BenchmarkPanel } from './M2BenchmarkPanel.tsx';
 import { formatScore, type AuditData } from '../data/rubricSpec.ts';
 import {
@@ -41,7 +44,7 @@ import {
 
 export type GainsHorizon = 'ALL_TIME' | 'D180' | 'Y1' | 'Y2' | 'Y4';
 export type GainsFeedMode = 'SNAPSHOT' | 'LIVE';
-export type GainsChartView = 'COHORTS' | 'M2_BENCHMARK';
+export type GainsChartView = 'COHORTS' | 'BTC_BENCHMARK' | 'M2_BENCHMARK';
 
 export interface ThermodynamicGainsModalProps {
   onClose: () => void;
@@ -50,6 +53,7 @@ export interface ThermodynamicGainsModalProps {
   onCopyReport: (text: string, label: string) => void;
   copiedTarget: string | null;
   initialCohortRecord?: GainsCohortRecord | null;
+  initialLiveSpots?: Record<string, number>;
   onCohortSynced?: (record: GainsCohortRecord, liveSpots: Record<string, number>) => void;
 }
 
@@ -100,6 +104,7 @@ export function ThermodynamicGainsModal({
   onCopyReport,
   copiedTarget,
   initialCohortRecord,
+  initialLiveSpots,
   onCohortSynced
 }: ThermodynamicGainsModalProps) {
   const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(
@@ -110,6 +115,7 @@ export function ThermodynamicGainsModal({
     if (typeof window !== 'undefined') {
       const sp = new URLSearchParams(window.location.search);
       const v = (sp.get('view') || sp.get('tab') || '').toLowerCase();
+      if (v === 'btc' || v === 'bitcoin') return 'BTC_BENCHMARK';
       if (v === 'm2') return 'M2_BENCHMARK';
     }
     return 'COHORTS';
@@ -121,7 +127,14 @@ export function ThermodynamicGainsModal({
   const [allocPerAsset, setAllocPerAsset] = useState(1000);
   const [useLogScale, setUseLogScale] = useState(true);
   const [feedMode, setFeedMode] = useState<GainsFeedMode>('LIVE');
-  const [liveSpots, setLiveSpots] = useState<Record<string, number>>({});
+  const [liveSpots, setLiveSpots] = useState<Record<string, number>>(() => ({
+    ...(initialLiveSpots || {})
+  }));
+
+  useEffect(() => {
+    if (!initialLiveSpots || Object.keys(initialLiveSpots).length === 0) return;
+    setLiveSpots((prev) => ({ ...prev, ...initialLiveSpots }));
+  }, [initialLiveSpots]);
   const [windowTrajectories, setWindowTrajectories] = useState<WindowTrajectoriesMap>({});
   const [isSyncingLive, setIsSyncingLive] = useState(false);
   const [lastLiveSyncLabel, setLastLiveSyncLabel] = useState<string | null>(null);
@@ -309,7 +322,18 @@ export function ThermodynamicGainsModal({
       const syncRes = await fetch('/api/gains-cohort/sync', {
         method: 'POST',
         headers: syncHeaders,
-        body: JSON.stringify({ spotOverrides: clientSpots })
+        body: JSON.stringify({
+          spotOverrides: clientSpots,
+          extraItems: allItems.map((it) => ({
+            ticker: it.ticker,
+            name: it.name,
+            grade: it.grade,
+            auditScore: it.auditScore,
+            coinbasePair: it.coinbasePair,
+            geckoId: it.geckoId,
+            yahooSymbol: it.yahooSymbol
+          }))
+        })
       });
       if (syncRes.ok) {
         const syncJson = (await syncRes.json()) as {
@@ -317,6 +341,7 @@ export function ThermodynamicGainsModal({
           syncedTickers?: string[];
           liveSpotMap?: Record<string, number>;
           windowTrajectories?: WindowTrajectoriesMap;
+          extraResolvedEntries?: Record<string, CohortAssetEntry>;
         };
         const mergedSpots = { ...clientSpots, ...(syncJson.liveSpotMap || {}) };
         if (syncJson.windowTrajectories) {
@@ -333,7 +358,10 @@ export function ThermodynamicGainsModal({
           );
         }
         if (syncJson?.record) {
-          const updatedRecord = sanitizeGainsCohortRecord(syncJson.record);
+          const updatedRecord = mergeResolvedEntriesIntoCohortRecord(
+            sanitizeGainsCohortRecord(syncJson.record),
+            syncJson.extraResolvedEntries
+          );
           lastAutoSyncedSigRef.current = getCohortSyncSignature(
             buildBasketSyncedCohortRecord(auditsMapRef.current, updatedRecord)
           );
@@ -359,12 +387,24 @@ export function ThermodynamicGainsModal({
     }
   }, []);
 
+  const initialSpotCountRef = useRef(Object.keys(initialLiveSpots || {}).length);
+
   useEffect(() => {
     if (feedMode !== 'LIVE') return undefined;
-    syncLiveExchangeSpots();
+    if (initialSpotCountRef.current < 8) {
+      void syncLiveExchangeSpots();
+    } else if (!lastLiveSyncLabel) {
+      setLastLiveSyncLabel(
+        new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        })
+      );
+    }
     const timer = setInterval(syncLiveExchangeSpots, 30000);
     return () => clearInterval(timer);
-  }, [feedMode, syncLiveExchangeSpots]);
+  }, [feedMode, syncLiveExchangeSpots, lastLiveSyncLabel]);
 
   const m2Dataset = useMemo(
     () =>
@@ -590,6 +630,33 @@ export function ThermodynamicGainsModal({
   );
 
   const buildShareableGainsReport = () => {
+    if (chartView === 'BTC_BENCHMARK') {
+      const pts = m2Dataset.seriesByHorizon[horizon] || m2Dataset.seriesByHorizon.ALL_TIME;
+      const btcSum = computeBtcHorizonSummary({
+        points: pts,
+        horizon,
+        cohortRecord,
+        liveSpots,
+        feedMode
+      });
+      const horizonTitle =
+        horizon === 'ALL_TIME' ? "MAY '22 COMMON LAUNCH" : HORIZON_META[horizon].heading;
+      const assetLines = btcSum.assets
+        .map(
+          (a) =>
+            `• ${a.name} (${a.ticker}): Nominal ${formatPctSigned(a.nominalPct)} (${a.nominalMult.toFixed(2)}x) | vs BTC: ${formatPctSigned(a.btcAdjustedPct)} (₿ ${a.btcAdjustedMult.toFixed(2)}x)`
+        )
+        .join('\n');
+      const beatCount = btcSum.cohortMatrix.filter((r) => r.beatsBtc).length;
+      return `THE TRUTH — PERFORMANCE & PURCHASING POWER VS BITCOIN ($BTC) (${horizonTitle})
+
+BITCOIN ($BTC) BENCHMARK: ${formatUsdPrice(btcSum.btcStartPrice)} → ${formatUsdPrice(btcSum.btcEndPrice)} (${formatPctSigned(btcSum.btcPct)} • ${btcSum.btcMult.toFixed(2)}x)
+
+${assetLines}
+
+BASKET BREADTH VS BTC: ${beatCount} of ${btcSum.cohortMatrix.length} liquid audited assets outperformed $BTC over this window.`;
+    }
+
     if (chartView === 'M2_BENCHMARK') {
       const pts = m2Dataset.seriesByHorizon[horizon] || m2Dataset.seriesByHorizon.ALL_TIME;
       const m2Sum = computeM2AssetSummaries(pts);
@@ -661,7 +728,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 <span className="inline-flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB] shrink-0" />
                   <span>
-                    {chartView === 'M2_BENCHMARK'
+                    {chartView === 'BTC_BENCHMARK'
+                      ? 'HARD MONEY BENCHMARK // ASSETS & COHORTS PRICED VS. BITCOIN ($BTC)'
+                      : chartView === 'M2_BENCHMARK'
                       ? 'MACRO DEBASEMENT BENCHMARK // ASSETS VS. FRED US M2 MONEY SUPPLY'
                       : HORIZON_META[horizon].banner}
                   </span>
@@ -669,14 +738,16 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/10 text-[9px] text-neutral-300 normal-case tracking-normal">
                   <Database className="w-2.5 h-2.5 text-[#49EACB] shrink-0" />
                   <span>
-                    {chartView === 'M2_BENCHMARK'
+                    {chartView === 'M2_BENCHMARK' || chartView === 'BTC_BENCHMARK'
                       ? m2Dataset.sourceLabel
                       : backendStatusMsg || cohortRecord.sourceLabel}
                   </span>
                 </span>
               </div>
               <h2 className="font-display text-base sm:text-xl font-bold text-white mt-0.5 leading-snug">
-                {chartView === 'M2_BENCHMARK'
+                {chartView === 'BTC_BENCHMARK'
+                  ? 'Hard Money Benchmark: KAS, ETH, Gold, S&P 500 & Baskets vs. Bitcoin'
+                  : chartView === 'M2_BENCHMARK'
                   ? 'Macro Purchasing Power: BTC, KAS, S&P 500 & Gold vs. US M2'
                   : 'Thermodynamic Gains Divergence: Passed (E > 0) vs. Failed (E = 0)'}
               </h2>
@@ -705,6 +776,17 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                   }`}
                 >
                   Cohort Equity
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setChartView('BTC_BENCHMARK')}
+                  className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
+                    chartView === 'BTC_BENCHMARK'
+                      ? 'bg-[#F59E0B]/15 text-[#FBBF24] border-[#F59E0B]/40'
+                      : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+                  }`}
+                >
+                  Assets vs. BTC
                 </button>
                 <button
                   type="button"
@@ -743,7 +825,9 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 >
                   <span
                     className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      feedMode === 'LIVE' ? 'bg-[#49EACB] animate-ping' : 'bg-neutral-500'
+                      feedMode === 'LIVE'
+                        ? 'bg-[#49EACB] shadow-[0_0_8px_#49EACB]'
+                        : 'bg-neutral-500'
                     }`}
                   />
                   <span className="sm:hidden">Live</span>
@@ -851,7 +935,19 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             </div>
           </div>
 
-          {chartView === 'M2_BENCHMARK' ? (
+          {chartView === 'BTC_BENCHMARK' ? (
+            <BtcBenchmarkPanel
+              horizon={horizon}
+              useLogScale={useLogScale}
+              onChangeLogScale={setUseLogScale}
+              dataset={m2Dataset}
+              cohortRecord={cohortRecord}
+              liveSpots={liveSpots}
+              feedMode={feedMode}
+              allocPerAsset={allocPerAsset}
+              onSelectOrAuditTicker={onSelectOrAuditTicker}
+            />
+          ) : chartView === 'M2_BENCHMARK' ? (
             <M2BenchmarkPanel
               horizon={horizon}
               useLogScale={useLogScale}

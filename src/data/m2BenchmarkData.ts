@@ -21,10 +21,12 @@ export interface M2ChartPoint {
   m2Mult: number;
   kasMult: number;
   btcMult: number;
+  ethMult?: number;
   spxMult: number;
   goldMult: number;
   kasPrice: number;
   btcPrice: number;
+  ethPrice?: number;
   spxPrice: number;
   goldPrice: number;
 }
@@ -170,12 +172,13 @@ export function buildM2SeriesFromBars(params: {
   m2Rows: FredM2Row[];
   btcBars: HistoricalPriceBar[];
   kasBars: HistoricalPriceBar[];
+  ethBars?: HistoricalPriceBar[];
   spxBars: HistoricalPriceBar[];
   goldBars: HistoricalPriceBar[];
-  spots: { btc: number; kas: number; spx: number; gold: number };
+  spots: { btc: number; kas: number; eth?: number; spx: number; gold: number };
   nowMs?: number;
 }): Record<MacroM2HorizonKey, M2ChartPoint[]> {
-  const { m2Rows, btcBars, kasBars, spxBars, goldBars, spots } = params;
+  const { m2Rows, btcBars, kasBars, ethBars, spxBars, goldBars, spots } = params;
   const nowMs = params.nowMs ?? Date.now();
 
   const horizons: Array<{
@@ -234,6 +237,13 @@ export function buildM2SeriesFromBars(params: {
       h.key === 'ALL_TIME'
         ? KAS_GENESIS_MAY22_PRICE
         : findClosestBarPrice(kasBars, startTs) ?? spots.kas;
+    const ethSpotFallback = spots.eth && spots.eth > 0 ? spots.eth : 1782.23;
+    const ethBase =
+      ethBars && ethBars.length > 0
+        ? findClosestBarPrice(ethBars, startTs) ?? ethSpotFallback
+        : h.key === 'ALL_TIME'
+        ? 1940.0
+        : ethSpotFallback;
     const spxBase = findClosestBarPrice(spxBars, startTs) ?? spots.spx;
     const goldBase = findClosestBarPrice(goldBars, startTs) ?? spots.gold;
 
@@ -256,6 +266,13 @@ export function buildM2SeriesFromBars(params: {
         : isEnd
         ? spots.kas
         : findClosestBarPrice(kasBars, tsMs) ?? kasBase;
+      const ethPrice = isStart
+        ? ethBase
+        : isEnd
+        ? ethSpotFallback
+        : ethBars && ethBars.length > 0
+        ? findClosestBarPrice(ethBars, tsMs) ?? ethBase
+        : ethBase;
       const spxPrice = isStart
         ? spxBase
         : isEnd
@@ -270,6 +287,7 @@ export function buildM2SeriesFromBars(params: {
       const m2Mult = m2Billions / m2BaseB;
       const btcMult = btcPrice / btcBase;
       const kasMult = kasPrice / kasBase;
+      const ethMult = ethBase > 0 ? ethPrice / ethBase : 1.0;
       const spxMult = spxPrice / spxBase;
       const goldMult = goldPrice / goldBase;
 
@@ -286,10 +304,12 @@ export function buildM2SeriesFromBars(params: {
         m2Mult: Number(m2Mult.toFixed(4)),
         kasMult: Number(Math.max(0.01, kasMult).toFixed(4)),
         btcMult: Number(Math.max(0.01, btcMult).toFixed(4)),
+        ethMult: Number(Math.max(0.01, ethMult).toFixed(4)),
         spxMult: Number(Math.max(0.01, spxMult).toFixed(4)),
         goldMult: Number(Math.max(0.01, goldMult).toFixed(4)),
         kasPrice,
         btcPrice,
+        ethPrice,
         spxPrice,
         goldPrice
       });
@@ -306,12 +326,14 @@ export function applyLiveSpotsToM2Dataset(
 ): M2BenchmarkDataset {
   const btcSpot = Number(liveSpots.BTC);
   const kasSpot = Number(liveSpots.KAS);
+  const ethSpot = Number(liveSpots.ETH);
   const goldSpot = Number(liveSpots.XAU);
   const spxSpot = Number(liveSpots.SPX);
 
   const hasAny =
     (Number.isFinite(btcSpot) && btcSpot > 0) ||
     (Number.isFinite(kasSpot) && kasSpot > 0) ||
+    (Number.isFinite(ethSpot) && ethSpot > 0) ||
     (Number.isFinite(goldSpot) && goldSpot > 0) ||
     (Number.isFinite(spxSpot) && spxSpot > 0);
   if (!hasAny) return dataset;
@@ -327,17 +349,25 @@ export function applyLiveSpotsToM2Dataset(
     const last = arr[arr.length - 1];
     const nextBtcPrice = Number.isFinite(btcSpot) && btcSpot > 0 ? btcSpot : last.btcPrice;
     const nextKasPrice = Number.isFinite(kasSpot) && kasSpot > 0 ? kasSpot : last.kasPrice;
+    const nextEthPrice =
+      Number.isFinite(ethSpot) && ethSpot > 0 ? ethSpot : last.ethPrice ?? 1782.23;
     const nextGoldPrice = Number.isFinite(goldSpot) && goldSpot > 0 ? goldSpot : last.goldPrice;
     const nextSpxPrice = Number.isFinite(spxSpot) && spxSpot > 0 ? spxSpot : last.spxPrice;
+    const firstEthPrice = first.ethPrice && first.ethPrice > 0 ? first.ethPrice : nextEthPrice;
 
     const nextLast: M2ChartPoint = {
       ...last,
       btcPrice: nextBtcPrice,
       kasPrice: nextKasPrice,
+      ethPrice: nextEthPrice,
       goldPrice: nextGoldPrice,
       spxPrice: nextSpxPrice,
       btcMult: first.btcPrice > 0 ? Number((nextBtcPrice / first.btcPrice).toFixed(4)) : last.btcMult,
       kasMult: first.kasPrice > 0 ? Number((nextKasPrice / first.kasPrice).toFixed(4)) : last.kasMult,
+      ethMult:
+        firstEthPrice > 0
+          ? Number((nextEthPrice / firstEthPrice).toFixed(4))
+          : last.ethMult ?? 1.0,
       goldMult:
         first.goldPrice > 0 ? Number((nextGoldPrice / first.goldPrice).toFixed(4)) : last.goldMult,
       spxMult: first.spxPrice > 0 ? Number((nextSpxPrice / first.spxPrice).toFixed(4)) : last.spxMult
@@ -440,54 +470,54 @@ export const DEFAULT_M2_BENCHMARK_DATASET: M2BenchmarkDataset = {
   latestM2Date: '2026-09-01',
   seriesByHorizon: {
     ALL_TIME: [
-      { tsMs: Date.UTC(2022, 4, 30), label: "May '22", event: 'May 2022 Common Open (KAS Fair Launch)', m2Trillions: 21.7, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0001859, btcPrice: 29907, spxPrice: 4109, goldPrice: 1850 },
-      { tsMs: Date.UTC(2022, 10, 15), label: "Nov '22", event: 'FTX Contagion / QT Contraction', m2Trillions: 21.39, m2Mult: 0.9857, kasMult: 48.0, btcMult: 0.556, spxMult: 0.962, goldMult: 0.948, kasPrice: 0.0089, btcPrice: 16628, spxPrice: 3953, goldPrice: 1754 },
-      { tsMs: Date.UTC(2023, 4, 15), label: "May '23", event: 'KAS ASIC Transition / US Bank Stress', m2Trillions: 20.82, m2Mult: 0.9594, kasMult: 108.0, btcMult: 0.908, spxMult: 1.012, goldMult: 1.084, kasPrice: 0.0201, btcPrice: 27156, spxPrice: 4158, goldPrice: 2005 },
-      { tsMs: Date.UTC(2023, 10, 15), label: "Nov '23", event: 'KAS Breakout / ETF Anticipation', m2Trillions: 20.77, m2Mult: 0.9571, kasMult: 645.0, btcMult: 1.242, spxMult: 1.098, goldMult: 1.074, kasPrice: 0.1199, btcPrice: 37145, spxPrice: 4511, goldPrice: 1987 },
-      { tsMs: Date.UTC(2024, 2, 15), label: "Mar '24", event: 'BTC Spot ETF Inflows + Halving', m2Trillions: 20.91, m2Mult: 0.9636, kasMult: 765.0, btcMult: 2.285, spxMult: 1.258, goldMult: 1.185, kasPrice: 0.1422, btcPrice: 68337, spxPrice: 5169, goldPrice: 2192 },
-      { tsMs: Date.UTC(2024, 10, 15), label: "Nov '24", event: 'M2 Re-Expansion / Post-Election Bid', m2Trillions: 21.43, m2Mult: 0.9876, kasMult: 820.0, btcMult: 3.04, spxMult: 1.448, goldMult: 1.428, kasPrice: 0.1524, btcPrice: 90917, spxPrice: 5950, goldPrice: 2642 },
-      { tsMs: Date.UTC(2025, 4, 15), label: "May '25", event: 'Crescendo 10 BPS Live / Gold Surge', m2Trillions: 21.84, m2Mult: 1.0065, kasMult: 512.0, btcMult: 3.41, spxMult: 1.438, goldMult: 1.78, kasPrice: 0.0952, btcPrice: 101983, spxPrice: 5909, goldPrice: 3293 },
-      { tsMs: Date.UTC(2025, 10, 15), label: "Nov '25", event: 'Liquidity Tightening vs Gold Highs', m2Trillions: 22.25, m2Mult: 1.0253, kasMult: 232.8, btcMult: 3.11, spxMult: 1.632, goldMult: 2.198, kasPrice: 0.0433, btcPrice: 93010, spxPrice: 6706, goldPrice: 4066 },
-      { tsMs: Date.UTC(2026, 4, 15), label: "May '26", event: 'M2 New All-Time Highs ($22.98T)', m2Trillions: 22.98, m2Mult: 1.059, kasMult: 181.3, btcMult: 2.524, spxMult: 1.842, goldMult: 2.445, kasPrice: 0.0337, btcPrice: 75485, spxPrice: 7569, goldPrice: 4523 },
-      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live Spot vs FRED US M2', m2Trillions: 23.41, m2Mult: 1.079, kasMult: 146.56, btcMult: 2.107, spxMult: 1.782, goldMult: 2.042, kasPrice: 0.02725, btcPrice: 63004, spxPrice: 7322, goldPrice: 3778 }
+      { tsMs: Date.UTC(2022, 4, 30), label: "May '22", event: 'May 2022 Common Open (KAS Fair Launch)', m2Trillions: 21.7, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, ethMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0001859, btcPrice: 29907, ethPrice: 1940, spxPrice: 4109, goldPrice: 1850 },
+      { tsMs: Date.UTC(2022, 10, 15), label: "Nov '22", event: 'FTX Contagion / QT Contraction', m2Trillions: 21.39, m2Mult: 0.9857, kasMult: 48.0, btcMult: 0.556, ethMult: 0.628, spxMult: 0.962, goldMult: 0.948, kasPrice: 0.0089, btcPrice: 16628, ethPrice: 1218.4, spxPrice: 3953, goldPrice: 1754 },
+      { tsMs: Date.UTC(2023, 4, 15), label: "May '23", event: 'KAS ASIC Transition / US Bank Stress', m2Trillions: 20.82, m2Mult: 0.9594, kasMult: 108.0, btcMult: 0.908, ethMult: 0.9402, spxMult: 1.012, goldMult: 1.084, kasPrice: 0.0201, btcPrice: 27156, ethPrice: 1824, spxPrice: 4158, goldPrice: 2005 },
+      { tsMs: Date.UTC(2023, 10, 15), label: "Nov '23", event: 'KAS Breakout / ETF Anticipation', m2Trillions: 20.77, m2Mult: 0.9571, kasMult: 645.0, btcMult: 1.242, ethMult: 1.0577, spxMult: 1.098, goldMult: 1.074, kasPrice: 0.1199, btcPrice: 37145, ethPrice: 2052, spxPrice: 4511, goldPrice: 1987 },
+      { tsMs: Date.UTC(2024, 2, 15), label: "Mar '24", event: 'BTC Spot ETF Inflows + Halving', m2Trillions: 20.91, m2Mult: 0.9636, kasMult: 765.0, btcMult: 2.285, ethMult: 1.8134, spxMult: 1.258, goldMult: 1.185, kasPrice: 0.1422, btcPrice: 68337, ethPrice: 3518, spxPrice: 5169, goldPrice: 2192 },
+      { tsMs: Date.UTC(2024, 10, 15), label: "Nov '24", event: 'M2 Re-Expansion / Post-Election Bid', m2Trillions: 21.43, m2Mult: 0.9876, kasMult: 820.0, btcMult: 3.04, ethMult: 1.6536, spxMult: 1.448, goldMult: 1.428, kasPrice: 0.1524, btcPrice: 90917, ethPrice: 3207.9, spxPrice: 5950, goldPrice: 2642 },
+      { tsMs: Date.UTC(2025, 4, 15), label: "May '25", event: 'Crescendo 10 BPS Live / Gold Surge', m2Trillions: 21.84, m2Mult: 1.0065, kasMult: 512.0, btcMult: 3.41, ethMult: 1.3093, spxMult: 1.438, goldMult: 1.78, kasPrice: 0.0952, btcPrice: 101983, ethPrice: 2540, spxPrice: 5909, goldPrice: 3293 },
+      { tsMs: Date.UTC(2025, 10, 15), label: "Nov '25", event: 'Liquidity Tightening vs Gold Highs', m2Trillions: 22.25, m2Mult: 1.0253, kasMult: 232.8, btcMult: 3.11, ethMult: 1.6098, spxMult: 1.632, goldMult: 2.198, kasPrice: 0.0433, btcPrice: 93010, ethPrice: 3123, spxPrice: 6706, goldPrice: 4066 },
+      { tsMs: Date.UTC(2026, 4, 15), label: "May '26", event: 'M2 New All-Time Highs ($22.98T)', m2Trillions: 22.98, m2Mult: 1.059, kasMult: 181.3, btcMult: 2.524, ethMult: 1.0642, spxMult: 1.842, goldMult: 2.445, kasPrice: 0.0337, btcPrice: 75485, ethPrice: 2064.6, spxPrice: 7569, goldPrice: 4523 },
+      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live Spot vs FRED US M2', m2Trillions: 23.41, m2Mult: 1.079, kasMult: 146.56, btcMult: 2.107, ethMult: 0.9187, spxMult: 1.782, goldMult: 2.042, kasPrice: 0.02725, btcPrice: 63004, ethPrice: 1782.23, spxPrice: 7322, goldPrice: 3778 }
     ],
     D180: [
-      { tsMs: Date.UTC(2026, 4, 22), label: 'May 22', event: '180-Day Window Open', m2Trillions: 22.98, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0307, btcPrice: 73580, spxPrice: 7580, goldPrice: 4593 },
-      { tsMs: Date.UTC(2026, 5, 21), label: 'Jun 21', event: 'Early Summer Liquidity Shift', m2Trillions: 23.08, m2Mult: 1.0044, kasMult: 1.052, btcMult: 0.964, spxMult: 0.992, goldMult: 0.958, kasPrice: 0.0323, btcPrice: 70931, spxPrice: 7519, goldPrice: 4400 },
-      { tsMs: Date.UTC(2026, 6, 21), label: 'Jul 21', event: 'Mid-Summer Consolidation', m2Trillions: 23.18, m2Mult: 1.0087, kasMult: 0.985, btcMult: 0.931, spxMult: 1.012, goldMult: 0.915, kasPrice: 0.0302, btcPrice: 68503, spxPrice: 7671, goldPrice: 4203 },
-      { tsMs: Date.UTC(2026, 7, 20), label: 'Aug 20', event: '90-Day Checkpoint', m2Trillions: 23.3, m2Mult: 1.0139, kasMult: 0.934, btcMult: 0.892, spxMult: 0.988, goldMult: 0.884, kasPrice: 0.0287, btcPrice: 65633, spxPrice: 7489, goldPrice: 4060 },
-      { tsMs: Date.UTC(2026, 8, 19), label: 'Sep 19', event: 'Autumn M2 Expansion ($23.41T)', m2Trillions: 23.41, m2Mult: 1.0187, kasMult: 0.91, btcMult: 0.875, spxMult: 0.974, goldMult: 0.852, kasPrice: 0.0279, btcPrice: 64383, spxPrice: 7383, goldPrice: 3913 },
-      { tsMs: Date.UTC(2026, 9, 19), label: 'Oct 19', event: 'Late-Window Rotation', m2Trillions: 23.41, m2Mult: 1.0187, kasMult: 0.896, btcMult: 0.862, spxMult: 0.969, goldMult: 0.834, kasPrice: 0.0275, btcPrice: 63426, spxPrice: 7345, goldPrice: 3831 },
-      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 180D Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0188, kasMult: 0.888, btcMult: 0.856, spxMult: 0.966, goldMult: 0.822, kasPrice: 0.02725, btcPrice: 63004, spxPrice: 7322, goldPrice: 3778 }
+      { tsMs: Date.UTC(2026, 4, 22), label: 'May 22', event: '180-Day Window Open', m2Trillions: 22.98, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, ethMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0307, btcPrice: 73580, ethPrice: 2064.6, spxPrice: 7580, goldPrice: 4593 },
+      { tsMs: Date.UTC(2026, 5, 21), label: 'Jun 21', event: 'Early Summer Liquidity Shift', m2Trillions: 23.08, m2Mult: 1.0044, kasMult: 1.052, btcMult: 0.964, ethMult: 0.9648, spxMult: 0.992, goldMult: 0.958, kasPrice: 0.0323, btcPrice: 70931, ethPrice: 1992, spxPrice: 7519, goldPrice: 4400 },
+      { tsMs: Date.UTC(2026, 6, 21), label: 'Jul 21', event: 'Mid-Summer Consolidation', m2Trillions: 23.18, m2Mult: 1.0087, kasMult: 0.985, btcMult: 0.931, ethMult: 0.9387, spxMult: 1.012, goldMult: 0.915, kasPrice: 0.0302, btcPrice: 68503, ethPrice: 1938, spxPrice: 7671, goldPrice: 4203 },
+      { tsMs: Date.UTC(2026, 7, 20), label: 'Aug 20', event: '90-Day Checkpoint', m2Trillions: 23.3, m2Mult: 1.0139, kasMult: 0.934, btcMult: 0.892, ethMult: 0.9125, spxMult: 0.988, goldMult: 0.884, kasPrice: 0.0287, btcPrice: 65633, ethPrice: 1884, spxPrice: 7489, goldPrice: 4060 },
+      { tsMs: Date.UTC(2026, 8, 19), label: 'Sep 19', event: 'Autumn M2 Expansion ($23.41T)', m2Trillions: 23.41, m2Mult: 1.0187, kasMult: 0.91, btcMult: 0.875, ethMult: 0.8888, spxMult: 0.974, goldMult: 0.852, kasPrice: 0.0279, btcPrice: 64383, ethPrice: 1835, spxPrice: 7383, goldPrice: 3913 },
+      { tsMs: Date.UTC(2026, 9, 19), label: 'Oct 19', event: 'Late-Window Rotation', m2Trillions: 23.41, m2Mult: 1.0187, kasMult: 0.896, btcMult: 0.862, ethMult: 0.8738, spxMult: 0.969, goldMult: 0.834, kasPrice: 0.0275, btcPrice: 63426, ethPrice: 1804, spxPrice: 7345, goldPrice: 3831 },
+      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 180D Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0188, kasMult: 0.888, btcMult: 0.856, ethMult: 0.8632, spxMult: 0.966, goldMult: 0.822, kasPrice: 0.02725, btcPrice: 63004, ethPrice: 1782.23, spxPrice: 7322, goldPrice: 3778 }
     ],
     Y1: [
-      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: '1-Year Window Open', m2Trillions: 22.25, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.04, btcPrice: 86805, spxPrice: 6603, goldPrice: 4080 },
-      { tsMs: Date.UTC(2026, 0, 17), label: "Jan '26", event: 'New Year Macro Repricing', m2Trillions: 22.39, m2Mult: 1.0063, kasMult: 0.925, btcMult: 0.965, spxMult: 1.032, goldMult: 1.045, kasPrice: 0.037, btcPrice: 83767, spxPrice: 6814, goldPrice: 4264 },
-      { tsMs: Date.UTC(2026, 2, 18), label: "Mar '26", event: 'Spring Liquidity Surge', m2Trillions: 22.61, m2Mult: 1.0162, kasMult: 0.86, btcMult: 0.912, spxMult: 1.078, goldMult: 1.092, kasPrice: 0.0344, btcPrice: 79166, spxPrice: 7118, goldPrice: 4455 },
-      { tsMs: Date.UTC(2026, 4, 18), label: "May '26", event: '180D Midpoint', m2Trillions: 22.98, m2Mult: 1.0328, kasMult: 0.768, btcMult: 0.848, spxMult: 1.148, goldMult: 1.126, kasPrice: 0.0307, btcPrice: 73580, spxPrice: 7580, goldPrice: 4593 },
-      { tsMs: Date.UTC(2026, 6, 18), label: "Jul '26", event: 'Summer Rotation', m2Trillions: 23.18, m2Mult: 1.0418, kasMult: 0.742, btcMult: 0.794, spxMult: 1.132, goldMult: 1.028, kasPrice: 0.0297, btcPrice: 68923, spxPrice: 7475, goldPrice: 4194 },
-      { tsMs: Date.UTC(2026, 8, 18), label: "Sep '26", event: 'M2 Print Acceleration', m2Trillions: 23.41, m2Mult: 1.0521, kasMult: 0.7, btcMult: 0.742, spxMult: 1.116, goldMult: 0.964, kasPrice: 0.028, btcPrice: 64409, spxPrice: 7369, goldPrice: 3933 },
-      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 1Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0522, kasMult: 0.681, btcMult: 0.726, spxMult: 1.109, goldMult: 0.926, kasPrice: 0.02725, btcPrice: 63004, spxPrice: 7322, goldPrice: 3778 }
+      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: '1-Year Window Open', m2Trillions: 22.25, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, ethMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.04, btcPrice: 86805, ethPrice: 3123, spxPrice: 6603, goldPrice: 4080 },
+      { tsMs: Date.UTC(2026, 0, 17), label: "Jan '26", event: 'New Year Macro Repricing', m2Trillions: 22.39, m2Mult: 1.0063, kasMult: 0.925, btcMult: 0.965, ethMult: 0.9254, spxMult: 1.032, goldMult: 1.045, kasPrice: 0.037, btcPrice: 83767, ethPrice: 2890, spxPrice: 6814, goldPrice: 4264 },
+      { tsMs: Date.UTC(2026, 2, 18), label: "Mar '26", event: 'Spring Liquidity Surge', m2Trillions: 22.61, m2Mult: 1.0162, kasMult: 0.86, btcMult: 0.912, ethMult: 0.7893, spxMult: 1.078, goldMult: 1.092, kasPrice: 0.0344, btcPrice: 79166, ethPrice: 2465, spxPrice: 7118, goldPrice: 4455 },
+      { tsMs: Date.UTC(2026, 4, 18), label: "May '26", event: '180D Midpoint', m2Trillions: 22.98, m2Mult: 1.0328, kasMult: 0.768, btcMult: 0.848, ethMult: 0.6611, spxMult: 1.148, goldMult: 1.126, kasPrice: 0.0307, btcPrice: 73580, ethPrice: 2064.6, spxPrice: 7580, goldPrice: 4593 },
+      { tsMs: Date.UTC(2026, 6, 18), label: "Jul '26", event: 'Summer Rotation', m2Trillions: 23.18, m2Mult: 1.0418, kasMult: 0.742, btcMult: 0.794, ethMult: 0.6206, spxMult: 1.132, goldMult: 1.028, kasPrice: 0.0297, btcPrice: 68923, ethPrice: 1938, spxPrice: 7475, goldPrice: 4194 },
+      { tsMs: Date.UTC(2026, 8, 18), label: "Sep '26", event: 'M2 Print Acceleration', m2Trillions: 23.41, m2Mult: 1.0521, kasMult: 0.7, btcMult: 0.742, ethMult: 0.5876, spxMult: 1.116, goldMult: 0.964, kasPrice: 0.028, btcPrice: 64409, ethPrice: 1835, spxPrice: 7369, goldPrice: 3933 },
+      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 1Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0522, kasMult: 0.681, btcMult: 0.726, ethMult: 0.5707, spxMult: 1.109, goldMult: 0.926, kasPrice: 0.02725, btcPrice: 63004, ethPrice: 1782.23, spxPrice: 7322, goldPrice: 3778 }
     ],
     Y2: [
-      { tsMs: Date.UTC(2024, 10, 18), label: "Nov '24", event: '2-Year Window Open', m2Trillions: 21.43, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.1524, btcPrice: 98014, spxPrice: 5969, goldPrice: 2712 },
-      { tsMs: Date.UTC(2025, 2, 18), label: "Mar '25", event: 'Post-Peak Crypto Consolidation', m2Trillions: 21.71, m2Mult: 1.0131, kasMult: 0.562, btcMult: 0.875, spxMult: 0.968, goldMult: 1.115, kasPrice: 0.0856, btcPrice: 85762, spxPrice: 5778, goldPrice: 3024 },
-      { tsMs: Date.UTC(2025, 6, 18), label: "Jul '25", event: 'Gold Monetary Breakout', m2Trillions: 22.0, m2Mult: 1.0266, kasMult: 0.445, btcMult: 0.942, spxMult: 1.045, goldMult: 1.248, kasPrice: 0.0678, btcPrice: 92329, spxPrice: 6238, goldPrice: 3385 },
-      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: '1-Year Midpoint', m2Trillions: 22.25, m2Mult: 1.0383, kasMult: 0.262, btcMult: 0.886, spxMult: 1.106, goldMult: 1.504, kasPrice: 0.04, btcPrice: 86805, spxPrice: 6603, goldPrice: 4080 },
-      { tsMs: Date.UTC(2026, 2, 18), label: "Mar '26", event: 'US M2 Passes $22.6T', m2Trillions: 22.61, m2Mult: 1.0551, kasMult: 0.226, btcMult: 0.808, spxMult: 1.192, goldMult: 1.642, kasPrice: 0.0344, btcPrice: 79166, spxPrice: 7118, goldPrice: 4455 },
-      { tsMs: Date.UTC(2026, 6, 18), label: "Jul '26", event: 'Equities & Gold Lead Liquidity', m2Trillions: 23.18, m2Mult: 1.0817, kasMult: 0.195, btcMult: 0.703, spxMult: 1.252, goldMult: 1.546, kasPrice: 0.0297, btcPrice: 68923, spxPrice: 7475, goldPrice: 4194 },
-      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 2Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0926, kasMult: 0.179, btcMult: 0.643, spxMult: 1.227, goldMult: 1.393, kasPrice: 0.02725, btcPrice: 63004, spxPrice: 7322, goldPrice: 3778 }
+      { tsMs: Date.UTC(2024, 10, 18), label: "Nov '24", event: '2-Year Window Open', m2Trillions: 21.43, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, ethMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.1524, btcPrice: 98014, ethPrice: 3207.9, spxPrice: 5969, goldPrice: 2712 },
+      { tsMs: Date.UTC(2025, 2, 18), label: "Mar '25", event: 'Post-Peak Crypto Consolidation', m2Trillions: 21.71, m2Mult: 1.0131, kasMult: 0.562, btcMult: 0.875, ethMult: 0.6811, spxMult: 0.968, goldMult: 1.115, kasPrice: 0.0856, btcPrice: 85762, ethPrice: 2185, spxPrice: 5778, goldPrice: 3024 },
+      { tsMs: Date.UTC(2025, 6, 18), label: "Jul '25", event: 'Gold Monetary Breakout', m2Trillions: 22.0, m2Mult: 1.0266, kasMult: 0.445, btcMult: 0.942, ethMult: 0.9165, spxMult: 1.045, goldMult: 1.248, kasPrice: 0.0678, btcPrice: 92329, ethPrice: 2940, spxPrice: 6238, goldPrice: 3385 },
+      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: '1-Year Midpoint', m2Trillions: 22.25, m2Mult: 1.0383, kasMult: 0.262, btcMult: 0.886, ethMult: 0.9735, spxMult: 1.106, goldMult: 1.504, kasPrice: 0.04, btcPrice: 86805, ethPrice: 3123, spxPrice: 6603, goldPrice: 4080 },
+      { tsMs: Date.UTC(2026, 2, 18), label: "Mar '26", event: 'US M2 Passes $22.6T', m2Trillions: 22.61, m2Mult: 1.0551, kasMult: 0.226, btcMult: 0.808, ethMult: 0.7684, spxMult: 1.192, goldMult: 1.642, kasPrice: 0.0344, btcPrice: 79166, ethPrice: 2465, spxPrice: 7118, goldPrice: 4455 },
+      { tsMs: Date.UTC(2026, 6, 18), label: "Jul '26", event: 'Equities & Gold Lead Liquidity', m2Trillions: 23.18, m2Mult: 1.0817, kasMult: 0.195, btcMult: 0.703, ethMult: 0.6041, spxMult: 1.252, goldMult: 1.546, kasPrice: 0.0297, btcPrice: 68923, ethPrice: 1938, spxPrice: 7475, goldPrice: 4194 },
+      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 2Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0926, kasMult: 0.179, btcMult: 0.643, ethMult: 0.5556, spxMult: 1.227, goldMult: 1.393, kasPrice: 0.02725, btcPrice: 63004, ethPrice: 1782.23, spxPrice: 7322, goldPrice: 3778 }
     ],
     Y4: [
-      { tsMs: Date.UTC(2022, 10, 18), label: "Nov '22", event: '4-Year Cycle Open (Cycle Low)', m2Trillions: 21.39, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0094, btcPrice: 16445, spxPrice: 4026, goldPrice: 1754 },
-      { tsMs: Date.UTC(2023, 4, 18), label: "May '23", event: 'Post-FTX Recovery', m2Trillions: 20.82, m2Mult: 0.9734, kasMult: 2.138, btcMult: 1.651, spxMult: 1.033, goldMult: 1.143, kasPrice: 0.0201, btcPrice: 27156, spxPrice: 4158, goldPrice: 2005 },
-      { tsMs: Date.UTC(2023, 10, 18), label: "Nov '23", event: 'KAS Mainnet Explosion', m2Trillions: 20.77, m2Mult: 0.971, kasMult: 12.755, btcMult: 2.259, spxMult: 1.12, goldMult: 1.133, kasPrice: 0.1199, btcPrice: 37145, spxPrice: 4511, goldPrice: 1987 },
-      { tsMs: Date.UTC(2024, 4, 18), label: "May '24", event: 'Post-Halving Expansion', m2Trillions: 20.96, m2Mult: 0.9799, kasMult: 13.84, btcMult: 4.086, spxMult: 1.312, goldMult: 1.368, kasPrice: 0.1301, btcPrice: 67194, spxPrice: 5282, goldPrice: 2399 },
-      { tsMs: Date.UTC(2024, 10, 18), label: "Nov '24", event: '2-Year Midpoint ($98K BTC)', m2Trillions: 21.43, m2Mult: 1.0019, kasMult: 16.213, btcMult: 5.96, spxMult: 1.483, goldMult: 1.546, kasPrice: 0.1524, btcPrice: 98014, spxPrice: 5969, goldPrice: 2712 },
-      { tsMs: Date.UTC(2025, 4, 18), label: "May '25", event: 'Gold & S&P Broadening', m2Trillions: 21.84, m2Mult: 1.021, kasMult: 10.128, btcMult: 6.201, spxMult: 1.468, goldMult: 1.877, kasPrice: 0.0952, btcPrice: 101983, spxPrice: 5909, goldPrice: 3293 },
-      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: 'Monetary Re-Acceleration', m2Trillions: 22.25, m2Mult: 1.0402, kasMult: 4.255, btcMult: 5.278, spxMult: 1.64, goldMult: 2.326, kasPrice: 0.04, btcPrice: 86805, spxPrice: 6603, goldPrice: 4080 },
-      { tsMs: Date.UTC(2026, 4, 18), label: "May '26", event: 'Peak Gold & Equity Print', m2Trillions: 22.98, m2Mult: 1.0743, kasMult: 3.266, btcMult: 4.474, spxMult: 1.883, goldMult: 2.619, kasPrice: 0.0307, btcPrice: 73580, spxPrice: 7580, goldPrice: 4593 },
-      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 4Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0947, kasMult: 2.891, btcMult: 3.831, spxMult: 1.819, goldMult: 2.154, kasPrice: 0.02725, btcPrice: 63004, spxPrice: 7322, goldPrice: 3778 }
+      { tsMs: Date.UTC(2022, 10, 18), label: "Nov '22", event: '4-Year Cycle Open (Cycle Low)', m2Trillions: 21.39, m2Mult: 1.0, kasMult: 1.0, btcMult: 1.0, ethMult: 1.0, spxMult: 1.0, goldMult: 1.0, kasPrice: 0.0094, btcPrice: 16445, ethPrice: 1218.4, spxPrice: 4026, goldPrice: 1754 },
+      { tsMs: Date.UTC(2023, 4, 18), label: "May '23", event: 'Post-FTX Recovery', m2Trillions: 20.82, m2Mult: 0.9734, kasMult: 2.138, btcMult: 1.651, ethMult: 1.497, spxMult: 1.033, goldMult: 1.143, kasPrice: 0.0201, btcPrice: 27156, ethPrice: 1824, spxPrice: 4158, goldPrice: 2005 },
+      { tsMs: Date.UTC(2023, 10, 18), label: "Nov '23", event: 'KAS Mainnet Explosion', m2Trillions: 20.77, m2Mult: 0.971, kasMult: 12.755, btcMult: 2.259, ethMult: 1.6842, spxMult: 1.12, goldMult: 1.133, kasPrice: 0.0094 * 12.755, btcPrice: 37145, ethPrice: 2052, spxPrice: 4511, goldPrice: 1987 },
+      { tsMs: Date.UTC(2024, 4, 18), label: "May '24", event: 'Post-Halving Expansion', m2Trillions: 20.96, m2Mult: 0.9799, kasMult: 13.84, btcMult: 4.086, ethMult: 2.5542, spxMult: 1.312, goldMult: 1.368, kasPrice: 0.1301, btcPrice: 67194, ethPrice: 3112, spxPrice: 5282, goldPrice: 2399 },
+      { tsMs: Date.UTC(2024, 10, 18), label: "Nov '24", event: '2-Year Midpoint ($98K BTC)', m2Trillions: 21.43, m2Mult: 1.0019, kasMult: 16.213, btcMult: 5.96, ethMult: 2.6329, spxMult: 1.483, goldMult: 1.546, kasPrice: 0.1524, btcPrice: 98014, ethPrice: 3207.9, spxPrice: 5969, goldPrice: 2712 },
+      { tsMs: Date.UTC(2025, 4, 18), label: "May '25", event: 'Gold & S&P Broadening', m2Trillions: 21.84, m2Mult: 1.021, kasMult: 10.128, btcMult: 6.201, ethMult: 2.0847, spxMult: 1.468, goldMult: 1.877, kasPrice: 0.0952, btcPrice: 101983, ethPrice: 2540, spxPrice: 5909, goldPrice: 3293 },
+      { tsMs: Date.UTC(2025, 10, 18), label: "Nov '25", event: 'Monetary Re-Acceleration', m2Trillions: 22.25, m2Mult: 1.0402, kasMult: 4.255, btcMult: 5.278, ethMult: 2.5632, spxMult: 1.64, goldMult: 2.326, kasPrice: 0.04, btcPrice: 86805, ethPrice: 3123, spxPrice: 6603, goldPrice: 4080 },
+      { tsMs: Date.UTC(2026, 4, 18), label: "May '26", event: 'Peak Gold & Equity Print', m2Trillions: 22.98, m2Mult: 1.0743, kasMult: 3.266, btcMult: 4.474, ethMult: 1.6945, spxMult: 1.883, goldMult: 2.619, kasPrice: 0.0307, btcPrice: 73580, ethPrice: 2064.6, spxPrice: 7580, goldPrice: 4593 },
+      { tsMs: Date.UTC(2026, 10, 18), label: 'Now', event: 'Live 4Y Spot vs US M2', m2Trillions: 23.41, m2Mult: 1.0947, kasMult: 2.891, btcMult: 3.831, ethMult: 1.4628, spxMult: 1.819, goldMult: 2.154, kasPrice: 0.02725, btcPrice: 63004, ethPrice: 1782.23, spxPrice: 7322, goldPrice: 3778 }
     ]
   }
 };

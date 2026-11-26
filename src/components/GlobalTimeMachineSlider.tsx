@@ -16,6 +16,7 @@ import {
 interface GlobalTimeMachineSliderProps {
   value: GlobalTimelineYear;
   onChange: (nextYear: GlobalTimelineYear) => void;
+  onInteract?: () => void;
   accent: GradeAccent;
   disabled?: boolean;
 }
@@ -25,6 +26,7 @@ const HOLD_POPUP_DELAY_MS = 220;
 export function GlobalTimeMachineSlider({
   value,
   onChange,
+  onInteract,
   accent,
   disabled = false
 }: GlobalTimeMachineSliderProps) {
@@ -92,6 +94,7 @@ export function GlobalTimeMachineSlider({
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0) return;
+    onInteract?.();
     const targetEl = e.target as HTMLElement | null;
     const startedOnThumb = Boolean(targetEl?.closest('[data-testid="time-machine-thumb-btn"]'));
 
@@ -156,6 +159,7 @@ export function GlobalTimeMachineSlider({
     if (disabled) return;
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
+      onInteract?.();
       if (!isHoldPopupOpen) {
         setIsHoldPopupOpen(true);
       }
@@ -177,6 +181,7 @@ export function GlobalTimeMachineSlider({
       return;
     }
     e.preventDefault();
+    onInteract?.();
     const targetYear = GLOBAL_TIMELINE_STOPS[nextIdx].id;
     if (targetYear !== value) {
       onChange(targetYear);
@@ -212,6 +217,7 @@ export function GlobalTimeMachineSlider({
 
   return (
     <div
+      data-tutorial-id="time-machine"
       data-testid="global-time-machine-slider"
       data-active-year={value}
       onContextMenu={(e) => {
@@ -272,8 +278,11 @@ export function GlobalTimeMachineSlider({
                 data-testid={`time-machine-stop-${stop.id}`}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!disabled && stop.id !== value) {
-                    onChange(stop.id);
+                  if (!disabled) {
+                    onInteract?.();
+                    if (stop.id !== value) {
+                      onChange(stop.id);
+                    }
                   }
                 }}
                 title={`Switch to ${stop.buttonLabel} (${stop.epochTitle})`}

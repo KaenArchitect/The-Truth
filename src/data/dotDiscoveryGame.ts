@@ -1,5 +1,5 @@
 // ============================================================================
-// 6-UNIQUE-INTERACTIONS DISCOVERY GAME FOR THE TRUTH DOT EASTER EGG
+// 6-INVARIANT DISCOVERY COUNTER FOR THE TRUTH DOT EASTER EGG (0/6 -> 6/6)
 // ============================================================================
 
 export const DOT_DISCOVERY_STORAGE_KEY = 'truth_dot_discovery_game_v1';
@@ -10,12 +10,14 @@ export const DOT_DISCOVERY_INTERACTIONS = [
   'explore_invariant',
   'pin_constellation',
   'open_vault_or_charts',
+  'use_time_machine',
   'hands_on_tool'
 ] as const;
 
 export type DotDiscoveryInteraction = (typeof DOT_DISCOVERY_INTERACTIONS)[number];
 
-export const DOT_DISCOVERY_TARGET_COUNT = DOT_DISCOVERY_INTERACTIONS.length;
+// Matches the 6 Thermodynamic Invariants (any 6 unique interactions unlock 6/6 resonance)
+export const DOT_DISCOVERY_TARGET_COUNT = 6;
 
 export interface DotDiscoveryGameState {
   discovered: DotDiscoveryInteraction[];
@@ -52,15 +54,18 @@ export function sanitizeDotDiscoveryState(raw: unknown): DotDiscoveryGameState {
       if (isValidDotDiscoveryInteraction(item) && !seen.has(item)) {
         seen.add(item);
         discovered.push(item);
+        if (discovered.length >= DOT_DISCOVERY_TARGET_COUNT) {
+          break;
+        }
       }
     }
   }
-  const unlockedAtMs =
-    typeof obj.unlockedAtMs === 'number' && Number.isFinite(obj.unlockedAtMs)
+  const hasReachedTarget = discovered.length >= DOT_DISCOVERY_TARGET_COUNT;
+  const unlockedAtMs = hasReachedTarget
+    ? typeof obj.unlockedAtMs === 'number' && Number.isFinite(obj.unlockedAtMs)
       ? obj.unlockedAtMs
-      : discovered.length >= DOT_DISCOVERY_TARGET_COUNT
-      ? Date.now()
-      : null;
+      : Date.now()
+    : null;
   const genesisDiscoveredAtMs =
     typeof obj.genesisDiscoveredAtMs === 'number' && Number.isFinite(obj.genesisDiscoveredAtMs)
       ? obj.genesisDiscoveredAtMs
@@ -80,6 +85,9 @@ export function recordDotDiscoveryInteraction(
 ): DotDiscoveryGameState {
   if (!isValidDotDiscoveryInteraction(interaction)) return state;
   if (state.discovered.includes(interaction)) {
+    return state;
+  }
+  if (state.discovered.length >= DOT_DISCOVERY_TARGET_COUNT) {
     return state;
   }
   const nextDiscovered = [...state.discovered, interaction];
@@ -107,7 +115,7 @@ export function markDotGenesisDiscovered(
 }
 
 export function getDotDiscoveryCount(state: DotDiscoveryGameState): number {
-  return state.discovered.length;
+  return Math.min(DOT_DISCOVERY_TARGET_COUNT, state.discovered.length);
 }
 
 export function formatMysteryCounterValue(state: DotDiscoveryGameState): string {

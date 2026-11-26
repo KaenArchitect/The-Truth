@@ -26,9 +26,10 @@ import {
   saveDotDiscoveryState
 } from './dotDiscoveryGame.ts';
 
-test('Target interaction count is strictly 6 unique interactions', () => {
+test('Target interaction count is strictly 6 (matching the 6 invariants) and includes use_time_machine', () => {
   assert.equal(DOT_DISCOVERY_TARGET_COUNT, 6);
-  assert.equal(new Set(DOT_DISCOVERY_INTERACTIONS).size, 6);
+  assert.ok(DOT_DISCOVERY_INTERACTIONS.includes('use_time_machine'));
+  assert.equal(new Set(DOT_DISCOVERY_INTERACTIONS).size, DOT_DISCOVERY_INTERACTIONS.length);
 });
 
 test('Repeated interactions of the same category never count twice or unlock pulse prematurely', () => {
@@ -40,7 +41,7 @@ test('Repeated interactions of the same category never count twice or unlock pul
   assert.equal(isMysteryCounterFlashing(state), false);
 
   for (let i = 0; i < 12; i++) {
-    state = recordDotDiscoveryInteraction(state, 'inspect_asset', 1000 + i);
+    state = recordDotDiscoveryInteraction(state, 'use_time_machine', 1000 + i);
   }
   assert.equal(getDotDiscoveryCount(state), 1);
   assert.equal(formatMysteryCounterValue(state), '1/6');
@@ -49,7 +50,7 @@ test('Repeated interactions of the same category never count twice or unlock pul
   assert.equal(isMysteryCounterFlashing(state), false);
 });
 
-test('Pulse and mystery counter flash stay inactive through 5 unique interactions and activate at 6/6', () => {
+test('Pulse and mystery counter flash stay inactive through 5 unique interactions, activate at 6/6, and clamp cleanly at 6/6', () => {
   let state = createInitialDotDiscoveryState();
   for (let i = 0; i < 5; i++) {
     state = recordDotDiscoveryInteraction(state, DOT_DISCOVERY_INTERACTIONS[i], 2000 + i * 100);
@@ -61,13 +62,19 @@ test('Pulse and mystery counter flash stay inactive through 5 unique interaction
     assert.equal(state.unlockedAtMs, null);
   }
 
-  state = recordDotDiscoveryInteraction(state, DOT_DISCOVERY_INTERACTIONS[5], 3000);
+  // 6th unique interaction ('use_time_machine') unlocks 6/6 resonance
+  state = recordDotDiscoveryInteraction(state, 'use_time_machine', 3000);
   assert.equal(getDotDiscoveryCount(state), 6);
   assert.equal(formatMysteryCounterValue(state), '6/6');
   assert.equal(isDotPulseUnlocked(state), true);
   assert.equal(isDotPulseActive(state), true);
   assert.equal(isMysteryCounterFlashing(state), true);
   assert.equal(state.unlockedAtMs, 3000);
+
+  // Additional distinct interaction beyond 6 stays clamped at 6/6
+  state = recordDotDiscoveryInteraction(state, 'hands_on_tool', 3500);
+  assert.equal(getDotDiscoveryCount(state), 6);
+  assert.equal(formatMysteryCounterValue(state), '6/6');
 });
 
 test('Discovering the Origin Thesis stops counter flashing and calms pulse while preserving 6/6 unlocked state', () => {

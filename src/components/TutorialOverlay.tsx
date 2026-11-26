@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, Play, Sparkles, X } from 'lucide-react';
+import { DOT_DISCOVERY_TARGET_COUNT } from '../data/dotDiscoveryGame.ts';
 import type { GradeAccent } from '../data/rubricSpec.ts';
 import {
   TUTORIAL_STEPS,
+  buildSpotlightCutoutPath,
   computeMobileScrollTargetY,
   computeSpotlightCardPosition,
   getMobileBottomClearancePx,
@@ -55,10 +57,11 @@ function measureTargetUnionRect(targetId: string, viewportWidth: number): Spotli
   const el = findVisibleTarget(targetId);
   if (!el) return null;
 
-  let minLeft = el.getBoundingClientRect().left;
-  let minTop = el.getBoundingClientRect().top;
-  let maxRight = el.getBoundingClientRect().right;
-  let maxBottom = el.getBoundingClientRect().bottom;
+  const baseRect = el.getBoundingClientRect();
+  let minLeft = baseRect.left;
+  let minTop = baseRect.top;
+  let maxRight = baseRect.right;
+  let maxBottom = baseRect.bottom;
 
   if (targetId === 'mystery-beacon' && typeof document !== 'undefined') {
     const extras = [
@@ -96,15 +99,27 @@ export function TutorialOverlay({
   stepIndex,
   steps,
   accent,
-  mysteryCounterText = '0/6',
+  mysteryCounterText = `0/${DOT_DISCOVERY_TARGET_COUNT}`,
   isEasterEggFound = false,
   onChangeStep,
   onExecuteAction,
   onClose
 }: TutorialOverlayProps) {
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const [targetRect, setTargetRect] = useState<SpotlightRect | null>(null);
+  const cutoutPathRef = useRef<SVGPathElement | null>(null);
+  const focusRingRef = useRef<HTMLDivElement | null>(null);
+
+  const [cardAnchorRect, setCardAnchorRect] = useState<SpotlightRect | null>(null);
   const [viewport, setViewport] = useState(readEffectiveViewport);
+
+  const viewportRef = useRef(viewport);
+  const goalRectRef = useRef<SpotlightRect | null>(null);
+  const liveRectRef = useRef<SpotlightRect | null>(null);
+  const glideRafRef = useRef<number>(0);
+  const glideLastTsRef = useRef<number>(0);
+  const wasOpenRef = useRef<boolean>(false);
+  const actionTimersRef = useRef<number[]>([]);
+
   const isMobile = viewport.width < 768;
   const mobileBottomClearancePx = getMobileBottomClearancePx(
     typeof navigator !== 'undefined' ? navigator.userAgent : ''
@@ -119,41 +134,167 @@ export function TutorialOverlay({
     typeof window !== 'undefined' && window.innerWidth < 768 ? 175 : 360
   );
 
-  const measureTarget = useCallback(() => {
-    if (!isOpen) return;
-    const nextVp = readEffectiveViewport();
-    setViewport((prev) =>
-      prev.width === nextVp.width &&
-      prev.height === nextVp.height &&
-      prev.offsetTop === nextVp.offsetTop
-        ? prev
-        : nextVp
-    );
+  const applySpotlightDom = useCallback(
+    (rect: SpotlightRect | null, vp: { width: number; height: number }) => {
+      if (cutoutPathRef.current) {
+        cutoutPathRef.current.setAttribute(
+          'd',
+          buildSpotlightCutoutPath(vp.width, vp.height, rect, 18)
+        );
+      }
+      if (focusRingRef.current) {
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          focusRingRef.current.style.opacity = '0';
+        } else {
+          focusRingRef.current.style.opacity = '1';
+          focusRingRef.current.style.transform = `translate3d(${rect.left.toFixed(2)}px, ${rect.top.toFixed(2)}px, 0)`;
+          focusRingRef.current.style.width = `${rect.width.toFixed(2)}px`;
+          focusRingRef.current.style.height = `${rect.height.toFixed(2)}px`;
+        }
+      }
+    },
+    []
+  );
 
-    const nextRect = measureTargetUnionRect(step.targetId, nextVp.width);
-    if (!nextRect) {
-      setTargetRect((prev) => (prev === null ? prev : null));
-      return;
+  const startSpotlightGlide = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    if (glideRafRef.current) return;
+    glideLastTsRef.current = performance.now();
+
+    const tick = (now: number) => {
+      const goal = goalRectRef.current;
+      const cur = liveRectRef.current;
+      const vp = viewportRef.current;
+
+      if (!goal || !cur) {
+        liveRectRef.current = goal ? { ...goal } : null;
+        applySpotlightDom(liveRectRef.current, vp);
+        glideRafRef.current = 0;
+        return;
+      }
+
+      const dt = Math.min(48, Math.max(8, now - glideLastTsRef.current));
+      glideLastTsRef.current = now;
+      const alpha = 1 - Math.exp(-dt / 36);
+
+      const nextTop = cur.top + (goal.top - cur.top) * alpha;
+      const nextLeft = cur.left + (goal.left - cur.left) * alpha;
+      const nextWidth = cur.width + (goal.width - cur.width) * alpha;
+      const nextHeight = cur.height + (goal.height - cur.height) * alpha;
+
+      const maxDelta = Math.max(
+        Math.abs(goal.top - nextTop),
+        Math.abs(goal.left - nextLeft),
+        Math.abs(goal.width - nextWidth),
+        Math.abs(goal.height - nextHeight)
+      );
+
+      if (maxDelta <= 0.4) {
+        liveRectRef.current = { ...goal };
+        applySpotlightDom(goal, vp);
+        glideRafRef.current = 0;
+        return;
+      }
+
+      const interpolated: SpotlightRect = {
+        top: nextTop,
+        left: nextLeft,
+        width: nextWidth,
+        height: nextHeight
+      };
+      liveRectRef.current = interpolated;
+      applySpotlightDom(interpolated, vp);
+      glideRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    glideRafRef.current = window.requestAnimationFrame(tick);
+  }, [applySpotlightDom]);
+
+  const measureTarget = useCallback(
+    (snapImmediately = false) => {
+      if (!isOpen) return;
+      const nextVp = readEffectiveViewport();
+      viewportRef.current = nextVp;
+      setViewport((prev) =>
+        prev.width === nextVp.width &&
+        prev.height === nextVp.height &&
+        prev.offsetTop === nextVp.offsetTop
+          ? prev
+          : nextVp
+      );
+
+      const nextRect = measureTargetUnionRect(step.targetId, nextVp.width);
+      goalRectRef.current = nextRect;
+
+      setCardAnchorRect((prev) => {
+        if (!nextRect) return prev === null ? prev : null;
+        if (
+          prev &&
+          Math.abs(prev.top - nextRect.top) <= 3 &&
+          Math.abs(prev.left - nextRect.left) <= 3 &&
+          Math.abs(prev.width - nextRect.width) <= 3 &&
+          Math.abs(prev.height - nextRect.height) <= 3
+        ) {
+          return prev;
+        }
+        return nextRect;
+      });
+
+      if (snapImmediately || !liveRectRef.current || !nextRect) {
+        if (glideRafRef.current && typeof window !== 'undefined') {
+          window.cancelAnimationFrame(glideRafRef.current);
+          glideRafRef.current = 0;
+        }
+        liveRectRef.current = nextRect ? { ...nextRect } : null;
+        applySpotlightDom(liveRectRef.current, nextVp);
+      } else {
+        startSpotlightGlide();
+      }
+    },
+    [applySpotlightDom, isOpen, startSpotlightGlide, step.targetId]
+  );
+
+  const clearActionTimers = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    for (const id of actionTimersRef.current) {
+      window.clearTimeout(id);
     }
-    setTargetRect((prev) =>
-      prev &&
-      Math.abs(prev.top - nextRect.top) <= 1 &&
-      Math.abs(prev.left - nextRect.left) <= 1 &&
-      Math.abs(prev.width - nextRect.width) <= 1 &&
-      Math.abs(prev.height - nextRect.height) <= 1
-        ? prev
-        : nextRect
-    );
-  }, [isOpen, step.targetId]);
+    actionTimersRef.current = [];
+  }, []);
+
+  const scheduleFollowUpMeasurements = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    clearActionTimers();
+    for (const delayMs of [60, 200, 460, 760]) {
+      actionTimersRef.current.push(
+        window.setTimeout(() => {
+          measureTarget(false);
+        }, delayMs)
+      );
+    }
+  }, [clearActionTimers, measureTarget]);
 
   useLayoutEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      liveRectRef.current = null;
+      goalRectRef.current = null;
+      if (glideRafRef.current && typeof window !== 'undefined') {
+        window.cancelAnimationFrame(glideRafRef.current);
+        glideRafRef.current = 0;
+      }
+      clearActionTimers();
+      return;
+    }
+
+    const isOpeningNow = !wasOpenRef.current;
+    wasOpenRef.current = true;
 
     const measuredCardH = cardRef.current
       ? Math.round(cardRef.current.getBoundingClientRect().height)
       : cardHeight;
     if (measuredCardH > 80) {
-      setCardHeight(measuredCardH);
+      setCardHeight((prev) => (Math.abs(prev - measuredCardH) > 2 ? measuredCardH : prev));
     }
 
     const alignMobileScroll = () => {
@@ -162,12 +303,8 @@ export function TutorialOverlay({
       const r = el.getBoundingClientRect();
       const vp = readEffectiveViewport();
       const docTop = window.scrollY + r.top;
-      const maxScrollY = Math.max(
-        0,
-        document.documentElement.scrollHeight - vp.height
-      );
+      const maxScrollY = Math.max(0, document.documentElement.scrollHeight - vp.height);
       if (vp.width >= 768) {
-        // When zoomed to 150%+, baskets stack below the stage even at >= 768px width; scroll offscreen targets cleanly into view
         const isOffscreen = r.bottom > vp.height - 24 || r.top < 16;
         if (!isOffscreen) return;
         const desiredTop = Math.max(
@@ -194,29 +331,21 @@ export function TutorialOverlay({
     };
 
     alignMobileScroll();
-    measureTarget();
-
-    // Track continuously past the 740ms hero dock transform and settle cleanly afterwards
-    let frameCount = 0;
-    let rafId = 0;
-    const track = () => {
-      if (frameCount < 4) {
-        alignMobileScroll();
-      }
-      measureTarget();
-      frameCount++;
-      if (frameCount < 75) {
-        rafId = requestAnimationFrame(track);
-      }
-    };
-    rafId = requestAnimationFrame(track);
-    const t820 = window.setTimeout(measureTarget, 820);
+    measureTarget(isOpeningNow);
+    scheduleFollowUpMeasurements();
 
     return () => {
-      if (rafId) cancelAnimationFrame(rafId);
-      window.clearTimeout(t820);
+      clearActionTimers();
     };
-  }, [isOpen, stepIndex, step.targetId, measureTarget, mobileBottomClearancePx]);
+  }, [
+    isOpen,
+    stepIndex,
+    step.targetId,
+    measureTarget,
+    mobileBottomClearancePx,
+    scheduleFollowUpMeasurements,
+    clearActionTimers
+  ]);
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -225,7 +354,7 @@ export function TutorialOverlay({
       if (rafPending) return;
       rafPending = window.requestAnimationFrame(() => {
         rafPending = 0;
-        measureTarget();
+        measureTarget(false);
       });
     };
     const onTransitionEnd = (e: TransitionEvent) => {
@@ -235,6 +364,7 @@ export function TutorialOverlay({
         e.propertyName === 'width' ||
         e.propertyName === 'height'
       ) {
+        if (e.target === cardRef.current || e.target === focusRingRef.current) return;
         scheduleMeasure();
       }
     };
@@ -243,7 +373,6 @@ export function TutorialOverlay({
     window.visualViewport?.addEventListener('resize', scheduleMeasure, { passive: true });
     window.visualViewport?.addEventListener('scroll', scheduleMeasure, { passive: true });
     document.addEventListener('transitionend', onTransitionEnd, true);
-    const syncInterval = window.setInterval(scheduleMeasure, 450);
 
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== 'undefined' && cardRef.current) {
@@ -254,19 +383,21 @@ export function TutorialOverlay({
             setCardHeight((prev) => (Math.abs(prev - h) > 2 ? h : prev));
           }
         }
-        scheduleMeasure();
       });
       ro.observe(cardRef.current);
     }
 
     return () => {
       if (rafPending) window.cancelAnimationFrame(rafPending);
+      if (glideRafRef.current) {
+        window.cancelAnimationFrame(glideRafRef.current);
+        glideRafRef.current = 0;
+      }
       window.removeEventListener('resize', scheduleMeasure);
       window.removeEventListener('scroll', scheduleMeasure, true);
       window.visualViewport?.removeEventListener('resize', scheduleMeasure);
       window.visualViewport?.removeEventListener('scroll', scheduleMeasure);
       document.removeEventListener('transitionend', onTransitionEnd, true);
-      window.clearInterval(syncInterval);
       if (ro) ro.disconnect();
     };
   }, [isOpen, measureTarget]);
@@ -295,7 +426,7 @@ export function TutorialOverlay({
   if (!isOpen) return null;
 
   const coords = computeSpotlightCardPosition(
-    targetRect,
+    cardAnchorRect,
     { width: viewport.width, height: viewport.height },
     { width: 380, height: cardHeight },
     step.preferredPlacement || 'bottom',
@@ -303,7 +434,7 @@ export function TutorialOverlay({
   );
 
   const cardTop = isMobile ? coords.top + viewport.offsetTop : coords.top;
-  const maskId = 'truth-tutorial-spotlight-mask';
+  const initialSpotlightRect = liveRectRef.current ?? cardAnchorRect;
 
   return (
     <div
@@ -313,68 +444,62 @@ export function TutorialOverlay({
       aria-label={`Interactive Tutorial — ${step.title}`}
       data-testid="tutorial-overlay"
     >
-      {/* Dimmed SVG spotlight backdrop (click outside to dismiss) */}
+      {/* Dimmed single-path even-odd spotlight backdrop (zero offscreen SVG mask buffer) */}
       <svg
         className="fixed inset-0 w-full h-full pointer-events-auto cursor-pointer"
+        viewBox={`0 0 ${viewport.width} ${viewport.height}`}
+        preserveAspectRatio="none"
         onClick={() => onClose(true)}
         aria-hidden="true"
       >
-        <defs>
-          <mask id={maskId}>
-            <rect x="0" y="0" width="100%" height="100%" fill="white" />
-            {targetRect && (
-              <rect
-                x={targetRect.left}
-                y={targetRect.top}
-                width={targetRect.width}
-                height={targetRect.height}
-                rx={18}
-                ry={18}
-                fill="black"
-              />
-            )}
-          </mask>
-        </defs>
-        <rect
-          x="0"
-          y="0"
-          width="100%"
-          height="100%"
-          fill="rgba(6, 7, 9, 0.72)"
-          mask={`url(#${maskId})`}
+        <path
+          ref={cutoutPathRef}
+          fillRule="evenodd"
+          fill="rgba(6, 7, 9, 0.74)"
+          d={buildSpotlightCutoutPath(
+            viewport.width,
+            viewport.height,
+            initialSpotlightRect,
+            18
+          )}
         />
       </svg>
 
-      {/* Luminous focus ring around active UI region */}
-      {targetRect && (
-        <div
-          aria-hidden="true"
-          className="fixed pointer-events-none rounded-[18px] transition-all duration-300 ease-out"
-          style={{
-            top: targetRect.top,
-            left: targetRect.left,
-            width: targetRect.width,
-            height: targetRect.height,
-            border: `1.5px solid ${accent.primary}`,
-            boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 0 28px ${accent.glow}`
-          }}
-        />
-      )}
+      {/* GPU-composited luminous focus ring locked 1:1 with spotlight cutout */}
+      <div
+        ref={focusRingRef}
+        aria-hidden="true"
+        className="fixed top-0 left-0 pointer-events-none rounded-[18px] will-change-transform"
+        style={{
+          opacity: initialSpotlightRect ? 1 : 0,
+          transform: initialSpotlightRect
+            ? `translate3d(${initialSpotlightRect.left}px, ${initialSpotlightRect.top}px, 0)`
+            : 'translate3d(0, 0, 0)',
+          width: initialSpotlightRect ? initialSpotlightRect.width : 0,
+          height: initialSpotlightRect ? initialSpotlightRect.height : 0,
+          border: `1.5px solid ${accent.primary}`,
+          boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 0 24px ${accent.glow}`
+        }}
+      />
 
-      {/* Tutorial Coach Card */}
+      {/* GPU-composited Tutorial Coach Card (translate3d instead of top/left layout reflows) */}
       <div
         ref={cardRef}
         data-testid="tutorial-coach-card"
         data-placement={coords.placement}
         onClick={(e) => e.stopPropagation()}
         style={{
-          top: cardTop,
-          left: coords.left,
+          top: 0,
+          left: 0,
           width: coords.width,
+          transform: `translate3d(${coords.left}px, ${cardTop}px, 0)`,
+          willChange: 'transform',
+          transition:
+            'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease',
           borderColor: accent.border,
-          boxShadow: `0 22px 56px rgba(0, 0, 0, 0.85), 0 0 32px ${accent.glow}`
+          boxShadow: `0 22px 52px rgba(0, 0, 0, 0.85), 0 0 28px ${accent.glow}`
         }}
-        className={`fixed pointer-events-auto rounded-2xl bg-[#101216]/98 border text-white transition-[top,left,width,border-color,box-shadow] duration-200 ease-out overflow-y-auto ${
+        className={`fixed pointer-events-auto rounded-2xl bg-[#101216]/[0.98] border text-white overflow-y-auto ${
           isMobile ? 'p-3.5 max-h-[36vh]' : 'p-5 max-h-[calc(100vh-24px)]'
         }`}
       >
@@ -403,7 +528,7 @@ export function TutorialOverlay({
                 }}
               >
                 <span
-                  className="w-1.5 h-1.5 rounded-full animate-pulse shrink-0"
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
                   style={{
                     backgroundColor: accent.primary,
                     boxShadow: `0 0 8px ${accent.primary}`
@@ -418,7 +543,7 @@ export function TutorialOverlay({
                   data-testid="tutorial-easter-egg-hint-btn"
                   onClick={() => onChangeStep(easterEggStepIdx)}
                   title="Jump to the hidden Easter Egg clue"
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/[0.04] hover:bg-white/[0.09] border border-white/12 font-mono text-[10px] font-medium text-neutral-300 hover:text-white transition whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/[0.04] hover:bg-white/[0.09] border border-white/12 font-mono text-[10px] font-medium text-neutral-300 hover:text-white transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
                 >
                   <Sparkles
                     className="w-2.5 h-2.5 shrink-0"
@@ -438,7 +563,7 @@ export function TutorialOverlay({
             type="button"
             onClick={() => onClose(true)}
             aria-label="Close tutorial"
-            className="shrink-0 w-8 h-8 rounded-lg bg-[#171A21] hover:bg-[#1F242D] border border-white/10 flex items-center justify-center text-neutral-400 hover:text-white transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
+            className="shrink-0 w-8 h-8 rounded-lg bg-[#171A21] hover:bg-[#1F242D] border border-white/10 flex items-center justify-center text-neutral-400 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB]"
           >
             <X className="w-4 h-4" />
           </button>
@@ -536,8 +661,11 @@ export function TutorialOverlay({
             {step.actionLabel && step.actionId && (
               <button
                 type="button"
-                onClick={() => onExecuteAction(step.actionId!)}
-                className={`rounded-lg bg-[#171A21] hover:bg-[#1F242E] border border-white/15 font-mono font-semibold text-white transition inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+                onClick={() => {
+                  onExecuteAction(step.actionId!);
+                  scheduleFollowUpMeasurements();
+                }}
+                className={`rounded-lg bg-[#171A21] hover:bg-[#1F242E] border border-white/15 font-mono font-semibold text-white transition-colors inline-flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
                   isMobile ? 'min-h-[34px] px-2.5 py-1.5 text-[11px]' : 'min-h-[40px] px-3.5 py-2 text-xs'
                 }`}
               >

@@ -1657,6 +1657,86 @@ export function getCohortSyncSignature(record: Pick<GainsCohortRecord, 'passed' 
   return `${serializeSide(record.passed)}=>${serializeSide(record.failed)}`;
 }
 
+export function mergeResolvedEntriesIntoCohortRecord(
+  record: GainsCohortRecord,
+  extraEntries?: Record<string, Partial<CohortAssetEntry>> | null
+): GainsCohortRecord {
+  if (!extraEntries || typeof extraEntries !== 'object') return record;
+  const entries = Object.entries(extraEntries);
+  if (entries.length === 0) return record;
+
+  const nextPassed = [...record.passed];
+  const nextFailed = [...record.failed];
+  let didChange = false;
+
+  for (const [rawKey, rawPatch] of entries) {
+    if (!rawPatch || typeof rawPatch !== 'object') continue;
+    const ticker = normalizeCohortTicker(rawPatch.ticker || rawKey);
+    if (!ticker) continue;
+
+    const passIdx = nextPassed.findIndex((a) => a.ticker === ticker);
+    const failIdx = nextFailed.findIndex((a) => a.ticker === ticker);
+
+    const inferredSide: CohortSide =
+      passIdx !== -1
+        ? 'PASSED'
+        : failIdx !== -1
+        ? 'FAILED'
+        : classifyAuditBasketSide({
+            ticker,
+            grade: rawPatch.grade,
+            totalScore: rawPatch.auditScore
+          });
+
+    const existing =
+      passIdx !== -1 ? nextPassed[passIdx] : failIdx !== -1 ? nextFailed[failIdx] : null;
+    const mergedRaw: Partial<CohortAssetEntry> = existing
+      ? {
+          ...existing,
+          ...rawPatch,
+          ticker,
+          releasePrice: rawPatch.releasePrice ?? existing.releasePrice ?? null,
+          releaseLabel: rawPatch.releaseLabel || existing.releaseLabel,
+          price180d: rawPatch.price180d ?? existing.price180d ?? null,
+          price1y: rawPatch.price1y ?? existing.price1y ?? null,
+          price2y: rawPatch.price2y ?? existing.price2y ?? null,
+          price4y: rawPatch.price4y ?? existing.price4y ?? null,
+          snapshotSpot: rawPatch.snapshotSpot ?? existing.snapshotSpot ?? null,
+          yahooSymbol: rawPatch.yahooSymbol ?? existing.yahooSymbol ?? null
+        }
+      : { ...rawPatch, ticker };
+
+    const cleaned = sanitizeCohortAssetEntry(mergedRaw, inferredSide);
+    if (!cleaned) continue;
+
+    if (passIdx !== -1) {
+      nextPassed[passIdx] = cleaned;
+      didChange = true;
+    } else if (failIdx !== -1) {
+      nextFailed[failIdx] = cleaned;
+      didChange = true;
+    } else if (inferredSide === 'PASSED') {
+      if (nextPassed.length < MAX_ASSETS_PER_COHORT) {
+        nextPassed.unshift(cleaned);
+        didChange = true;
+      }
+    } else if (nextFailed.length < MAX_ASSETS_PER_COHORT) {
+      nextFailed.unshift(cleaned);
+      didChange = true;
+    }
+  }
+
+  if (!didChange) return record;
+  const now = Date.now();
+  return {
+    ...record,
+    passed: nextPassed,
+    failed: nextFailed,
+    updatedAtMs: Math.max(now, (record.updatedAtMs || 0) + 1),
+    updatedAtLabel: formatCohortTimestampLabel(now)
+  };
+}
+
 export function buildNiceYGridTicks(
   minVal: number,
   maxVal: number,

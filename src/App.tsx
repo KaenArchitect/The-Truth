@@ -146,7 +146,9 @@ import {
   computeCohortAggregateSummary,
   computeCohortLiquidMetricsList,
   formatPctSigned,
+  mergeResolvedEntriesIntoCohortRecord,
   sanitizeGainsCohortRecord,
+  type CohortAssetEntry,
   type GainsCohortRecord
 } from './data/gainsCohortData.ts';
 import { TutorialOverlay } from './components/TutorialOverlay.tsx';
@@ -522,7 +524,10 @@ function ThermodynamicAuditApp() {
   const [confirmFullReauditKey, setConfirmFullReauditKey] = useState<string | null>(null);
   const [archiveToast, setArchiveToast] = useState<ArchiveToastState | null>(null);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
-  const [isGainsModalOpen, setIsGainsModalOpen] = useState(false);
+  const [isGainsModalOpen, setIsGainsModalOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('gains') === '1';
+  });
   const [gainsCohortRecord, setGainsCohortRecord] = useState<GainsCohortRecord | null>(null);
   const [gainsLiveSpots, setGainsLiveSpots] = useState<Record<string, number>>({});
   const [isDonateModalOpen, setIsDonateModalOpen] = useState(false);
@@ -567,7 +572,7 @@ function ThermodynamicAuditApp() {
   const [isTutorialOpen, setIsTutorialOpen] = useState(() => {
     if (typeof window === 'undefined') return false;
     const params = new URLSearchParams(window.location.search);
-    if (params.get('autostart') === '1') return false;
+    if (params.get('autostart') === '1' || params.get('gains') === '1') return false;
     if (parseDeepLinkSearchParams(window.location.search).hasDeepLink) return false;
     const nav = window.navigator;
     if (
@@ -969,9 +974,98 @@ function ThermodynamicAuditApp() {
   );
   const sandboxTickerSet = useMemo(() => new Set(sandboxTickers), [sandboxTickers]);
 
+  const auditsRef = useRef(audits);
+  auditsRef.current = audits;
+  const gainsCohortRecordRef = useRef(gainsCohortRecord);
+  gainsCohortRecordRef.current = gainsCohortRecord;
+  const isSyncingBasketGainsRef = useRef(false);
+
+  const syncBasketLiveGains = useCallback(async () => {
+    if (isSyncingBasketGainsRef.current) return;
+    isSyncingBasketGainsRef.current = true;
+    try {
+      const currentSynced = buildBasketSyncedCohortRecord(
+        auditsRef.current,
+        gainsCohortRecordRef.current
+      );
+      const allItems = [...currentSynced.passed, ...currentSynced.failed];
+      const clientSpots: Record<string, number> = {};
+
+      const cbTargets = allItems.filter((item) => Boolean(item.coinbasePair));
+      await Promise.allSettled(
+        cbTargets.map(async (item) => {
+          const res = await fetch(
+            `https://api.coinbase.com/v2/prices/${encodeURIComponent(item.coinbasePair!)}/spot`,
+            { cache: 'no-store' }
+          );
+          if (!res.ok) return;
+          const json = (await res.json()) as { data?: { amount?: string } };
+          const amt = Number(json?.data?.amount);
+          if (Number.isFinite(amt) && amt > 0) {
+            clientSpots[item.ticker] = amt;
+          }
+        })
+      );
+
+      if (Object.keys(clientSpots).length > 0) {
+        setGainsLiveSpots((prev) => ({ ...prev, ...clientSpots }));
+      }
+
+      const idToken = firebaseAuth?.currentUser?.emailVerified
+        ? await getFirebaseIdToken()
+        : null;
+      const syncHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) {
+        syncHeaders.Authorization = `Bearer ${idToken}`;
+      }
+
+      const syncRes = await fetch('/api/gains-cohort/sync', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: syncHeaders,
+        body: JSON.stringify({
+          spotOverrides: clientSpots,
+          extraItems: allItems.map((it) => ({
+            ticker: it.ticker,
+            name: it.name,
+            grade: it.grade,
+            auditScore: it.auditScore,
+            coinbasePair: it.coinbasePair,
+            geckoId: it.geckoId,
+            yahooSymbol: it.yahooSymbol
+          }))
+        })
+      });
+
+      if (syncRes.ok) {
+        const syncJson = (await syncRes.json()) as {
+          record?: Partial<GainsCohortRecord>;
+          liveSpotMap?: Record<string, number>;
+          extraResolvedEntries?: Record<string, CohortAssetEntry>;
+        } | null;
+        if (syncJson?.record) {
+          const baseRec = sanitizeGainsCohortRecord(syncJson.record);
+          const mergedRec = mergeResolvedEntriesIntoCohortRecord(
+            baseRec,
+            syncJson.extraResolvedEntries
+          );
+          setGainsCohortRecord(mergedRec);
+        }
+        const mergedSpots = { ...clientSpots, ...(syncJson?.liveSpotMap || {}) };
+        if (Object.keys(mergedSpots).length > 0) {
+          setGainsLiveSpots((prev) => ({ ...prev, ...mergedSpots }));
+        }
+      }
+    } catch {
+      // Keep canonical snapshot values on transient offline network state
+    } finally {
+      isSyncingBasketGainsRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
-    fetch('/api/gains-cohort')
+    fetch('/api/gains-cohort?refresh=1', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then(
         (
@@ -982,7 +1076,16 @@ function ThermodynamicAuditApp() {
         ) => {
           if (!active) return;
           if (payload?.record) {
-            setGainsCohortRecord(sanitizeGainsCohortRecord(payload.record));
+            setGainsCohortRecord((prev) =>
+              mergeResolvedEntriesIntoCohortRecord(
+                sanitizeGainsCohortRecord(payload.record),
+                prev
+                  ? Object.fromEntries(
+                      [...prev.passed, ...prev.failed].map((a) => [a.ticker, a])
+                    )
+                  : null
+              )
+            );
           }
           if (payload?.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
             setGainsLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
@@ -990,14 +1093,50 @@ function ThermodynamicAuditApp() {
         }
       )
       .catch(() => {});
+
+    void syncBasketLiveGains();
+
     return () => {
       active = false;
     };
-  }, []);
+  }, [syncBasketLiveGains]);
+
+  const auditBasketSyncKey = useMemo(
+    () =>
+      Object.entries(audits)
+        .map(([k, a]) => `${k}:${a?.grade || ''}:${a?.totalScore ?? ''}`)
+        .sort()
+        .join('|'),
+    [audits]
+  );
+  const prevAuditBasketSyncKeyRef = useRef(auditBasketSyncKey);
+  useEffect(() => {
+    if (prevAuditBasketSyncKeyRef.current === auditBasketSyncKey) return undefined;
+    prevAuditBasketSyncKeyRef.current = auditBasketSyncKey;
+    const t = window.setTimeout(() => {
+      void syncBasketLiveGains();
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [auditBasketSyncKey, syncBasketLiveGains]);
 
   const handleCohortSynced = useCallback(
     (record: GainsCohortRecord, spots: Record<string, number>) => {
-      setGainsCohortRecord(record);
+      setGainsCohortRecord((prev) =>
+        prev
+          ? mergeResolvedEntriesIntoCohortRecord(
+              record,
+              Object.fromEntries(
+                [...prev.passed, ...prev.failed]
+                  .filter(
+                    (a) =>
+                      !record.passed.some((p) => p.ticker === a.ticker) &&
+                      !record.failed.some((f) => f.ticker === a.ticker)
+                  )
+                  .map((a) => [a.ticker, a])
+              )
+            )
+          : record
+      );
       if (spots && Object.keys(spots).length > 0) {
         setGainsLiveSpots((prev) => ({ ...prev, ...spots }));
       }
@@ -2817,6 +2956,7 @@ function ThermodynamicAuditApp() {
       setHoveredInvId(null);
       setSearchInput('');
       triggerScanPulse();
+      void syncBasketLiveGains();
 
       const quotaSuffix =
         tracker.quota?.unlimited || isAdminSession
@@ -3025,6 +3165,7 @@ function ThermodynamicAuditApp() {
         timelineYear
       )
     }));
+    void syncBasketLiveGains();
     return {
       updatedAudit: mergedRootAudit,
       updatedSingleInv,
@@ -3579,18 +3720,18 @@ function ThermodynamicAuditApp() {
 
       if (nextStep.targetId === 'center-arena') {
         if (!activeKey && validPinnedKeys.length === 0) {
-          setActiveKey('KAS');
+          setActiveKey('BTC');
         } else if (isMultiStage && validPinnedKeys.length > 0 && !activeKey) {
           setActiveKey(validPinnedKeys[0]);
         }
         if (isMultiStage) {
           setPinnedKeys([]);
-          setActiveKey(activeKey || 'KAS');
+          setActiveKey(activeKey || 'BTC');
         }
         setIsArenaHovered(true);
       } else if (nextStep.targetId === 'pin-compare') {
         if (!isMultiStage && !activeKey) {
-          setActiveKey('KAS');
+          setActiveKey('BTC');
         }
       }
     },
@@ -3615,39 +3756,50 @@ function ThermodynamicAuditApp() {
           searchEl?.focus();
           break;
         }
-        case 'load-kas-fission': {
+        case 'load-btc-fission': {
+          trackDotDiscovery('inspect_asset');
           setPinnedKeys([]);
-          setActiveKey('KAS');
+          setActiveKey('BTC');
           setHoveredInvId(null);
           setIsArenaHovered(true);
           break;
         }
         case 'toggle-genius': {
+          trackDotDiscovery('switch_depth');
           setIsGeniusMode(true);
           break;
         }
+        case 'demo-time-machine': {
+          trackDotDiscovery('use_time_machine');
+          setSelectedEpochIdx(null);
+          setTimelineYear((prev) => (prev === '2016' ? 'PRESENT' : '2016'));
+          break;
+        }
         case 'demo-constellation': {
-          setPinnedKeys(['KAS', 'SOL']);
-          setActiveKey('KAS');
+          trackDotDiscovery('pin_constellation');
+          setPinnedKeys(['BTC', 'ETH']);
+          setActiveKey('BTC');
           setExpandAllOrbits(false);
           setExpandedSyncInvId(null);
           setHoveredInvId(null);
           break;
         }
         case 'open-gains-modal': {
+          trackDotDiscovery('open_vault_or_charts');
           closeTutorial(true);
           setIsGainsModalOpen(true);
           break;
         }
         case 'open-wartime-sim': {
+          trackDotDiscovery('hands_on_tool');
           closeTutorial(true);
-          if (!activeKey) setActiveKey('KAS');
+          if (!activeKey) setActiveKey('BTC');
           openWartimeSimTab();
           break;
         }
       }
     },
-    [activeKey, closeTutorial, openWartimeSimTab]
+    [activeKey, closeTutorial, openWartimeSimTab, trackDotDiscovery]
   );
 
   // =========================================================================
@@ -4601,7 +4753,9 @@ function ThermodynamicAuditApp() {
         if (e.button === 1) e.preventDefault();
       }}
       className={`min-h-screen ${
-        !stackBasketsBelow && !isMultiStage ? 'md:h-screen md:max-h-screen md:overflow-hidden' : ''
+        !stackBasketsBelow && !isMultiStage && viewportMetrics.height >= 680
+          ? 'md:h-screen md:max-h-screen md:overflow-hidden'
+          : ''
       } bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans`}
     >
       <style>{`
@@ -4994,7 +5148,7 @@ function ThermodynamicAuditApp() {
               grade={activeBackdropGrade}
               totalScore={activeBackdropScore}
               scanProgressPct={scanProgressPct}
-              paused={isAnyModalOpen}
+              paused={isAnyModalOpen || isTutorialOpen}
               primaryColor={accent.primary}
               secondaryColor={accent.secondary}
             />
@@ -5505,8 +5659,11 @@ function ThermodynamicAuditApp() {
           >
             <GlobalTimeMachineSlider
               value={timelineYear}
+              onInteract={() => {
+                trackDotDiscovery('use_time_machine');
+              }}
               onChange={(nextYear) => {
-                trackDotDiscovery('hands_on_tool');
+                trackDotDiscovery('use_time_machine');
                 setSelectedEpochIdx(null);
                 setTimelineYear(nextYear);
               }}
@@ -5676,7 +5833,7 @@ function ThermodynamicAuditApp() {
         className={`relative z-10 flex-1 w-full ${
           stackBasketsBelow
             ? 'px-4 sm:px-6 pb-3 sm:pb-4'
-            : isMultiStage
+            : isMultiStage || viewportMetrics.height < 680
             ? 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-4 md:pb-16'
             : 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-1 md:pb-0'
         } flex flex-col items-center justify-start ${
@@ -6573,18 +6730,24 @@ function ThermodynamicAuditApp() {
         ) : (
           (() => {
             const subLgSideReserve = stackBasketsBelow ? 16 : 196;
+            const singleStageVerticalReservePx = isCompactHeight ? 480 : 536;
             const subLgLandscapeScale = Math.max(
-              0.66,
+              0.6,
               Math.min(
                 1.05,
                 (viewportMetrics.width - subLgSideReserve * 2 - 20) / stageSize,
-                (viewportMetrics.height - 392) / stageSize
+                (viewportMetrics.height - (isCompactHeight ? 464 : 518)) / stageSize
               )
             );
             const lgFitScale = !stackBasketsBelow
               ? Math.min(
                   displayMetrics.arenaScale,
-                  Math.max(0.68, Math.round(((viewportMetrics.height - 404) / stageSize) * 100) / 100)
+                  Math.max(
+                    0.64,
+                    Math.round(
+                      ((viewportMetrics.height - singleStageVerticalReservePx) / stageSize) * 100
+                    ) / 100
+                  )
                 )
               : displayMetrics.arenaScale;
             const effectiveScale = !isLgDesktop
@@ -7130,8 +7293,8 @@ function ThermodynamicAuditApp() {
                     : 'min-h-[184px] mt-3 sm:mt-5 justify-start'
                   : activeHoveredInvariant
                   ? isCompactHeight
-                    ? 'min-h-0 mt-2.5 justify-start'
-                    : 'min-h-[184px] mt-2 justify-start pt-1'
+                    ? 'min-h-0 mt-1.5 justify-start'
+                    : 'min-h-[156px] mt-1.5 justify-start pt-0.5'
                   : stackBasketsBelow
                   ? 'min-h-0 mt-1 justify-start'
                   : isCompactHeight
@@ -7203,14 +7366,19 @@ function ThermodynamicAuditApp() {
                   const InvIcon = INVARIANT_ICONS[activeHoveredInvariant.id] || ShieldCheck;
                   return (
                     <button
-                      key={`hover-card-${currentAudit.ticker}-${activeHoveredInvariant.id}`}
+                      key={`hover-card-${currentAudit.ticker}`}
+                      data-testid="invariant-hover-card"
                       type="button"
                       onClick={() => {
                         setModalViewMode('INVARIANT');
                         setModalInvId(activeHoveredInvariant.id);
                       }}
                       className={`animate-card-fade color-glide text-left w-full rounded-2xl bg-[#121418]/[0.96] ${
-                        isCompactHeight ? 'p-3' : 'p-4'
+                        isCompactHeight
+                          ? 'px-3.5 py-2.5'
+                          : viewportMetrics.height < 1040
+                          ? 'px-4 py-3'
+                          : 'p-4'
                       } cursor-pointer shadow-[0_16px_40px_rgba(0,0,0,0.65)] hover:brightness-105`}
                       style={{
                         border: `1px solid ${
@@ -7249,7 +7417,7 @@ function ThermodynamicAuditApp() {
                         {activeHoveredInvariant.quickSummary}
                       </p>
 
-                      <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-mono text-[11px]">
                         <span className="text-neutral-400 leading-snug">
                           {activeHoveredInvariant.telemetry}
                         </span>
@@ -7273,9 +7441,12 @@ function ThermodynamicAuditApp() {
                         ? isSplitOpen
                           ? 10
                           : 6
-                        : isSplitOpen
-                        ? Math.max(10, displayMetrics.bottomControlsOffsetPx)
-                        : displayMetrics.bottomControlsOffsetPx
+                        : Math.min(
+                            isSplitOpen
+                              ? Math.max(10, displayMetrics.bottomControlsOffsetPx)
+                              : displayMetrics.bottomControlsOffsetPx,
+                            Math.max(8, viewportMetrics.height - wrapperPx - 420)
+                          )
                     }px`
                   }}
                   className="text-center space-y-2 pt-0.5"
@@ -7455,11 +7626,11 @@ function ThermodynamicAuditApp() {
         data-testid="landauer-footer"
         className={`${
           !stackBasketsBelow
-            ? 'relative md:fixed md:bottom-0 md:inset-x-0 md:bg-[#0B0C0E]/90 md:backdrop-blur-md'
-            : 'relative'
-        } z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 pt-3.5 pb-36 ${
-          isCompactHeight ? 'md:py-2' : 'md:py-2.5'
-        } border-t border-white/[0.05] text-[11px] font-mono text-neutral-500`}
+            ? `relative md:fixed md:bottom-0 md:inset-x-0 md:bg-[#0B0C0E]/90 md:backdrop-blur-md pt-3.5 pb-36 md:pt-0 md:pb-0 ${
+                isCompactHeight ? 'md:h-12' : 'md:h-14'
+              } md:flex md:items-center md:justify-center`
+            : 'relative pt-3.5 pb-36'
+        } z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 border-t border-white/[0.05] text-[11px] font-mono text-neutral-500`}
       >
         {/* Mobile balanced matched-size bottom button dock */}
         <div
@@ -7583,9 +7754,9 @@ function ThermodynamicAuditApp() {
           </div>
         </div>
 
-        {/* Desktop centered footer (Tutorial & Donate float persistently in bottom corners) */}
-        <div className="hidden md:flex items-center justify-center md:px-28 lg:px-36 min-h-[36px]">
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center px-2">
+        {/* Desktop centered footer (Tutorial & Donate sit vertically centered in bottom corners) */}
+        <div className="hidden md:flex w-full h-full items-center justify-center md:px-28 lg:px-36">
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-0.5 text-center px-2 leading-none">
             <span>Landauer’s Principle: ΔQ ≥ kB·T·ln2 • E = 0 Forces Terminal Grade F</span>
             <span className="hidden lg:inline text-white/15" aria-hidden="true">
               •
@@ -7604,11 +7775,13 @@ function ThermodynamicAuditApp() {
         onClick={startTutorial}
         tabIndex={showFloatingCornerControls ? 0 : -1}
         aria-hidden={!showFloatingCornerControls}
-        className={`color-glide fixed ${
+        className={`fixed ${
           typeof navigator !== 'undefined' && isBottomChromeInAppBrowser(navigator.userAgent)
             ? 'bottom-28 sm:bottom-4'
             : 'bottom-[max(0.875rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] sm:bottom-4'
-        } left-3 sm:left-4 xl:left-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border border-white/12 font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+        } ${
+          !stackBasketsBelow ? (isCompactHeight ? 'md:bottom-[6px]' : 'md:bottom-[10px]') : ''
+        } left-3 sm:left-4 xl:left-6 z-40 h-9 px-3.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border border-white/12 font-mono text-[11px] font-medium leading-none text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-[opacity,transform,background-color,border-color,color,box-shadow] duration-200 ease-out will-change-[opacity,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
           showFloatingCornerControls
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-1.5 pointer-events-none'
@@ -7625,11 +7798,13 @@ function ThermodynamicAuditApp() {
         onClick={() => setIsDonateModalOpen(true)}
         tabIndex={showFloatingCornerControls ? 0 : -1}
         aria-hidden={!showFloatingCornerControls}
-        className={`color-glide fixed ${
+        className={`fixed ${
           typeof navigator !== 'undefined' && isBottomChromeInAppBrowser(navigator.userAgent)
             ? 'bottom-28 sm:bottom-4'
             : 'bottom-[max(0.875rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] sm:bottom-4'
-        } right-3 sm:right-4 xl:right-6 z-40 h-9 px-3.5 py-1.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border font-mono text-[11px] font-medium text-neutral-200 hover:text-white flex items-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
+        } ${
+          !stackBasketsBelow ? (isCompactHeight ? 'md:bottom-[6px]' : 'md:bottom-[10px]') : ''
+        } right-3 sm:right-4 xl:right-6 z-40 h-9 px-3.5 rounded-full bg-[#121418]/[0.92] backdrop-blur-md hover:bg-[#191D24] border font-mono text-[11px] font-medium leading-none text-neutral-200 hover:text-white flex items-center justify-center gap-1.5 shadow-[0_10px_28px_rgba(0,0,0,0.65)] transition-[opacity,transform,background-color,border-color,color,box-shadow] duration-200 ease-out will-change-[opacity,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#49EACB] ${
           showFloatingCornerControls
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-1.5 pointer-events-none'
@@ -7731,7 +7906,7 @@ function ThermodynamicAuditApp() {
                           data-testid={`epoch-pill-${snap.epochId}`}
                           aria-selected={isSelectedEpoch}
                           onClick={() => {
-                            trackDotDiscovery('hands_on_tool');
+                            trackDotDiscovery('use_time_machine');
                             setSelectedEpochIdx(idx);
                           }}
                           className={`h-6 sm:h-7 px-2.5 sm:px-3 rounded-full font-mono text-[10px] sm:text-[10.5px] leading-none transition-colors duration-150 inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 tabular-nums cursor-pointer ${
@@ -7768,7 +7943,10 @@ function ThermodynamicAuditApp() {
                   </span>
                   <button
                     type="button"
-                    onClick={() => setTimelineYear('PRESENT')}
+                    onClick={() => {
+                      trackDotDiscovery('use_time_machine');
+                      setTimelineYear('PRESENT');
+                    }}
                     className="font-semibold hover:underline whitespace-nowrap cursor-pointer"
                     style={{ color: scorecardAccent.primary }}
                   >
@@ -9558,6 +9736,7 @@ function ThermodynamicAuditApp() {
             onCopyReport={copyTextToClipboard}
             copiedTarget={copiedTarget}
             initialCohortRecord={gainsCohortRecord}
+            initialLiveSpots={gainsLiveSpots}
             onCohortSynced={handleCohortSynced}
           />
         </Suspense>

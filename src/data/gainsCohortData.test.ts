@@ -315,6 +315,89 @@ test('portfolioVictoryMultiple normalizes by equal capital invested when active 
   assert.equal(unequalSummary.portfolioVictoryMultiple, '1.5');
 });
 
+test('mergeResolvedEntriesIntoCohortRecord unlocks newly pulled custom audits so basket percentages update immediately', async () => {
+  const { mergeResolvedEntriesIntoCohortRecord } = await import('./gainsCohortData.ts');
+  const base = buildBasketSyncedCohortRecord(PRELOADED_AUDITS);
+
+  const extendedAudits = {
+    ...PRELOADED_AUDITS,
+    DOGE: {
+      ticker: 'DOGE',
+      name: 'Dogecoin',
+      grade: 'C',
+      totalScore: 3.1,
+      consensusFamily: 'LINEAR_POW',
+      architecture: 'AuxPoW Scrypt',
+      invariants: [{ id: '01', score: 0.9 }, { id: '02', score: 0.6 }]
+    },
+    TON: {
+      ticker: 'TON',
+      name: 'Toncoin',
+      grade: 'F',
+      totalScore: 0,
+      consensusFamily: 'ZERO_JOULE_BFT',
+      architecture: 'Catchain PoS',
+      invariants: [{ id: '01', score: 0 }, { id: '02', score: 0 }]
+    }
+  };
+
+  // Before live resolution, DOGE & TON have no releasePrice so basket averages are unchanged
+  const beforeSync = buildBasketSyncedCohortRecord(extendedAudits, base);
+  assert.equal(beforeSync.passed.find((a) => a.ticker === 'DOGE')?.liquidCycle, false);
+  assert.equal(beforeSync.failed.find((a) => a.ticker === 'TON')?.liquidCycle, false);
+
+  const beforeSummary = computeCohortAggregateSummary(
+    computeCohortLiquidMetricsList(beforeSync.passed, 'RELEASE'),
+    computeCohortLiquidMetricsList(beforeSync.failed, 'RELEASE'),
+    1000,
+    false
+  );
+
+  // After /api/gains-cohort/sync resolves DOGE & TON via extraResolvedEntries:
+  const mergedPersisted = mergeResolvedEntriesIntoCohortRecord(base, {
+    DOGE: {
+      ticker: 'DOGE',
+      name: 'Dogecoin',
+      grade: 'C',
+      auditScore: 3.1,
+      releasePrice: 0.0005,
+      releaseLabel: "$0.0005 (Dec '13)",
+      price180d: 0.12,
+      price1y: 0.15,
+      snapshotSpot: 0.25,
+      liquidCycle: true
+    },
+    TON: {
+      ticker: 'TON',
+      name: 'Toncoin',
+      grade: 'F',
+      auditScore: 0,
+      releasePrice: 2.0,
+      releaseLabel: "$2.00 (Aug '21)",
+      price180d: 5.1,
+      price1y: 4.8,
+      snapshotSpot: 3.4,
+      liquidCycle: true
+    }
+  });
+
+  assert.equal(mergedPersisted.isCustomized, false);
+  const afterSync = buildBasketSyncedCohortRecord(extendedAudits, mergedPersisted);
+  assert.equal(afterSync.passed.find((a) => a.ticker === 'DOGE')?.liquidCycle, true);
+  assert.equal(afterSync.failed.find((a) => a.ticker === 'TON')?.liquidCycle, true);
+
+  const afterSummary = computeCohortAggregateSummary(
+    computeCohortLiquidMetricsList(afterSync.passed, 'RELEASE', { DOGE: 0.25, TON: 3.4 }),
+    computeCohortLiquidMetricsList(afterSync.failed, 'RELEASE', { DOGE: 0.25, TON: 3.4 }),
+    1000,
+    false
+  );
+
+  assert.notEqual(afterSummary.passCycleAvg, beforeSummary.passCycleAvg);
+  assert.notEqual(afterSummary.failCycleAvg, beforeSummary.failCycleAvg);
+});
+
+
 
 
 

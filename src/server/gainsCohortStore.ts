@@ -4,8 +4,11 @@ import {
   PASSED_COHORT_GAINS,
   applySpotPricesToCohortRecord,
   buildBasketSyncedCohortRecord,
+  classifyAuditBasketSide,
   formatCohortTimestampLabel,
   formatUsdPrice,
+  normalizeCohortTicker,
+  sanitizeCohortAssetEntry,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
   type GainsCohortRecord,
@@ -27,6 +30,7 @@ interface HistoricalBar {
 
 let memoryCohort: GainsCohortRecord | null = null;
 let lastLiveSyncCompletedAtMs = 0;
+let lastLiveSpotMap: Record<string, number> = {};
 const cachedBarsByTicker = new Map<string, HistoricalBar[]>();
 let cachedWindowTrajectories: WindowTrajectoriesMap = {};
 let inFlightLiveSync: Promise<{
@@ -34,6 +38,7 @@ let inFlightLiveSync: Promise<{
   syncedTickers: string[];
   liveSpotMap: Record<string, number>;
   windowTrajectories: WindowTrajectoriesMap;
+  extraResolvedEntries: Record<string, CohortAssetEntry>;
 }> | null = null;
 
 const CATALOG_META_BY_TICKER = new Map<string, CohortAssetEntry>(
@@ -141,6 +146,7 @@ export function resetPersistedGainsCohort(): GainsCohortRecord {
   const defaults = getDefaultSyncedCohort();
   memoryCohort = defaults;
   lastLiveSyncCompletedAtMs = 0;
+  lastLiveSpotMap = {};
   cachedWindowTrajectories = {};
   saveToDisk(defaults);
   return defaults;
@@ -439,21 +445,77 @@ function computeWindowTrajectoriesFromBars(
   return out;
 }
 
+function sanitizeExtraSyncItems(
+  rawExtraItems: Array<Partial<CohortAssetEntry>> | undefined,
+  existingTickers: Set<string>
+): CohortAssetEntry[] {
+  if (!Array.isArray(rawExtraItems) || rawExtraItems.length === 0) return [];
+  const safeTickerRe = /^[A-Z0-9-]{1,14}$/;
+  const safePairRe = /^[A-Z0-9-]{3,16}$/;
+  const safeGeckoRe = /^[a-z0-9-]{1,48}$/;
+  const safeYahooRe = /^[A-Z0-9.=^-]{1,18}$/;
+
+  const out: CohortAssetEntry[] = [];
+  const seen = new Set<string>(existingTickers);
+
+  for (const raw of rawExtraItems) {
+    if (!raw || typeof raw !== 'object') continue;
+    const tk = normalizeCohortTicker(raw.ticker);
+    if (!tk || !safeTickerRe.test(tk) || seen.has(tk)) continue;
+    seen.add(tk);
+
+    const side = classifyAuditBasketSide({
+      ticker: tk,
+      grade: raw.grade,
+      totalScore: raw.auditScore
+    });
+    const rawCb = raw.coinbasePair ? String(raw.coinbasePair).trim().toUpperCase() : `${tk}-USD`;
+    const rawGecko = raw.geckoId ? String(raw.geckoId).trim().toLowerCase() : null;
+    const rawYahoo = raw.yahooSymbol ? String(raw.yahooSymbol).trim().toUpperCase() : `${tk}-USD`;
+
+    const cleaned = sanitizeCohortAssetEntry(
+      {
+        ...raw,
+        ticker: tk,
+        coinbasePair: rawCb && safePairRe.test(rawCb) ? rawCb : null,
+        geckoId: rawGecko && safeGeckoRe.test(rawGecko) ? rawGecko : null,
+        yahooSymbol: rawYahoo && safeYahooRe.test(rawYahoo) ? rawYahoo : null
+      },
+      side
+    );
+    if (cleaned) {
+      out.push(cleaned);
+      if (out.length >= 30) break;
+    }
+  }
+  return out;
+}
+
 export async function syncLivePricesAndPersistGainsCohort(
-  clientSpotOverrides?: Record<string, number>
+  clientSpotOverrides?: Record<string, number>,
+  extraItems?: Array<Partial<CohortAssetEntry>>
 ): Promise<{
   record: GainsCohortRecord;
   syncedTickers: string[];
   liveSpotMap: Record<string, number>;
   windowTrajectories: WindowTrajectoriesMap;
+  extraResolvedEntries: Record<string, CohortAssetEntry>;
 }> {
-  if (inFlightLiveSync && (!clientSpotOverrides || Object.keys(clientSpotOverrides).length === 0)) {
+  const hasClientOverrides = Boolean(
+    clientSpotOverrides && Object.keys(clientSpotOverrides).length > 0
+  );
+  const hasExtraItems = Boolean(Array.isArray(extraItems) && extraItems.length > 0);
+  if (inFlightLiveSync && !hasClientOverrides && !hasExtraItems) {
     return inFlightLiveSync;
   }
 
   const runSync = async () => {
     const current = getPersistedGainsCohort();
-    const allItems: CohortAssetEntry[] = [...current.passed, ...current.failed];
+    const persistedItems: CohortAssetEntry[] = [...current.passed, ...current.failed];
+    const existingTickerSet = new Set(persistedItems.map((i) => i.ticker));
+    const sanitizedExtras = sanitizeExtraSyncItems(extraItems, existingTickerSet);
+    const allItems: CohortAssetEntry[] = [...persistedItems, ...sanitizedExtras];
+
     const liveSpotMap: Record<string, number> = {};
     const releaseOverrides: Record<string, ReleaseBaselineOverride> = {};
 
@@ -486,7 +548,7 @@ export async function syncLivePricesAndPersistGainsCohort(
       })
     );
 
-    // 2. CoinGecko simple price batch (covers KAS, XMR, ERG, RVN, PI, etc.)
+    // 2. CoinGecko simple price batch (covers KAS, XMR, ERG, RVN, PI, and newly pulled alts)
     const geckoTargets = allItems.filter(
       (item) => item.geckoId && !liveSpotMap[item.ticker]
     );
@@ -579,6 +641,42 @@ export async function syncLivePricesAndPersistGainsCohort(
       releaseOverrides
     );
 
+    // Resolve newly pulled custom extraItems so basket percentages update immediately
+    const extraResolvedEntries: Record<string, CohortAssetEntry> = {};
+    if (sanitizedExtras.length > 0) {
+      const tempExtrasRecord: GainsCohortRecord = {
+        ...current,
+        passed: sanitizedExtras.filter(
+          (e) =>
+            classifyAuditBasketSide({
+              ticker: e.ticker,
+              grade: e.grade,
+              totalScore: e.auditScore
+            }) === 'PASSED'
+        ),
+        failed: sanitizedExtras.filter(
+          (e) =>
+            classifyAuditBasketSide({
+              ticker: e.ticker,
+              grade: e.grade,
+              totalScore: e.auditScore
+            }) === 'FAILED'
+        )
+      };
+      const { nextRecord: resolvedExtrasRecord } = applySpotPricesToCohortRecord(
+        tempExtrasRecord,
+        liveSpotMap,
+        'Extra Audit Sync',
+        releaseOverrides
+      );
+      for (const resolvedItem of [
+        ...resolvedExtrasRecord.passed,
+        ...resolvedExtrasRecord.failed
+      ]) {
+        extraResolvedEntries[resolvedItem.ticker] = resolvedItem;
+      }
+    }
+
     const activeRecord = updatedTickers.length > 0 ? nextRecord : current;
     const nextTraj = computeWindowTrajectoriesFromBars(activeRecord, liveSpotMap);
     if (Object.keys(nextTraj).length > 0) {
@@ -589,15 +687,26 @@ export async function syncLivePricesAndPersistGainsCohort(
       memoryCohort = nextRecord;
       saveToDisk(nextRecord);
     }
+    if (Object.keys(liveSpotMap).length > 0) {
+      lastLiveSpotMap = { ...lastLiveSpotMap, ...liveSpotMap };
+    }
     lastLiveSyncCompletedAtMs = Date.now();
 
     return {
       record: activeRecord,
-      syncedTickers: updatedTickers,
-      liveSpotMap,
-      windowTrajectories: cachedWindowTrajectories
+      syncedTickers: [
+        ...updatedTickers,
+        ...Object.keys(extraResolvedEntries).filter((tk) => !updatedTickers.includes(tk))
+      ],
+      liveSpotMap: { ...lastLiveSpotMap, ...liveSpotMap },
+      windowTrajectories: cachedWindowTrajectories,
+      extraResolvedEntries
     };
   };
+
+  if (hasClientOverrides || hasExtraItems) {
+    return runSync();
+  }
 
   const promise = runSync().finally(() => {
     if (inFlightLiveSync === promise) {
@@ -608,22 +717,27 @@ export async function syncLivePricesAndPersistGainsCohort(
   return promise;
 }
 
-export async function ensureFreshLiveGainsCohort(): Promise<{
+export async function ensureFreshLiveGainsCohort(
+  forceRefresh = false
+): Promise<{
   record: GainsCohortRecord;
   syncedTickers: string[];
   liveSpotMap: Record<string, number>;
   windowTrajectories: WindowTrajectoriesMap;
+  extraResolvedEntries: Record<string, CohortAssetEntry>;
 }> {
   const current = getPersistedGainsCohort();
+  const minReuseAgeMs = forceRefresh ? 4_000 : LIVE_SYNC_TTL_MS;
   if (
     lastLiveSyncCompletedAtMs > 0 &&
-    Date.now() - lastLiveSyncCompletedAtMs < LIVE_SYNC_TTL_MS
+    Date.now() - lastLiveSyncCompletedAtMs < minReuseAgeMs
   ) {
     return {
       record: current,
       syncedTickers: [],
-      liveSpotMap: {},
-      windowTrajectories: cachedWindowTrajectories
+      liveSpotMap: { ...lastLiveSpotMap },
+      windowTrajectories: cachedWindowTrajectories,
+      extraResolvedEntries: {}
     };
   }
   return syncLivePricesAndPersistGainsCohort();

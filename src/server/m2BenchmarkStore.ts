@@ -108,10 +108,11 @@ export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M
   if (inFlightM2Sync) return inFlightM2Sync;
 
   const run = async (): Promise<M2BenchmarkDataset> => {
-    const [m2Rows, btcHist, kasHist, spxHist, goldHist] = await Promise.all([
+    const [m2Rows, btcHist, kasHist, ethHist, spxHist, goldHist] = await Promise.all([
       fetchFredM2Rows(),
       fetchYahooAssetSeries('BTC-USD'),
       fetchYahooAssetSeries('KAS-USD'),
+      fetchYahooAssetSeries('ETH-USD'),
       fetchYahooAssetSeries('^GSPC'),
       fetchYahooAssetSeries('GC=F')
     ]);
@@ -131,6 +132,9 @@ export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M
     const spots = {
       btc: btcHist.spot ?? btcHist.bars[btcHist.bars.length - 1].price,
       kas: kasHist.spot ?? kasHist.bars[kasHist.bars.length - 1].price,
+      eth:
+        ethHist?.spot ??
+        (ethHist?.bars.length ? ethHist.bars[ethHist.bars.length - 1].price : 1782.23),
       spx: spxHist.spot ?? spxHist.bars[spxHist.bars.length - 1].price,
       gold: goldHist.spot ?? goldHist.bars[goldHist.bars.length - 1].price
     };
@@ -139,6 +143,7 @@ export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M
       m2Rows,
       btcBars: btcHist.bars,
       kasBars: kasHist.bars,
+      ethBars: ethHist?.bars || [],
       spxBars: spxHist.bars,
       goldBars: goldHist.bars,
       spots,
