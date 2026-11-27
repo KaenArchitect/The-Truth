@@ -7,13 +7,17 @@ import {
 import {
   BTC_GENESIS_JUL10_MS,
   BTC_GENESIS_JUL10_PRICE,
+  JUL_2010_BENCHMARK_OPEN_PRICES,
   KAS_GENESIS_MAY22_MS,
   KAS_GENESIS_MAY22_PRICE,
   findClosestBarPrice,
   findHistoricalBtcPriceAt,
+  parseReleaseLabelTimestampMs,
   type M2ChartPoint,
   type MacroM2HorizonKey
 } from './m2BenchmarkData.ts';
+
+export { parseReleaseLabelTimestampMs };
 
 export type BtcSeriesKey = 'KAS' | 'ETH' | 'GOLD' | 'SPX' | 'BTC';
 export type BtcComparisonMode = 'INDEXED' | 'PRICED_IN_BTC';
@@ -96,6 +100,15 @@ export interface BtcMatrixAssetItem {
   beatsBtc: boolean;
 }
 
+export interface BtcBasketCohortSummary {
+  side: 'PASSED' | 'FAILED';
+  count: number;
+  beatsCount: number;
+  avgNominalPct: number;
+  avgAdjustedPct: number;
+  avgAdjustedMult: number;
+}
+
 export interface BtcHorizonSummary {
   btcStartPrice: number;
   btcEndPrice: number;
@@ -106,48 +119,36 @@ export interface BtcHorizonSummary {
   assets: BtcAssetSummary[];
   coreCards?: BtcAssetSummary[];
   cohortMatrix: BtcMatrixAssetItem[];
+  passedBasketSummary?: BtcBasketCohortSummary;
+  failedBasketSummary?: BtcBasketCohortSummary;
 }
 
-const MONTH_INDEX_BY_SHORT: Record<string, number> = {
-  jan: 0,
-  feb: 1,
-  mar: 2,
-  apr: 3,
-  may: 4,
-  jun: 5,
-  jul: 6,
-  aug: 7,
-  sep: 8,
-  oct: 9,
-  nov: 10,
-  dec: 11
-};
-
-export function parseReleaseLabelTimestampMs(label?: string | null): number | null {
-  if (!label) return null;
-  const monthYearMatch = label.match(
-    /\(\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*'(\d{2})\s*\)/i
-  );
-  if (monthYearMatch) {
-    const monIdx = MONTH_INDEX_BY_SHORT[monthYearMatch[1].toLowerCase()];
-    const twoDigit = Number(monthYearMatch[2]);
-    const yr = twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
-    if (monIdx !== undefined && Number.isFinite(yr)) {
-      return Date.UTC(yr, monIdx, 15);
-    }
+function summarizeBtcBasketRows(
+  rows: BtcMatrixAssetItem[],
+  side: 'PASSED' | 'FAILED'
+): BtcBasketCohortSummary {
+  if (rows.length === 0) {
+    return {
+      side,
+      count: 0,
+      beatsCount: 0,
+      avgNominalPct: 0,
+      avgAdjustedPct: 0,
+      avgAdjustedMult: 1.0
+    };
   }
-  const yearOnlyMatch = label.match(/\(\s*'(\d{2})\b/i);
-  if (yearOnlyMatch) {
-    const twoDigit = Number(yearOnlyMatch[1]);
-    const yr = twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
-    if (Number.isFinite(yr)) {
-      return Date.UTC(yr, 2, 15);
-    }
-  }
-  if (/krc-20/i.test(label)) {
-    return Date.UTC(2024, 5, 15);
-  }
-  return null;
+  const beatsCount = rows.filter((r) => r.beatsBtc).length;
+  const avgNominalPct = rows.reduce((s, r) => s + r.nominalPct, 0) / rows.length;
+  const avgAdjustedMult = rows.reduce((s, r) => s + r.btcAdjustedMult, 0) / rows.length;
+  const avgAdjustedPct = rows.reduce((s, r) => s + r.btcAdjustedPct, 0) / rows.length;
+  return {
+    side,
+    count: rows.length,
+    beatsCount,
+    avgNominalPct,
+    avgAdjustedPct,
+    avgAdjustedMult
+  };
 }
 
 export function transformBtcPointForMode(
@@ -502,9 +503,10 @@ export function computeBtcHorizonSummary(params: {
         }
       }
     } else if (timelineBaselineMode === 'RELEASE') {
-      // PRESENT + ALL_TIME: align pre-2010 metals (Silver) to Jul '10 BTC Genesis, and post-2010 assets to exact inception
-      if (item.ticker === 'XAG') {
-        startPrice = 17.85;
+      // PRESENT + ALL_TIME: align pre-2010 metals & fiat currencies to Jul '10 BTC Genesis, and post-2010 assets to exact inception
+      const jul2010Open = JUL_2010_BENCHMARK_OPEN_PRICES[item.ticker];
+      if (jul2010Open !== undefined) {
+        startPrice = jul2010Open;
         windowNote = "Since Jul '10";
       } else {
         const resolved = resolveCohortBaselinePrice(item, 'RELEASE');
@@ -610,6 +612,15 @@ export function computeBtcHorizonSummary(params: {
 
   cohortMatrix.sort((a, b) => b.btcAdjustedPct - a.btcAdjustedPct);
 
+  const passedBasketSummary = summarizeBtcBasketRows(
+    cohortMatrix.filter((r) => r.side === 'PASSED'),
+    'PASSED'
+  );
+  const failedBasketSummary = summarizeBtcBasketRows(
+    cohortMatrix.filter((r) => r.side === 'FAILED'),
+    'FAILED'
+  );
+
   return {
     btcStartPrice,
     btcEndPrice,
@@ -619,6 +630,8 @@ export function computeBtcHorizonSummary(params: {
     headingLabel,
     assets,
     coreCards,
-    cohortMatrix
+    cohortMatrix,
+    passedBasketSummary,
+    failedBasketSummary
   };
 }

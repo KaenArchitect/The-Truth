@@ -4,6 +4,8 @@
 
 export const DAILY_NEW_FULL_PULL_LIMIT = 2;
 export const SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT = 5;
+export const DAILY_CHALLENGE_LIMIT = 7;
+export const SIGNED_IN_DAILY_CHALLENGE_LIMIT = 13;
 export const MAX_CMC_RANK_SCOPE = 150;
 
 export function resolveDailyPullLimit(input: {
@@ -14,6 +16,16 @@ export function resolveDailyPullLimit(input: {
     return SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT;
   }
   return DAILY_NEW_FULL_PULL_LIMIT;
+}
+
+export function resolveDailyChallengeLimit(input: {
+  isAuthenticated?: boolean;
+  isAdmin?: boolean;
+}): number {
+  if (input.isAdmin || input.isAuthenticated) {
+    return SIGNED_IN_DAILY_CHALLENGE_LIMIT;
+  }
+  return DAILY_CHALLENGE_LIMIT;
 }
 
 export interface MarketCapEntry {

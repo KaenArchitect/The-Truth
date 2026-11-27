@@ -1,6 +1,33 @@
 import { DOT_DISCOVERY_TARGET_COUNT } from './dotDiscoveryGame.ts';
 
-export const TUTORIAL_STORAGE_KEY = 'truth_tutorial_seen_v1';
+export const LEGACY_TUTORIAL_STORAGE_KEYS = ['truth_tutorial_seen_v1'] as const;
+export const TUTORIAL_STORAGE_KEY = 'truth_tutorial_seen_v2';
+export const TUTORIAL_RELEASE_STAMP = '2026-11-27-living-ai-v2';
+
+export function hasSeenCurrentTutorial(
+  storage: Pick<Storage, 'getItem'> | null | undefined
+): boolean {
+  if (!storage) return false;
+  try {
+    return storage.getItem(TUTORIAL_STORAGE_KEY) === TUTORIAL_RELEASE_STAMP;
+  } catch {
+    return false;
+  }
+}
+
+export function markCurrentTutorialSeen(
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | null | undefined
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(TUTORIAL_STORAGE_KEY, TUTORIAL_RELEASE_STAMP);
+    for (const legacyKey of LEGACY_TUTORIAL_STORAGE_KEYS) {
+      storage.removeItem(legacyKey);
+    }
+  } catch {
+    // Ignore storage errors in restricted environments
+  }
+}
 
 /**
  * Minimum clearance (in CSS px) reserved at the bottom of mobile viewports (< 768px)
@@ -62,13 +89,13 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     id: 'search-engine',
     stepNumber: 1,
     targetId: 'search-dock',
-    title: '1. Audit Any Asset, Metal, or Fiat',
+    title: '1. Living, Learning Cached AI — Challenge It',
     summary:
-      'Evaluate cryptocurrencies, Layer-2 networks, fiat currencies, or physical commodities against six non-negotiable laws of thermodynamics on a strict 0.0 to 6.0 scale.',
+      'This site relies on you interacting with it. It is an unbiased, living, learning cached AI system that sharpens its shared memory only when people use the Challenge consoles and pull fresh era intel on the Time Machine. Do not just take it for its word—challenge it.',
     instructions: [
-      'Type any ticker or name (e.g., BTC, ETH, USD, EUR, GOLD, SILVER, LIGHTNING) and press Audit / Pull.',
-      'Preloaded and community-archived assets load instantaneously at zero API credit cost.',
-      'Unarchived assets trigger a live Gemini 4 + Google Search forensic audit streamed invariant by invariant.'
+      'Pull New Intel: Search any crypto, metal, or fiat (e.g., BTC, ETH, USD, GOLD) or scrub the Time Machine (1913 → Present) to stream fresh consensus intel into the shared cache.',
+      'Use the Challenge Systems: Click into any invariant bubble to submit counter-evidence, commits, or postmortems (7 daily challenges signed out • 13 signed in, tracked beside daily audits in Archive).',
+      'Shared Living Vault: Cached reads cost 0 credits, while verified challenges and fresh pulls continuously upgrade the archive for everyone—test every claim.'
     ],
     actionLabel: 'Focus Search Bar',
     actionId: 'focus-search',
@@ -190,8 +217,9 @@ export const MOBILE_TUTORIAL_STEPS: TutorialStep[] = [
     id: 'mobile-search',
     stepNumber: 1,
     targetId: 'search-dock',
-    title: '1. Audit Any Asset',
-    summary: 'Enter any crypto, fiat (USD, EUR), L2, or physical metal (BTC, ETH, GOLD) and tap Audit / Pull.',
+    title: '1. Living Cached AI — Challenge It',
+    summary:
+      'Unbiased, living cached AI that relies on you: use Challenge consoles & pull Time Machine intel. Don’t take its word—test it.',
     instructions: [],
     actionLabel: 'Focus Search',
     actionId: 'focus-search',

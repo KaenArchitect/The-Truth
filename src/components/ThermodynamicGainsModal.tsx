@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import {
   Check,
   Clock,
@@ -9,7 +18,10 @@ import {
   X
 } from 'lucide-react';
 import {
+  FAILED_COHORT_GAINS,
+  PASSED_COHORT_GAINS,
   RELEASE_COHORT_TRAJECTORY,
+  applySpotPricesToCohortRecord,
   buildBasketSyncedCohortRecord,
   buildFallbackWindowTrajectory,
   buildHistoricalTimelineCohortTrajectory,
@@ -20,6 +32,7 @@ import {
   formatUsdPrice,
   getCohortSyncSignature,
   mergeResolvedEntriesIntoCohortRecord,
+  preserveCustomCohortEntries,
   resolveCohortBaselinePrice,
   resolveTimelineBaselineMode,
   sanitizeGainsCohortRecord,
@@ -38,8 +51,15 @@ import {
   type M2BenchmarkDataset
 } from '../data/m2BenchmarkData.ts';
 import { computeBtcHorizonSummary } from '../data/btcBenchmarkData.ts';
-import { BtcBenchmarkPanel } from './BtcBenchmarkPanel.tsx';
-import { M2BenchmarkPanel } from './M2BenchmarkPanel.tsx';
+import {
+  resolveInitialGainsChartView,
+  resolveInitialGainsFeedMode,
+  resolveManualLiveSyncTarget,
+  resolveTabLazyFetchPlan,
+  type GainsChartView,
+  type GainsFeedMode,
+  type GainsHorizon
+} from '../data/gainsFeedController.ts';
 import { GlobalTimeMachineSlider } from './GlobalTimeMachineSlider.tsx';
 import {
   getGlobalTimelineStop,
@@ -53,9 +73,20 @@ import {
   subscribeGainsCohortFromFirestore
 } from '../lib/firebase.ts';
 
-export type GainsHorizon = 'ALL_TIME' | 'D180' | 'Y1' | 'Y2' | 'Y4';
-export type GainsFeedMode = 'SNAPSHOT' | 'LIVE';
-export type GainsChartView = 'COHORTS' | 'BTC_BENCHMARK' | 'M2_BENCHMARK';
+export type { GainsHorizon, GainsFeedMode, GainsChartView };
+
+const loadBtcBenchmarkPanel = () =>
+  import('./BtcBenchmarkPanel.tsx').then((m) => ({ default: m.BtcBenchmarkPanel }));
+const loadM2BenchmarkPanel = () =>
+  import('./M2BenchmarkPanel.tsx').then((m) => ({ default: m.M2BenchmarkPanel }));
+
+const LazyBtcBenchmarkPanel = lazy(loadBtcBenchmarkPanel);
+const LazyM2BenchmarkPanel = lazy(loadM2BenchmarkPanel);
+
+const PRELOADED_COHORT_TICKERS = new Set<string>([
+  ...PASSED_COHORT_GAINS.map((i) => i.ticker),
+  ...FAILED_COHORT_GAINS.map((i) => i.ticker)
+]);
 
 export interface ThermodynamicGainsModalProps {
   onClose: () => void;
@@ -126,6 +157,747 @@ function extractSpotsFromM2Dataset(ds?: M2BenchmarkDataset | null): Record<strin
   return out;
 }
 
+function stampCohortSnapshotWithSpots(
+  audits: Record<string, AuditData>,
+  baseRecord: GainsCohortRecord | null,
+  spots: Record<string, number>,
+  sourceLabel?: string
+): GainsCohortRecord | null {
+  if (!spots || Object.keys(spots).length === 0) return baseRecord;
+  const syncedBasket = buildBasketSyncedCohortRecord(audits, baseRecord);
+  const applied = applySpotPricesToCohortRecord(
+    syncedBasket,
+    spots,
+    sourceLabel || baseRecord?.sourceLabel || 'Synced Live Snapshot'
+  );
+  const preserved = preserveCustomCohortEntries(applied.nextRecord, baseRecord);
+  return {
+    ...preserved,
+    isCustomized: Boolean(baseRecord?.isCustomized)
+  };
+}
+
+interface CohortChartSeriesPoint {
+  label: string;
+  event: string;
+  passPrimary: number;
+  passSecondary: number | null;
+  failPrimary: number;
+  failSecondary: number | null;
+}
+
+interface CohortEquityChartCardProps {
+  rawSeries: CohortChartSeriesPoint[];
+  horizon: GainsHorizon;
+  activeTimelineYear: GlobalTimelineYear;
+  isHistoricalStop: boolean;
+  useLogScale: boolean;
+  onChangeLogScale: (next: boolean) => void;
+  passExLabel: string;
+  passExOutlierAvg: number;
+  failExLabel: string;
+  failExOutlierAvg: number;
+}
+
+const CohortEquityChartCard = memo(function CohortEquityChartCard({
+  rawSeries,
+  horizon,
+  activeTimelineYear,
+  isHistoricalStop,
+  useLogScale,
+  onChangeLogScale,
+  passExLabel,
+  passExOutlierAvg,
+  failExLabel,
+  failExOutlierAvg
+}: CohortEquityChartCardProps) {
+  const [hoverPointIdx, setHoverPointIdx] = useState<number | null>(null);
+  const chartBoxRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState(860);
+
+  useEffect(() => {
+    setHoverPointIdx(null);
+  }, [horizon, activeTimelineYear]);
+
+  useEffect(() => {
+    const el = chartBoxRef.current;
+    if (!el) return undefined;
+    let rafId: number | null = null;
+    const commitMeasure = () => {
+      rafId = null;
+      const w = el.clientWidth;
+      if (w > 240) {
+        setChartWidth((prev) => (prev === w ? prev : w));
+      }
+    };
+    const scheduleMeasure = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(commitMeasure);
+    };
+    commitMeasure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(scheduleMeasure);
+      ro.observe(el);
+      return () => {
+        if (rafId !== null) window.cancelAnimationFrame(rafId);
+        ro.disconnect();
+      };
+    }
+    window.addEventListener('resize', scheduleMeasure, { passive: true });
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', scheduleMeasure);
+    };
+  }, []);
+
+  const svgH = 248;
+  const padL = horizon === 'ALL_TIME' ? 68 : 60;
+  const padR = 22;
+  const padT = 20;
+  const padB = 34;
+  const plotW = Math.max(180, chartWidth - padL - padR);
+  const plotH = svgH - padT - padB;
+
+  const { minVal, maxVal } = useMemo(() => {
+    const allMultValues = rawSeries.flatMap((d) =>
+      [d.passPrimary, d.passSecondary, d.failPrimary, d.failSecondary, 1.0].filter(
+        (v): v is number => v !== null && Number.isFinite(v)
+      )
+    );
+    return {
+      minVal: Math.max(0.03, Math.min(...allMultValues) * 0.88),
+      maxVal: Math.max(...allMultValues) * 1.12
+    };
+  }, [rawSeries]);
+
+  const effectiveLog = useLogScale;
+  const mapY = useCallback(
+    (mult: number) => {
+      const safeMult = Number.isFinite(mult) ? mult : 1.0;
+      const clamped = Math.max(0.03, safeMult);
+      if (effectiveLog) {
+        const logMin = Math.log10(Math.max(0.03, minVal));
+        const logMax = Math.log10(Math.max(0.1, maxVal));
+        const ratio = (Math.log10(clamped) - logMin) / Math.max(0.0001, logMax - logMin);
+        const yVal = padT + plotH * (1 - ratio);
+        return Number.isFinite(yVal) ? yVal : padT + plotH * 0.5;
+      }
+      const ratio = (clamped - minVal) / Math.max(0.0001, maxVal - minVal);
+      const yVal = padT + plotH * (1 - ratio);
+      return Number.isFinite(yVal) ? yVal : padT + plotH * 0.5;
+    },
+    [effectiveLog, minVal, maxVal, padT, plotH]
+  );
+
+  const mapX = useCallback(
+    (idx: number) => padL + (idx / Math.max(1, rawSeries.length - 1)) * plotW,
+    [padL, plotW, rawSeries.length]
+  );
+
+  const polylines = useMemo(() => {
+    const build = (key: 'passPrimary' | 'passSecondary' | 'failPrimary' | 'failSecondary') => {
+      const pts = rawSeries
+        .map((d, i) => {
+          const val = d[key];
+          return val !== null ? `${mapX(i).toFixed(1)},${mapY(val).toFixed(1)}` : null;
+        })
+        .filter((p): p is string => Boolean(p));
+      return pts.length > 1 ? `M ${pts.join(' L ')}` : '';
+    };
+    const passPrimary = build('passPrimary');
+    const passAreaPath = passPrimary
+      ? `${passPrimary} L ${mapX(rawSeries.length - 1).toFixed(1)},${(padT + plotH).toFixed(
+          1
+        )} L ${mapX(0).toFixed(1)},${(padT + plotH).toFixed(1)} Z`
+      : '';
+    return {
+      passPrimary,
+      passSecondary: build('passSecondary'),
+      failPrimary: build('failPrimary'),
+      failSecondary: build('failSecondary'),
+      passAreaPath
+    };
+  }, [rawSeries, mapX, mapY, padT, plotH]);
+
+  const yGridTicks = useMemo(
+    () => buildNiceYGridTicks(minVal, maxVal, effectiveLog),
+    [minVal, maxVal, effectiveLog]
+  );
+
+  const activePointIdx =
+    hoverPointIdx !== null && hoverPointIdx >= 0 && hoverPointIdx < rawSeries.length
+      ? hoverPointIdx
+      : rawSeries.length - 1;
+  const activePoint = rawSeries[activePointIdx] || rawSeries[rawSeries.length - 1];
+
+  return (
+    <div className="rounded-2xl bg-[#07080A] border border-white/[0.08] p-4 sm:p-5 space-y-3">
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-3 min-h-[28px]">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 min-w-0 truncate">
+            {isHistoricalStop
+              ? `${activeTimelineYear} EPOCH EQUITY CURVE (${activeTimelineYear} OPEN → LIVE) // SCRUB TIMELINE`
+              : horizon === 'ALL_TIME'
+              ? 'ALL-TIME EQUITY CURVE (SINCE RELEASE → LIVE) // SCRUB TIMELINE'
+              : `${HORIZON_META[horizon].heading} EQUITY CURVE // SCRUB TIMELINE TO INSPECT`}
+          </div>
+
+          <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] shrink-0">
+            <button
+              type="button"
+              onClick={() => onChangeLogScale(true)}
+              className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
+                useLogScale
+                  ? 'bg-[#1D212A] text-white border-white/15'
+                  : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+              }`}
+            >
+              Log Scale
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeLogScale(false)}
+              className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
+                !useLogScale
+                  ? 'bg-[#1D212A] text-white border-white/15'
+                  : 'text-neutral-400 hover:text-neutral-200 border-transparent'
+              }`}
+            >
+              Linear Scale
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums min-h-[20px]">
+          <span className="text-white font-bold">
+            [{activePoint.label} — {activePoint.event}]
+          </span>
+          <span className="text-[#49EACB] font-bold">
+            E &gt; 0: {formatPctSigned((activePoint.passPrimary - 1) * 100)} (
+            {activePoint.passPrimary >= 1000
+              ? `${(activePoint.passPrimary / 1000).toFixed(1)}Kx`
+              : `${activePoint.passPrimary.toFixed(2)}x`}
+            )
+          </span>
+          {activePoint.passSecondary !== null && (
+            <span className="text-[#34D399]">
+              {passExLabel}: {formatPctSigned((activePoint.passSecondary - 1) * 100)}
+            </span>
+          )}
+          <span className="text-[#EF4444] font-bold">
+            E = 0: {formatPctSigned((activePoint.failPrimary - 1) * 100)} (
+            {activePoint.failPrimary.toFixed(2)}x)
+          </span>
+          {activePoint.failSecondary !== null && (
+            <span className="text-[#F97316]">
+              {failExLabel}: {formatPctSigned((activePoint.failSecondary - 1) * 100)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div
+        ref={chartBoxRef}
+        onMouseLeave={() => setHoverPointIdx(null)}
+        className="w-full overflow-hidden rounded-xl bg-[#0B0C0E] border border-white/[0.05] relative"
+      >
+        <svg
+          width={chartWidth}
+          height={svgH}
+          viewBox={`0 0 ${chartWidth} ${svgH}`}
+          className="block w-full select-none"
+        >
+          <defs>
+            <linearGradient id="gainsPassArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#49EACB" stopOpacity="0.26" />
+              <stop offset="100%" stopColor="#34D399" stopOpacity="0.0" />
+            </linearGradient>
+            <linearGradient id="gainsPassStroke" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#49EACB" />
+              <stop offset="100%" stopColor="#34D399" />
+            </linearGradient>
+            <linearGradient id="gainsFailStroke" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#EF4444" />
+              <stop offset="100%" stopColor="#F97316" />
+            </linearGradient>
+          </defs>
+
+          {yGridTicks.map((tickVal) => {
+            const y = mapY(tickVal);
+            if (y < padT - 4 || y > padT + plotH + 4) return null;
+            const isBreakeven = Math.abs(tickVal - 1.0) < 0.001;
+            return (
+              <g key={tickVal}>
+                <line
+                  x1={padL}
+                  y1={y}
+                  x2={chartWidth - padR}
+                  y2={y}
+                  stroke={
+                    isBreakeven ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.05)'
+                  }
+                  strokeDasharray={isBreakeven ? '4 4' : undefined}
+                  strokeWidth={isBreakeven ? '1.2' : '1'}
+                />
+                <text
+                  x={padL - 8}
+                  y={y + 3.5}
+                  textAnchor="end"
+                  fill={isBreakeven ? '#E5E7EB' : '#6B7280'}
+                  fontSize="9.5"
+                  fontFamily="JetBrains Mono, monospace"
+                >
+                  {tickVal >= 1_000_000
+                    ? `${(tickVal / 1_000_000).toFixed(0)}Mx`
+                    : tickVal >= 1_000
+                    ? `${(tickVal / 1_000).toFixed(0)}Kx`
+                    : tickVal >= 2
+                    ? `${Number(tickVal.toFixed(1)).toString().replace(/\.0$/, '')}x`
+                    : formatPctSigned((tickVal - 1) * 100)}
+                </text>
+              </g>
+            );
+          })}
+
+          {polylines.passAreaPath && (
+            <path d={polylines.passAreaPath} fill="url(#gainsPassArea)" />
+          )}
+
+          {polylines.failSecondary && (
+            <path
+              d={polylines.failSecondary}
+              fill="none"
+              stroke="#F97316"
+              strokeWidth="1.5"
+              strokeDasharray="4 4"
+              strokeOpacity="0.78"
+            />
+          )}
+          {polylines.passSecondary && (
+            <path
+              d={polylines.passSecondary}
+              fill="none"
+              stroke="#34D399"
+              strokeWidth="1.7"
+              strokeDasharray="5 4"
+              strokeOpacity="0.88"
+            />
+          )}
+
+          {polylines.failPrimary && (
+            <path
+              d={polylines.failPrimary}
+              fill="none"
+              stroke="url(#gainsFailStroke)"
+              strokeWidth="2.4"
+              strokeLinecap="round"
+            />
+          )}
+
+          {polylines.passPrimary && (
+            <path
+              d={polylines.passPrimary}
+              fill="none"
+              stroke="url(#gainsPassStroke)"
+              strokeWidth="3"
+              strokeLinecap="round"
+            />
+          )}
+
+          {rawSeries.map((pt, idx) => {
+            const x = mapX(idx);
+            const yPass = mapY(pt.passPrimary);
+            const yFail = mapY(pt.failPrimary);
+            const isActive = idx === activePointIdx;
+            const colW = plotW / Math.max(1, rawSeries.length - 1);
+
+            return (
+              <g key={pt.label}>
+                {isActive && (
+                  <line
+                    x1={x}
+                    y1={padT}
+                    x2={x}
+                    y2={padT + plotH}
+                    stroke="rgba(255,255,255,0.22)"
+                    strokeWidth="1"
+                    strokeDasharray="3 3"
+                  />
+                )}
+
+                <circle
+                  cx={x}
+                  cy={yFail}
+                  r={isActive ? 5 : 3}
+                  fill="#0B0C0E"
+                  stroke="#EF4444"
+                  strokeWidth={isActive ? 2.4 : 1.6}
+                />
+                <circle
+                  cx={x}
+                  cy={yPass}
+                  r={isActive ? 5.5 : 3.4}
+                  fill="#0B0C0E"
+                  stroke="#49EACB"
+                  strokeWidth={isActive ? 2.6 : 1.8}
+                />
+
+                <text
+                  x={x}
+                  y={svgH - 11}
+                  textAnchor="middle"
+                  fill={isActive ? '#FFFFFF' : '#6B7280'}
+                  fontSize="9.5"
+                  fontFamily="JetBrains Mono, monospace"
+                  fontWeight={isActive ? '700' : '400'}
+                >
+                  {pt.label}
+                </text>
+
+                <rect
+                  x={x - colW / 2}
+                  y={0}
+                  width={colW}
+                  height={svgH}
+                  fill="transparent"
+                  className="cursor-crosshair"
+                  onMouseEnter={() =>
+                    setHoverPointIdx((prev) => (prev === idx ? prev : idx))
+                  }
+                  onClick={() => setHoverPointIdx(idx)}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10.5px] text-neutral-400">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="inline-flex items-center gap-1.5 text-[#49EACB]">
+            <span className="w-3 h-0.5 bg-[#49EACB] inline-block" />
+            <span>PASSED E &gt; 0 Equal-Weight</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[#34D399]">
+            <span className="w-3 border-t border-dashed border-[#34D399] inline-block" />
+            <span>
+              PASSED {passExLabel} ({formatPctSigned(passExOutlierAvg)})
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[#EF4444]">
+            <span className="w-3 h-0.5 bg-[#EF4444] inline-block" />
+            <span>FAILED E = 0 Equal-Weight</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[#F97316]">
+            <span className="w-3 border-t border-dashed border-[#F97316] inline-block" />
+            <span>
+              FAILED {failExLabel} ({formatPctSigned(failExOutlierAvg)})
+            </span>
+          </span>
+        </div>
+        <span className="text-neutral-500">
+          Click any asset row below to inspect or pull its 6-invariant audit
+        </span>
+      </div>
+    </div>
+  );
+});
+
+interface CohortAssetListsGridProps {
+  passedEnriched: EnrichedCohortAsset[];
+  failedEnriched: EnrichedCohortAsset[];
+  passedLiquid: EnrichedCohortAsset[];
+  failedLiquid: EnrichedCohortAsset[];
+  passedTotalCount: number;
+  failedTotalCount: number;
+  horizon: GainsHorizon;
+  onSelectAsset: (ticker: string) => void;
+}
+
+const CohortAssetListsGrid = memo(function CohortAssetListsGrid({
+  passedEnriched,
+  failedEnriched,
+  passedLiquid,
+  failedLiquid,
+  passedTotalCount,
+  failedTotalCount,
+  horizon,
+  onSelectAsset
+}: CohortAssetListsGridProps) {
+  const { sortedPassed, sortedFailed, maxWindowPct } = useMemo(() => {
+    const metric = (item: EnrichedCohortAsset) =>
+      item.liquidCycle ? (item.cyclePct ?? -9999999) : -9999999;
+    let maxAbs = 120;
+    for (const a of passedLiquid) {
+      const abs = Math.abs(a.cyclePct || 0);
+      if (abs > maxAbs) maxAbs = abs;
+    }
+    for (const a of failedLiquid) {
+      const abs = Math.abs(a.cyclePct || 0);
+      if (abs > maxAbs) maxAbs = abs;
+    }
+    return {
+      sortedPassed: [...passedEnriched].sort((a, b) => metric(b) - metric(a)),
+      sortedFailed: [...failedEnriched].sort((a, b) => metric(b) - metric(a)),
+      maxWindowPct: maxAbs
+    };
+  }, [passedEnriched, failedEnriched, passedLiquid, failedLiquid]);
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="rounded-2xl bg-[#0B0C0E] border border-[#49EACB]/25 p-4 space-y-3">
+        <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.07]">
+          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#49EACB]">
+            <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
+            <span>PASSED // E &gt; 0 ({passedTotalCount} Harmonic)</span>
+          </div>
+          <span className="font-mono text-[10.5px] text-neutral-400">
+            PoW &amp; Physical Commodities
+          </span>
+        </div>
+
+        <div className="space-y-2">
+          {sortedPassed.map((item) => {
+            const pct = item.cyclePct;
+            const barPct =
+              pct === null
+                ? 0
+                : horizon === 'ALL_TIME'
+                ? pct >= 0
+                  ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
+                  : Math.min(100, (Math.abs(pct) / 100) * 65)
+                : maxWindowPct > 400 && pct >= 0
+                ? Math.min(
+                    100,
+                    (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
+                  )
+                : pct >= 0
+                ? Math.min(100, (pct / maxWindowPct) * 100)
+                : Math.min(100, (Math.abs(pct) / 100) * 85);
+            const isPositive = pct === null || pct >= 0;
+
+            return (
+              <button
+                key={item.ticker}
+                type="button"
+                onClick={() => onSelectAsset(item.ticker)}
+                style={{ contentVisibility: 'auto', containIntrinsicSize: '0 76px' }}
+                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.06] hover:border-[#49EACB]/40 p-2.5 transition-colors duration-150 space-y-1.5"
+              >
+                <div className="flex items-center justify-between gap-2 font-mono text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-bold text-white">${item.ticker}</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[#49EACB]/12 text-[#49EACB] border border-[#49EACB]/35">
+                      {item.grade} • {formatScore(item.auditScore)}
+                    </span>
+                    <span className="text-[11px] text-neutral-400 truncate hidden sm:inline">
+                      {item.name}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
+                      <span className="text-[10.5px] text-neutral-400">
+                        {item.activeBaselineLabel} →{' '}
+                        <strong className="text-neutral-200">
+                          {formatUsdPrice(item.spotPrice)}
+                        </strong>
+                      </span>
+                    ) : item.spotPrice !== null ? (
+                      <span className="text-[10.5px] text-neutral-400">
+                        Live Spot →{' '}
+                        <strong className="text-neutral-200">
+                          {formatUsdPrice(item.spotPrice)}
+                        </strong>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-neutral-500">
+                        {item.activeBaselineLabel}
+                      </span>
+                    )}
+                    <span
+                      className="font-bold min-w-[68px] text-right"
+                      style={{
+                        color:
+                          pct === null
+                            ? '#9CA3AF'
+                            : isPositive
+                            ? '#49EACB'
+                            : '#F97316'
+                      }}
+                    >
+                      {pct !== null
+                        ? formatPctSigned(pct)
+                        : item.ticker === 'LN' || item.ticker === 'IGRA' || item.ticker === 'ZKAS'
+                        ? 'Carrier'
+                        : item.spotPrice !== null && horizon !== 'ALL_TIME'
+                        ? 'Pre-Launch'
+                        : item.spotPrice !== null
+                        ? 'Tracked'
+                        : 'Audited'}
+                    </span>
+                  </div>
+                </div>
+
+                {pct !== null && (
+                  <div className="w-full h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-[width] duration-300"
+                      style={{
+                        width: `${Math.max(3, barPct)}%`,
+                        backgroundImage: isPositive
+                          ? 'linear-gradient(90deg, #49EACB 0%, #34D399 100%)'
+                          : 'linear-gradient(90deg, #F97316 0%, #EF4444 100%)'
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
+                  <span className="truncate">{item.note}</span>
+                  {item.multiple !== null && (
+                    <span className="shrink-0 text-neutral-300">
+                      {item.multiple >= 1000
+                        ? `${Math.round(item.multiple).toLocaleString()}x`
+                        : item.multiple >= 10
+                        ? `${item.multiple.toFixed(1)}x`
+                        : `${item.multiple.toFixed(2)}x`}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-[#0B0C0E] border border-[#EF4444]/25 p-4 space-y-3">
+        <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.07]">
+          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#EF4444]">
+            <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
+            <span>FAILED // E = 0 ({failedTotalCount} Flatlined)</span>
+          </div>
+          <span className="font-mono text-[10.5px] text-neutral-400">
+            PoS &amp; Premined Ledgers (All Grade F)
+          </span>
+        </div>
+
+        <div className="space-y-2">
+          {sortedFailed.map((item) => {
+            const pct = item.cyclePct;
+            const barPct =
+              pct === null
+                ? 0
+                : horizon === 'ALL_TIME'
+                ? pct >= 0
+                  ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
+                  : Math.min(100, (Math.abs(pct) / 100) * 85)
+                : maxWindowPct > 400 && pct >= 0
+                ? Math.min(
+                    100,
+                    (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
+                  )
+                : pct >= 0
+                ? Math.min(100, (pct / maxWindowPct) * 100)
+                : Math.min(100, (Math.abs(pct) / 100) * 85);
+            const isPositive = pct === null || pct >= 0;
+
+            return (
+              <button
+                key={item.ticker}
+                type="button"
+                onClick={() => onSelectAsset(item.ticker)}
+                style={{ contentVisibility: 'auto', containIntrinsicSize: '0 76px' }}
+                className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#191416] border border-white/[0.06] hover:border-[#EF4444]/40 p-2.5 transition-colors duration-150 space-y-1.5"
+              >
+                <div className="flex items-center justify-between gap-2 font-mono text-xs">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-bold text-white">${item.ticker}</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[#EF4444]/12 text-[#EF4444] border border-[#EF4444]/35">
+                      {item.grade} • {formatScore(item.auditScore)}
+                    </span>
+                    <span className="text-[11px] text-neutral-400 truncate hidden sm:inline">
+                      {item.name}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
+                      <span className="text-[10.5px] text-neutral-400">
+                        {item.activeBaselineLabel} →{' '}
+                        <strong className="text-neutral-200">
+                          {formatUsdPrice(item.spotPrice)}
+                        </strong>
+                      </span>
+                    ) : item.spotPrice !== null ? (
+                      <span className="text-[10.5px] text-neutral-400">
+                        Live Spot →{' '}
+                        <strong className="text-neutral-200">
+                          {formatUsdPrice(item.spotPrice)}
+                        </strong>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-neutral-500">
+                        {item.activeBaselineLabel}
+                      </span>
+                    )}
+                    <span
+                      className="font-bold min-w-[68px] text-right"
+                      style={{
+                        color:
+                          pct === null
+                            ? '#9CA3AF'
+                            : isPositive
+                            ? '#F97316'
+                            : '#EF4444'
+                      }}
+                    >
+                      {pct !== null
+                        ? formatPctSigned(pct)
+                        : item.spotPrice !== null && horizon !== 'ALL_TIME'
+                        ? 'Pre-Launch'
+                        : item.spotPrice !== null
+                        ? 'Tracked'
+                        : 'Audited'}
+                    </span>
+                  </div>
+                </div>
+
+                {pct !== null && (
+                  <div className="w-full h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-[width] duration-300"
+                      style={{
+                        width: `${Math.max(3, barPct)}%`,
+                        backgroundImage: isPositive
+                          ? 'linear-gradient(90deg, #F97316 0%, #FB923C 100%)'
+                          : 'linear-gradient(90deg, #EF4444 0%, #991B1B 100%)'
+                      }}
+                    />
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
+                  <span className="truncate">{item.note}</span>
+                  {item.multiple !== null && (
+                    <span className="shrink-0 text-neutral-400">
+                      {item.multiple >= 1000
+                        ? `${Math.round(item.multiple).toLocaleString()}x`
+                        : item.multiple >= 10
+                        ? `${item.multiple.toFixed(1)}x`
+                        : `${item.multiple.toFixed(2)}x`}
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export function ThermodynamicGainsModal({
   onClose,
   auditsMap,
@@ -144,62 +916,135 @@ export function ThermodynamicGainsModal({
   const isHistoricalStop = activeTimelineYear !== 'PRESENT';
   const activeStopMeta = getGlobalTimelineStop(activeTimelineYear);
   const canonicalAuditsMap = fullAuditsMap || auditsMap;
-  const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(
-    initialCohortRecord ?? null
+  const serverPersistedTickersRef = useRef<Set<string>>(
+    new Set(
+      initialCohortRecord
+        ? [
+            ...initialCohortRecord.passed.map((i) => i.ticker),
+            ...initialCohortRecord.failed.map((i) => i.ticker)
+          ]
+        : []
+    )
   );
+  const [persistedCohortRecord, setPersistedCohortRecord] = useState<GainsCohortRecord | null>(
+    () =>
+      stampCohortSnapshotWithSpots(
+        canonicalAuditsMap,
+        initialCohortRecord ?? null,
+        initialLiveSpots || {},
+        initialCohortRecord?.sourceLabel
+      )
+  );
+  const persistedCohortRecordRef = useRef<GainsCohortRecord | null>(persistedCohortRecord);
+  persistedCohortRecordRef.current = persistedCohortRecord;
   const [hasLoadedBackend, setHasLoadedBackend] = useState(Boolean(initialCohortRecord));
-  const [chartView, setChartView] = useState<GainsChartView>(() => {
-    if (typeof window !== 'undefined') {
-      const sp = new URLSearchParams(window.location.search);
-      const v = (sp.get('view') || sp.get('tab') || '').toLowerCase();
-      if (v === 'btc' || v === 'bitcoin') return 'BTC_BENCHMARK';
-      if (v === 'm2') return 'M2_BENCHMARK';
-    }
-    return 'COHORTS';
-  });
+  const [chartView, setChartView] = useState<GainsChartView>(() =>
+    resolveInitialGainsChartView(typeof window !== 'undefined' ? window.location.search : '')
+  );
   const [rawM2Dataset, setRawM2Dataset] = useState<M2BenchmarkDataset>(
     DEFAULT_M2_BENCHMARK_DATASET
   );
   const [horizon, setHorizon] = useState<GainsHorizon>('ALL_TIME');
   const [allocPerAsset, setAllocPerAsset] = useState(1000);
   const [useLogScale, setUseLogScale] = useState(true);
-  const [feedMode, setFeedMode] = useState<GainsFeedMode>('LIVE');
+  const [feedMode, setFeedMode] = useState<GainsFeedMode>(() =>
+    resolveInitialGainsFeedMode(typeof window !== 'undefined' ? window.location.search : '')
+  );
+  const feedModeRef = useRef<GainsFeedMode>(feedMode);
+  feedModeRef.current = feedMode;
+  const [snapshotSpots, setSnapshotSpots] = useState<Record<string, number>>(() => ({
+    ...(initialLiveSpots || {})
+  }));
+  const snapshotSpotsRef = useRef<Record<string, number>>(snapshotSpots);
+  snapshotSpotsRef.current = snapshotSpots;
   const [liveSpots, setLiveSpots] = useState<Record<string, number>>(() => ({
     ...(initialLiveSpots || {})
   }));
+  const liveSpotsRef = useRef<Record<string, number>>(liveSpots);
+  liveSpotsRef.current = liveSpots;
 
-  useEffect(() => {
-    if (!initialLiveSpots || Object.keys(initialLiveSpots).length === 0) return;
-    setLiveSpots((prev) => ({ ...prev, ...initialLiveSpots }));
-  }, [initialLiveSpots]);
   const [windowTrajectories, setWindowTrajectories] = useState<WindowTrajectoriesMap>({});
   const [isSyncingLive, setIsSyncingLive] = useState(false);
   const [lastLiveSyncLabel, setLastLiveSyncLabel] = useState<string | null>(null);
   const [backendStatusMsg, setBackendStatusMsg] = useState<string | null>(null);
-  const [hoverPointIdx, setHoverPointIdx] = useState<number | null>(null);
+
+  const [hasLoadedCohortSnapshot, setHasLoadedCohortSnapshot] = useState(false);
+  const [hasLoadedM2Snapshot, setHasLoadedM2Snapshot] = useState(false);
+  const [hasSyncedOpenSnapshot, setHasSyncedOpenSnapshot] = useState(false);
+  const [hasSyncedCohortLive, setHasSyncedCohortLive] = useState(false);
+  const [hasSyncedM2Live, setHasSyncedM2Live] = useState(false);
+  const lastLiveSyncAtMsRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!initialLiveSpots || Object.keys(initialLiveSpots).length === 0) return;
+    setLiveSpots((prev) => ({ ...prev, ...initialLiveSpots }));
+    if (!hasSyncedOpenSnapshot) {
+      setSnapshotSpots((prev) => ({ ...initialLiveSpots, ...prev }));
+      setPersistedCohortRecord((prev) =>
+        stampCohortSnapshotWithSpots(
+          canonicalAuditsMapRef.current,
+          prev,
+          { ...initialLiveSpots, ...snapshotSpotsRef.current },
+          prev?.sourceLabel
+        )
+      );
+    }
+  }, [initialLiveSpots, hasSyncedOpenSnapshot]);
+
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const lastAutoSyncedSigRef = useRef<string | null>(null);
   const onCohortSyncedRef = useRef(onCohortSynced);
   onCohortSyncedRef.current = onCohortSynced;
 
-  const chartBoxRef = useRef<HTMLDivElement | null>(null);
-  const [chartWidth, setChartWidth] = useState(860);
+  // Buffer parent App.tsx updates while modal is open so live refreshes never cause full-app re-renders
+  const pendingParentSyncRef = useRef<{
+    record: GainsCohortRecord;
+    spots: Record<string, number>;
+  } | null>(null);
+
+  const queueParentCohortSync = useCallback(
+    (record: GainsCohortRecord, spots: Record<string, number>) => {
+      const prevSpots = pendingParentSyncRef.current?.spots || {};
+      pendingParentSyncRef.current = {
+        record,
+        spots: { ...prevSpots, ...spots }
+      };
+    },
+    []
+  );
+
+  const flushPendingParentSync = useCallback(() => {
+    const pending = pendingParentSyncRef.current;
+    if (!pending) return;
+    pendingParentSyncRef.current = null;
+    onCohortSyncedRef.current?.(pending.record, pending.spots);
+  }, []);
 
   useEffect(() => {
-    const el = chartBoxRef.current;
-    if (!el) return undefined;
-    const measure = () => {
-      const w = el.getBoundingClientRect().width;
-      if (w > 240) setChartWidth(Math.floor(w));
+    return () => {
+      flushPendingParentSync();
     };
-    measure();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(measure);
-      ro.observe(el);
-      return () => ro.disconnect();
-    }
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
-  }, []);
+  }, [flushPendingParentSync]);
+
+  const handleCloseModal = useCallback(() => {
+    flushPendingParentSync();
+    onClose();
+  }, [flushPendingParentSync, onClose]);
+
+  const handleSelectAsset = useCallback(
+    (ticker: string) => {
+      flushPendingParentSync();
+      onSelectOrAuditTicker(ticker);
+    },
+    [flushPendingParentSync, onSelectOrAuditTicker]
+  );
 
   const cohortRecord = useMemo(
     () => buildBasketSyncedCohortRecord(auditsMap, persistedCohortRecord),
@@ -213,7 +1058,11 @@ export function ThermodynamicGainsModal({
   canonicalSyncRecordRef.current = canonicalSyncRecord;
   const canonicalAuditsMapRef = useRef(canonicalAuditsMap);
   canonicalAuditsMapRef.current = canonicalAuditsMap;
-  const isSyncingRef = useRef(false);
+
+  const cohortSnapshotInFlightRef = useRef(false);
+  const m2SnapshotInFlightRef = useRef(false);
+  const cohortLiveSyncInFlightRef = useRef(false);
+  const m2LiveSyncInFlightRef = useRef(false);
 
   useEffect(() => {
     if (isHistoricalStop && horizon !== 'ALL_TIME') {
@@ -222,68 +1071,402 @@ export function ThermodynamicGainsModal({
     }
   }, [isHistoricalStop, horizon]);
 
-  // Hydrate saved spot prices from backend API + subscribe to Firestore snapshot
-  useEffect(() => {
-    let active = true;
-    fetch('/api/gains-cohort', { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(
-        (
-          payload: {
+  const fetchCohortSnapshot = useCallback(async () => {
+    if (cohortSnapshotInFlightRef.current) return;
+    cohortSnapshotInFlightRef.current = true;
+    try {
+      const res = await fetch('/api/gains-cohort?live=0', { cache: 'no-store' });
+      const payload = res.ok
+        ? ((await res.json()) as {
             record?: Partial<GainsCohortRecord>;
             liveSpotMap?: Record<string, number>;
             windowTrajectories?: WindowTrajectoriesMap;
-          } | null
-        ) => {
-          if (!active) return;
-          if (payload?.record) {
-            const hydrated = sanitizeGainsCohortRecord(payload.record);
-            setPersistedCohortRecord((prev) =>
-              !prev || hydrated.updatedAtMs >= prev.updatedAtMs ? hydrated : prev
-            );
-            if (payload.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
-              setLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
-            }
-            if (payload.windowTrajectories) {
-              setWindowTrajectories(payload.windowTrajectories);
-            }
-            onCohortSyncedRef.current?.(hydrated, payload.liveSpotMap || {});
-          }
-          setHasLoadedBackend(true);
+            extraResolvedEntries?: Record<string, CohortAssetEntry>;
+          } | null)
+        : null;
+      if (!mountedRef.current) return;
+      if (payload?.record) {
+        const hydrated = mergeResolvedEntriesIntoCohortRecord(
+          sanitizeGainsCohortRecord(payload.record),
+          payload.extraResolvedEntries
+        );
+        serverPersistedTickersRef.current = new Set([
+          ...hydrated.passed.map((i) => i.ticker),
+          ...hydrated.failed.map((i) => i.ticker)
+        ]);
+        const payloadSpots = payload.liveSpotMap || {};
+        if (Object.keys(payloadSpots).length > 0) {
+          setLiveSpots((prev) => ({ ...payloadSpots, ...prev }));
+          setSnapshotSpots((prev) => ({ ...payloadSpots, ...prev }));
         }
-      )
-      .catch(() => {
-        if (active) setHasLoadedBackend(true);
-      });
+        const combinedSnapSpots = { ...payloadSpots, ...snapshotSpotsRef.current };
+        const prevSnap = persistedCohortRecordRef.current;
+        const mergedHydratedSnap = preserveCustomCohortEntries(hydrated, prevSnap);
+        const baseSnap =
+          !prevSnap || mergedHydratedSnap.updatedAtMs >= prevSnap.updatedAtMs
+            ? mergedHydratedSnap
+            : preserveCustomCohortEntries(prevSnap, mergedHydratedSnap);
+        const nextParentRecord =
+          stampCohortSnapshotWithSpots(
+            canonicalAuditsMapRef.current,
+            baseSnap,
+            combinedSnapSpots,
+            baseSnap.sourceLabel
+          ) ?? mergedHydratedSnap;
+        setPersistedCohortRecord((prev) => preserveCustomCohortEntries(nextParentRecord, prev));
+        if (payload.windowTrajectories) {
+          setWindowTrajectories(payload.windowTrajectories);
+        }
+        queueParentCohortSync(nextParentRecord, combinedSnapSpots);
+      }
+      setHasLoadedBackend(true);
+      setHasLoadedCohortSnapshot(true);
+    } catch {
+      if (mountedRef.current) {
+        setHasLoadedBackend(true);
+        setHasLoadedCohortSnapshot(true);
+      }
+    } finally {
+      cohortSnapshotInFlightRef.current = false;
+    }
+  }, [queueParentCohortSync]);
 
-    fetch('/api/m2-benchmark', { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
-        if (!active || !payload?.dataset?.seriesByHorizon) return;
+  const fetchM2Snapshot = useCallback(async () => {
+    if (m2SnapshotInFlightRef.current) return;
+    m2SnapshotInFlightRef.current = true;
+    try {
+      const res = await fetch('/api/m2-benchmark', { cache: 'no-store' });
+      const payload = res.ok
+        ? ((await res.json()) as { dataset?: M2BenchmarkDataset } | null)
+        : null;
+      if (!mountedRef.current) return;
+      if (payload?.dataset?.seriesByHorizon) {
         setRawM2Dataset(payload.dataset);
         const dsSpots = extractSpotsFromM2Dataset(payload.dataset);
         if (Object.keys(dsSpots).length > 0) {
-          setLiveSpots((prev) => ({ ...dsSpots, ...prev, ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {}) }));
+          setSnapshotSpots((prev) => ({
+            ...dsSpots,
+            ...prev,
+            ...(dsSpots.SPX && !prev.SPX ? { SPX: dsSpots.SPX } : {})
+          }));
+          setLiveSpots((prev) => ({
+            ...dsSpots,
+            ...prev,
+            ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {})
+          }));
         }
-      })
-      .catch(() => {});
+      }
+      setHasLoadedM2Snapshot(true);
+    } catch {
+      if (mountedRef.current) {
+        setHasLoadedM2Snapshot(true);
+      }
+    } finally {
+      m2SnapshotInFlightRef.current = false;
+    }
+  }, []);
 
+  const syncCohortLiveSpots = useCallback(
+    async (updateSnapshot = false) => {
+      if (cohortLiveSyncInFlightRef.current) return;
+      cohortLiveSyncInFlightRef.current = true;
+      setIsSyncingLive(true);
+      const snapshotCohort = canonicalSyncRecordRef.current;
+      const allItems = [...snapshotCohort.passed, ...snapshotCohort.failed];
+      const customExtraItems = allItems
+        .filter((it) => !PRELOADED_COHORT_TICKERS.has(it.ticker))
+        .map((it) => ({
+          ticker: it.ticker,
+          name: it.name,
+          grade: it.grade,
+          auditScore: it.auditScore,
+          coinbasePair: it.coinbasePair,
+          geckoId: it.geckoId,
+          yahooSymbol: it.yahooSymbol
+        }));
+
+      try {
+        const idToken = firebaseAuth?.currentUser?.emailVerified
+          ? await getFirebaseIdToken()
+          : null;
+        const syncHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (idToken) {
+          syncHeaders.Authorization = `Bearer ${idToken}`;
+        }
+        const syncRes = await fetch('/api/gains-cohort/sync', {
+          method: 'POST',
+          headers: syncHeaders,
+          body: JSON.stringify(
+            customExtraItems.length > 0 ? { extraItems: customExtraItems } : {}
+          )
+        });
+        if (syncRes.ok && mountedRef.current) {
+          const syncJson = (await syncRes.json()) as {
+            record?: GainsCohortRecord;
+            syncedTickers?: string[];
+            liveSpotMap?: Record<string, number>;
+            windowTrajectories?: WindowTrajectoriesMap;
+            extraResolvedEntries?: Record<string, CohortAssetEntry>;
+          };
+          const mergedSpots = { ...(syncJson.liveSpotMap || {}) };
+          if (syncJson.windowTrajectories) {
+            setWindowTrajectories(syncJson.windowTrajectories);
+          }
+          const shouldSyncSnapshot = updateSnapshot || feedModeRef.current === 'SNAPSHOT';
+          if (Object.keys(mergedSpots).length > 0) {
+            setLiveSpots((prev) => ({ ...prev, ...mergedSpots }));
+            if (shouldSyncSnapshot) {
+              setSnapshotSpots((prev) => ({ ...prev, ...mergedSpots }));
+            }
+            lastLiveSyncAtMsRef.current = Date.now();
+            setLastLiveSyncLabel(
+              new Date().toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+              })
+            );
+          }
+          if (syncJson?.record) {
+            const serverRecord = mergeResolvedEntriesIntoCohortRecord(
+              sanitizeGainsCohortRecord(syncJson.record),
+              syncJson.extraResolvedEntries
+            );
+            serverPersistedTickersRef.current = new Set([
+              ...serverRecord.passed.map((i) => i.ticker),
+              ...serverRecord.failed.map((i) => i.ticker)
+            ]);
+            const nextSpotPool = shouldSyncSnapshot
+              ? { ...snapshotSpotsRef.current, ...mergedSpots }
+              : mergedSpots;
+            const updatedRecord =
+              stampCohortSnapshotWithSpots(
+                canonicalAuditsMapRef.current,
+                serverRecord,
+                nextSpotPool,
+                serverRecord.sourceLabel
+              ) ?? serverRecord;
+            const syncedFinalRecord = preserveCustomCohortEntries(
+              updatedRecord,
+              persistedCohortRecordRef.current
+            );
+            setPersistedCohortRecord((prev) => preserveCustomCohortEntries(syncedFinalRecord, prev));
+            lastAutoSyncedSigRef.current = getCohortSyncSignature(
+              buildBasketSyncedCohortRecord(canonicalAuditsMapRef.current, syncedFinalRecord)
+            );
+            pendingParentSyncRef.current = null;
+            onCohortSyncedRef.current?.(syncedFinalRecord, nextSpotPool);
+            if (
+              firebaseAuth?.currentUser?.emailVerified &&
+              (syncJson.syncedTickers?.length || 0) > 0
+            ) {
+              void persistGainsCohortToFirestore(serverRecord).catch(() => {});
+            }
+            if ((syncJson.syncedTickers?.length || 0) > 0) {
+              setBackendStatusMsg(
+                shouldSyncSnapshot
+                  ? `Snapshot synced (${syncJson.syncedTickers!.length} live spots)`
+                  : `Synced ${syncJson.syncedTickers!.length} live spots`
+              );
+            }
+          }
+          setHasLoadedBackend(true);
+          setHasLoadedCohortSnapshot(true);
+          setHasSyncedCohortLive(true);
+          setHasSyncedOpenSnapshot(true);
+        } else if (mountedRef.current) {
+          setHasSyncedCohortLive(true);
+          setHasSyncedOpenSnapshot(true);
+        }
+      } catch {
+        if (mountedRef.current) {
+          setHasSyncedCohortLive(true);
+          setHasSyncedOpenSnapshot(true);
+        }
+      } finally {
+        cohortLiveSyncInFlightRef.current = false;
+        if (mountedRef.current && !m2LiveSyncInFlightRef.current) {
+          setIsSyncingLive(false);
+        }
+      }
+    },
+    [queueParentCohortSync]
+  );
+
+  const syncM2LiveSpots = useCallback(async (updateSnapshot = false) => {
+    if (m2LiveSyncInFlightRef.current) return;
+    m2LiveSyncInFlightRef.current = true;
+    setIsSyncingLive(true);
+    try {
+      const res = await fetch('/api/m2-benchmark?refresh=1', { cache: 'no-store' });
+      const payload = res.ok
+        ? ((await res.json()) as { dataset?: M2BenchmarkDataset } | null)
+        : null;
+      if (!mountedRef.current) return;
+      const shouldSyncSnapshot = updateSnapshot || feedModeRef.current === 'SNAPSHOT';
+      if (payload?.dataset?.seriesByHorizon) {
+        setRawM2Dataset(payload.dataset);
+        const dsSpots = extractSpotsFromM2Dataset(payload.dataset);
+        if (Object.keys(dsSpots).length > 0) {
+          setLiveSpots((prev) => ({
+            ...dsSpots,
+            ...prev,
+            ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {})
+          }));
+          if (shouldSyncSnapshot) {
+            setSnapshotSpots((prev) => ({
+              ...dsSpots,
+              ...prev,
+              ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {})
+            }));
+          }
+        }
+        lastLiveSyncAtMsRef.current = Date.now();
+        setLastLiveSyncLabel(
+          new Date().toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          })
+        );
+      }
+      setHasLoadedM2Snapshot(true);
+      setHasSyncedM2Live(true);
+      if (shouldSyncSnapshot) {
+        setHasSyncedOpenSnapshot(true);
+      }
+    } catch {
+      if (mountedRef.current) {
+        setHasSyncedM2Live(true);
+        setHasSyncedOpenSnapshot(true);
+      }
+    } finally {
+      m2LiveSyncInFlightRef.current = false;
+      if (mountedRef.current && !cohortLiveSyncInFlightRef.current) {
+        setIsSyncingLive(false);
+      }
+    }
+  }, []);
+
+  const syncActiveTabLive = useCallback(() => {
+    const syncSnap = feedModeRef.current === 'SNAPSHOT';
+    const target = resolveManualLiveSyncTarget(chartView);
+    if (target === 'BENCHMARK_ONLY') {
+      void syncM2LiveSpots(syncSnap);
+      void syncCohortLiveSpots(syncSnap);
+    } else {
+      void syncCohortLiveSpots(syncSnap);
+    }
+  }, [chartView, syncCohortLiveSpots, syncM2LiveSpots]);
+
+  const handleSelectFeedMode = useCallback((nextMode: GainsFeedMode) => {
+    if (nextMode === feedModeRef.current) return;
+    if (nextMode === 'SNAPSHOT') {
+      const currentLive = liveSpotsRef.current;
+      if (Object.keys(currentLive).length > 0) {
+        setSnapshotSpots((prev) => ({ ...prev, ...currentLive }));
+        setPersistedCohortRecord((prev) =>
+          stampCohortSnapshotWithSpots(
+            canonicalAuditsMapRef.current,
+            prev,
+            currentLive,
+            prev?.sourceLabel
+          )
+        );
+      }
+      setFeedMode('SNAPSHOT');
+      return;
+    }
+    if (Date.now() - lastLiveSyncAtMsRef.current > 15_000) {
+      setHasSyncedCohortLive(false);
+      setHasSyncedM2Live(false);
+    }
+    setFeedMode('LIVE');
+  }, []);
+
+  // Tab-isolated lazy snapshot loading + one-shot open snapshot sync + on-demand LIVE feed sync
+  useEffect(() => {
+    const plan = resolveTabLazyFetchPlan({
+      chartView,
+      feedMode,
+      hasLoadedCohortSnapshot,
+      hasLoadedM2Snapshot,
+      hasSyncedOpenSnapshot,
+      hasSyncedCohortLive,
+      hasSyncedM2Live
+    });
+    if (plan.fetchCohortSnapshot) {
+      void fetchCohortSnapshot();
+    }
+    if (plan.fetchM2Snapshot) {
+      void fetchM2Snapshot();
+    }
+    const isInitialOpenSync = !hasSyncedOpenSnapshot;
+    if (plan.syncCohortLive || plan.syncM2Live) {
+      if (isInitialOpenSync && typeof window !== 'undefined') {
+        const rafId = window.requestAnimationFrame(() => {
+          if (plan.syncCohortLive) {
+            void syncCohortLiveSpots(true);
+          }
+          if (plan.syncM2Live) {
+            void syncM2LiveSpots(true);
+          }
+        });
+        return () => window.cancelAnimationFrame(rafId);
+      }
+      if (plan.syncCohortLive) {
+        void syncCohortLiveSpots(false);
+      }
+      if (plan.syncM2Live) {
+        void syncM2LiveSpots(false);
+      }
+    }
+    return undefined;
+  }, [
+    chartView,
+    feedMode,
+    hasLoadedCohortSnapshot,
+    hasLoadedM2Snapshot,
+    hasSyncedOpenSnapshot,
+    hasSyncedCohortLive,
+    hasSyncedM2Live,
+    fetchCohortSnapshot,
+    fetchM2Snapshot,
+    syncCohortLiveSpots,
+    syncM2LiveSpots
+  ]);
+
+  // Subscribe to Firestore live cohort updates & background poll ONLY when user enables LIVE feed
+  useEffect(() => {
+    if (feedMode !== 'LIVE') return undefined;
+    let active = true;
     const unsub = subscribeGainsCohortFromFirestore('default', (remoteRecord) => {
       if (!active) return;
       setPersistedCohortRecord((prev) =>
-        !prev || remoteRecord.updatedAtMs >= prev.updatedAtMs ? remoteRecord : prev
+        !prev || remoteRecord.updatedAtMs >= prev.updatedAtMs
+          ? preserveCustomCohortEntries(remoteRecord, prev)
+          : prev
       );
     });
-
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      syncActiveTabLive();
+    }, 60000);
     return () => {
       active = false;
       unsub();
+      clearInterval(timer);
     };
-  }, []);
+  }, [feedMode, syncActiveTabLive]);
 
-  // Automatically keep backend & Firestore cohort storage synced with the full canonical PASSED/FAILED baskets
+  // Automatically keep backend & Firestore cohort storage synced when verified user enables LIVE mode
   useEffect(() => {
-    if (isHistoricalStop || !hasLoadedBackend || !firebaseAuth?.currentUser?.emailVerified) {
+    if (
+      feedMode !== 'LIVE' ||
+      isHistoricalStop ||
+      !hasLoadedBackend ||
+      !firebaseAuth?.currentUser?.emailVerified
+    ) {
       return undefined;
     }
     const syncedSig = getCohortSyncSignature(canonicalSyncRecord);
@@ -316,10 +1499,13 @@ export function ThermodynamicGainsModal({
           : null;
         if (!active || !payload?.record) return;
         const saved = sanitizeGainsCohortRecord(payload.record);
-        lastAutoSyncedSigRef.current = getCohortSyncSignature(
-          buildBasketSyncedCohortRecord(canonicalAuditsMap, saved)
-        );
-        setPersistedCohortRecord(saved);
+        setPersistedCohortRecord((prev) => {
+          const preserved = preserveCustomCohortEntries(saved, prev);
+          lastAutoSyncedSigRef.current = getCohortSyncSignature(
+            buildBasketSyncedCohortRecord(canonicalAuditsMap, preserved)
+          );
+          return preserved;
+        });
         if (firebaseAuth?.currentUser?.emailVerified) {
           void persistGainsCohortToFirestore(saved).catch(() => {});
         }
@@ -332,6 +1518,7 @@ export function ThermodynamicGainsModal({
       active = false;
     };
   }, [
+    feedMode,
     isHistoricalStop,
     hasLoadedBackend,
     canonicalSyncRecord,
@@ -339,131 +1526,13 @@ export function ThermodynamicGainsModal({
     canonicalAuditsMap
   ]);
 
-  const syncLiveExchangeSpots = useCallback(async () => {
-    if (isSyncingRef.current) return;
-    isSyncingRef.current = true;
-    setIsSyncingLive(true);
-    const snapshotCohort = canonicalSyncRecordRef.current;
-    const allItems = [...snapshotCohort.passed, ...snapshotCohort.failed];
-
-    try {
-      // Refresh FRED M2 + Yahoo S&P500 / Gold / BTC / KAS / ETH benchmark alongside cohort spots
-      void fetch('/api/m2-benchmark?refresh=1', { cache: 'no-store' })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((payload: { dataset?: M2BenchmarkDataset } | null) => {
-          if (payload?.dataset?.seriesByHorizon) {
-            setRawM2Dataset(payload.dataset);
-            const dsSpots = extractSpotsFromM2Dataset(payload.dataset);
-            if (Object.keys(dsSpots).length > 0) {
-              setLiveSpots((prev) => ({
-                ...dsSpots,
-                ...prev,
-                ...(dsSpots.SPX ? { SPX: dsSpots.SPX } : {})
-              }));
-            }
-          }
-        })
-        .catch(() => {});
-
-      // Persist synced basket lists + backend Coinbase, CoinGecko & Yahoo Finance spots/release baselines
-      const idToken = firebaseAuth?.currentUser?.emailVerified ? await getFirebaseIdToken() : null;
-      const syncHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (idToken) {
-        syncHeaders.Authorization = `Bearer ${idToken}`;
-      }
-      const syncRes = await fetch('/api/gains-cohort/sync', {
-        method: 'POST',
-        headers: syncHeaders,
-        body: JSON.stringify({
-          extraItems: allItems.map((it) => ({
-            ticker: it.ticker,
-            name: it.name,
-            grade: it.grade,
-            auditScore: it.auditScore,
-            coinbasePair: it.coinbasePair,
-            geckoId: it.geckoId,
-            yahooSymbol: it.yahooSymbol
-          }))
-        })
-      });
-      if (syncRes.ok) {
-        const syncJson = (await syncRes.json()) as {
-          record?: GainsCohortRecord;
-          syncedTickers?: string[];
-          liveSpotMap?: Record<string, number>;
-          windowTrajectories?: WindowTrajectoriesMap;
-          extraResolvedEntries?: Record<string, CohortAssetEntry>;
-        };
-        const mergedSpots = { ...(syncJson.liveSpotMap || {}) };
-        if (syncJson.windowTrajectories) {
-          setWindowTrajectories(syncJson.windowTrajectories);
-        }
-        if (Object.keys(mergedSpots).length > 0) {
-          setLiveSpots((prev) => ({ ...prev, ...mergedSpots }));
-          setLastLiveSyncLabel(
-            new Date().toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
-            })
-          );
-        }
-        if (syncJson?.record) {
-          const updatedRecord = mergeResolvedEntriesIntoCohortRecord(
-            sanitizeGainsCohortRecord(syncJson.record),
-            syncJson.extraResolvedEntries
-          );
-          lastAutoSyncedSigRef.current = getCohortSyncSignature(
-            buildBasketSyncedCohortRecord(canonicalAuditsMapRef.current, updatedRecord)
-          );
-          setPersistedCohortRecord(updatedRecord);
-          onCohortSyncedRef.current?.(updatedRecord, mergedSpots);
-          if (firebaseAuth?.currentUser?.emailVerified && (syncJson.syncedTickers?.length || 0) > 0) {
-            void persistGainsCohortToFirestore(updatedRecord).catch(() => {});
-          }
-          if ((syncJson.syncedTickers?.length || 0) > 0) {
-            setBackendStatusMsg(
-              `Synced ${syncJson.syncedTickers!.length} live spots`
-            );
-          }
-        }
-      }
-    } catch {
-      // Graceful fallback to verified snapshot prices on any network block
-    } finally {
-      isSyncingRef.current = false;
-      setIsSyncingLive(false);
-    }
-  }, []);
-
-  const initialSpotCountRef = useRef(Object.keys(initialLiveSpots || {}).length);
-
-  useEffect(() => {
-    if (feedMode !== 'LIVE') return undefined;
-    if (initialSpotCountRef.current < 8) {
-      void syncLiveExchangeSpots();
-    } else if (!lastLiveSyncLabel) {
-      setLastLiveSyncLabel(
-        new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
-      );
-    }
-    const timer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      void syncLiveExchangeSpots();
-    }, 30000);
-    return () => clearInterval(timer);
-  }, [feedMode, syncLiveExchangeSpots, lastLiveSyncLabel]);
-
   const m2Dataset = useMemo(
     () =>
-      feedMode === 'LIVE'
-        ? applyLiveSpotsToM2Dataset(rawM2Dataset, liveSpots)
-        : rawM2Dataset,
-    [rawM2Dataset, feedMode, liveSpots]
+      applyLiveSpotsToM2Dataset(
+        rawM2Dataset,
+        feedMode === 'LIVE' ? liveSpots : snapshotSpots
+      ),
+    [rawM2Dataset, feedMode, liveSpots, snapshotSpots]
   );
 
   const baselineMode: GainsBaselineMode = resolveTimelineBaselineMode(
@@ -632,75 +1701,6 @@ export function ThermodynamicGainsModal({
     failExOutlierAvg
   ]);
 
-  const svgH = 248;
-  const padL = horizon === 'ALL_TIME' ? 68 : 60;
-  const padR = 22;
-  const padT = 20;
-  const padB = 34;
-  const plotW = Math.max(180, chartWidth - padL - padR);
-  const plotH = svgH - padT - padB;
-
-  const allMultValues = rawSeries.flatMap((d) =>
-    [d.passPrimary, d.passSecondary, d.failPrimary, d.failSecondary, 1.0].filter(
-      (v): v is number => v !== null && Number.isFinite(v)
-    )
-  );
-  const minVal = Math.max(0.03, Math.min(...allMultValues) * 0.88);
-  const maxVal = Math.max(...allMultValues) * 1.12;
-
-  const effectiveLog = useLogScale;
-  const mapY = (mult: number) => {
-    const safeMult = Number.isFinite(mult) ? mult : 1.0;
-    const clamped = Math.max(0.03, safeMult);
-    if (effectiveLog) {
-      const logMin = Math.log10(Math.max(0.03, minVal));
-      const logMax = Math.log10(Math.max(0.1, maxVal));
-      const ratio = (Math.log10(clamped) - logMin) / Math.max(0.0001, logMax - logMin);
-      const yVal = padT + plotH * (1 - ratio);
-      return Number.isFinite(yVal) ? yVal : padT + plotH * 0.5;
-    }
-    const ratio = (clamped - minVal) / Math.max(0.0001, maxVal - minVal);
-    const yVal = padT + plotH * (1 - ratio);
-    return Number.isFinite(yVal) ? yVal : padT + plotH * 0.5;
-  };
-
-  const mapX = (idx: number) =>
-    padL + (idx / Math.max(1, rawSeries.length - 1)) * plotW;
-
-  const buildPolyline = (key: 'passPrimary' | 'passSecondary' | 'failPrimary' | 'failSecondary') => {
-    const pts = rawSeries
-      .map((d, i) => {
-        const val = d[key];
-        return val !== null ? `${mapX(i).toFixed(1)},${mapY(val).toFixed(1)}` : null;
-      })
-      .filter((p): p is string => Boolean(p));
-    return pts.length > 1 ? `M ${pts.join(' L ')}` : '';
-  };
-
-  const passAreaPath = (() => {
-    const line = buildPolyline('passPrimary');
-    if (!line) return '';
-    return `${line} L ${mapX(rawSeries.length - 1).toFixed(1)},${(padT + plotH).toFixed(
-      1
-    )} L ${mapX(0).toFixed(1)},${(padT + plotH).toFixed(1)} Z`;
-  })();
-
-  const activePointIdx =
-    hoverPointIdx !== null ? hoverPointIdx : rawSeries.length - 1;
-  const activePoint = rawSeries[activePointIdx] || rawSeries[rawSeries.length - 1];
-
-  const getMetricForAsset = (item: EnrichedCohortAsset) => {
-    if (!item.liquidCycle) return -9999999;
-    return item.cyclePct ?? -9999999;
-  };
-
-  const sortedPassed = [...passedEnriched].sort(
-    (a, b) => getMetricForAsset(b) - getMetricForAsset(a)
-  );
-  const sortedFailed = [...failedEnriched].sort(
-    (a, b) => getMetricForAsset(b) - getMetricForAsset(a)
-  );
-
   const buildShareableGainsReport = () => {
     if (chartView === 'BTC_BENCHMARK') {
       const pts = resolveBenchmarkSeriesForTimeline(m2Dataset, activeTimelineYear, horizon);
@@ -737,7 +1737,11 @@ BASKET BREADTH VS BTC: ${beatCount} of ${btcSum.cohortMatrix.length} liquid audi
 
     if (chartView === 'M2_BENCHMARK') {
       const pts = resolveBenchmarkSeriesForTimeline(m2Dataset, activeTimelineYear, horizon);
-      const m2Sum = computeM2AssetSummaries(pts, activeTimelineYear, horizon);
+      const m2Sum = computeM2AssetSummaries(pts, activeTimelineYear, horizon, {
+        cohortRecord,
+        liveSpots,
+        feedMode
+      });
       const horizonTitle =
         m2Sum.headingLabel ||
         (isHistoricalStop
@@ -751,13 +1755,14 @@ BASKET BREADTH VS BTC: ${beatCount} of ${btcSum.cohortMatrix.length} liquid audi
             `• ${a.name} (${a.ticker}): Nominal ${formatPctSigned(a.nominalPct)} (${a.nominalMult.toFixed(2)}x) | Real vs M2: ${formatPctSigned(a.m2AdjustedPct)} (${a.m2AdjustedMult.toFixed(2)}x)`
         )
         .join('\n');
+      const beatCount = m2Sum.cohortMatrix.filter((r) => r.beatsM2).length;
       return `THE TRUTH — MACRO PURCHASING POWER VS US M2 (${horizonTitle})
 
 US M2 MONEY SUPPLY (${m2Sum.windowTag || 'Open'} → Spot): ${formatM2SupplyLabel(m2Sum.m2StartTrillions)} → ${formatM2SupplyLabel(m2Sum.m2EndTrillions)} (${formatPctSigned(m2Sum.m2Pct)})
 
 ${assetLines}
 
-BENCHMARK: Assets above ${formatPctSigned(m2Sum.m2Pct)} expanded real purchasing power faster than US M2 monetary debasement.`;
+BASKET BREADTH VS US M2: ${beatCount} of ${m2Sum.cohortMatrix.length} liquid audited assets outperformed US M2 monetary expansion.`;
     }
 
     const topPassAnchors = [...passedLiquid]
@@ -795,7 +1800,6 @@ FAILED // E = 0 (${cohortRecord.failed.length} Flatlined — PoS & Premined):
 VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Physical Costliness (E > 0).`;
   };
 
-  const yGridTicks = buildNiceYGridTicks(minVal, maxVal, effectiveLog);
   const modalSliderAccent = useMemo(
     () => getGradeAccent(chartView === 'BTC_BENCHMARK' ? 'B+' : 'A+'),
     [chartView]
@@ -806,8 +1810,8 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
 
   return (
     <div
-      onClick={onClose}
-      className="animate-modal-backdrop fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-5"
+      onClick={handleCloseModal}
+      className="animate-modal-backdrop fixed inset-0 z-50 bg-[#050608]/92 flex items-center justify-center p-2.5 sm:p-5"
     >
       <div
         role="dialog"
@@ -851,7 +1855,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             <button
               type="button"
               aria-label="Close Live Gains Modal"
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="w-8 h-8 rounded-full bg-[#121418] hover:bg-neutral-800 border border-white/10 flex items-center justify-center text-neutral-400 hover:text-white transition-colors duration-150 shrink-0"
             >
               <X className="w-4 h-4" />
@@ -874,6 +1878,12 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </button>
                 <button
                   type="button"
+                  onMouseEnter={() => {
+                    void loadBtcBenchmarkPanel();
+                  }}
+                  onFocus={() => {
+                    void loadBtcBenchmarkPanel();
+                  }}
                   onClick={() => setChartView('BTC_BENCHMARK')}
                   className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
                     chartView === 'BTC_BENCHMARK'
@@ -885,6 +1895,12 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </button>
                 <button
                   type="button"
+                  onMouseEnter={() => {
+                    void loadM2BenchmarkPanel();
+                  }}
+                  onFocus={() => {
+                    void loadM2BenchmarkPanel();
+                  }}
                   onClick={() => setChartView('M2_BENCHMARK')}
                   className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
                     chartView === 'M2_BENCHMARK'
@@ -899,7 +1915,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
               <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] sm:text-[10.5px] shrink-0">
                 <button
                   type="button"
-                  onClick={() => setFeedMode('SNAPSHOT')}
+                  onClick={() => handleSelectFeedMode('SNAPSHOT')}
                   className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 whitespace-nowrap ${
                     feedMode === 'SNAPSHOT'
                       ? 'bg-[#1D212A] text-white border-white/15'
@@ -911,7 +1927,7 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFeedMode('LIVE')}
+                  onClick={() => handleSelectFeedMode('LIVE')}
                   className={`px-2 sm:px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 flex items-center gap-1.5 whitespace-nowrap ${
                     feedMode === 'LIVE'
                       ? 'bg-[#49EACB]/15 text-[#49EACB] border-[#49EACB]/40'
@@ -930,18 +1946,30 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 </button>
               </div>
 
-              {feedMode === 'LIVE' && (
+              {(feedMode === 'LIVE' || isSyncingLive || Boolean(lastLiveSyncLabel)) && (
                 <button
                   type="button"
                   disabled={isSyncingLive}
-                  onClick={syncLiveExchangeSpots}
-                  title="Sync live spot prices and save to backend"
+                  onClick={syncActiveTabLive}
+                  title={
+                    feedMode === 'LIVE'
+                      ? 'Sync live spot prices for the active tab'
+                      : 'Snapshot synced on open — click to refresh snapshot from live feed'
+                  }
                   className="px-2 sm:px-2.5 py-1 rounded-full bg-[#121418] hover:bg-[#191D24] border border-white/10 font-mono text-[10px] sm:text-[10.5px] text-neutral-300 flex items-center justify-center gap-1 tabular-nums transition-colors duration-150 shrink-0 whitespace-nowrap"
                 >
                   <RefreshCw
                     className={`w-3 h-3 text-[#49EACB] shrink-0 ${isSyncingLive ? 'animate-spin' : ''}`}
                   />
-                  <span className="hidden md:inline">{lastLiveSyncLabel || 'Syncing...'}</span>
+                  <span className="hidden md:inline">
+                    {isSyncingLive
+                      ? feedMode === 'SNAPSHOT'
+                        ? 'Syncing snapshot...'
+                        : 'Syncing...'
+                      : feedMode === 'SNAPSHOT'
+                      ? `Synced ${lastLiveSyncLabel}`
+                      : lastLiveSyncLabel || 'Sync'}
+                  </span>
                 </button>
               )}
             </div>
@@ -1010,7 +2038,6 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                 <GlobalTimeMachineSlider
                   value={activeTimelineYear}
                   onChange={(nextYr) => {
-                    setHoverPointIdx(null);
                     setHorizon('ALL_TIME');
                     setUseLogScale(true);
                     onChangeTimelineYear(nextYr);
@@ -1047,7 +2074,6 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
                     key={tab.id}
                     type="button"
                     onClick={() => {
-                      setHoverPointIdx(null);
                       if (tab.id !== 'ALL_TIME' && isHistoricalStop) {
                         onChangeTimelineYear?.('PRESENT');
                       }
@@ -1091,29 +2117,47 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
           </div>
 
           {chartView === 'BTC_BENCHMARK' ? (
-            <BtcBenchmarkPanel
-              horizon={horizon}
-              timelineYear={activeTimelineYear}
-              useLogScale={useLogScale}
-              onChangeLogScale={setUseLogScale}
-              dataset={m2Dataset}
-              cohortRecord={cohortRecord}
-              liveSpots={liveSpots}
-              feedMode={feedMode}
-              allocPerAsset={allocPerAsset}
-              onSelectOrAuditTicker={onSelectOrAuditTicker}
-            />
+            <Suspense
+              fallback={
+                <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-8 font-mono text-xs text-neutral-400 text-center">
+                  Loading Bitcoin Benchmark...
+                </div>
+              }
+            >
+              <LazyBtcBenchmarkPanel
+                horizon={horizon}
+                timelineYear={activeTimelineYear}
+                useLogScale={useLogScale}
+                onChangeLogScale={setUseLogScale}
+                dataset={m2Dataset}
+                cohortRecord={cohortRecord}
+                liveSpots={liveSpots}
+                feedMode={feedMode}
+                allocPerAsset={allocPerAsset}
+                onSelectOrAuditTicker={handleSelectAsset}
+              />
+            </Suspense>
           ) : chartView === 'M2_BENCHMARK' ? (
-            <M2BenchmarkPanel
-              horizon={horizon}
-              timelineYear={activeTimelineYear}
-              cohortRecord={cohortRecord}
-              useLogScale={useLogScale}
-              onChangeLogScale={setUseLogScale}
-              dataset={m2Dataset}
-              allocPerAsset={allocPerAsset}
-              onSelectOrAuditTicker={onSelectOrAuditTicker}
-            />
+            <Suspense
+              fallback={
+                <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-8 font-mono text-xs text-neutral-400 text-center">
+                  Loading US M2 Benchmark...
+                </div>
+              }
+            >
+              <LazyM2BenchmarkPanel
+                horizon={horizon}
+                timelineYear={activeTimelineYear}
+                cohortRecord={cohortRecord}
+                liveSpots={liveSpots}
+                feedMode={feedMode}
+                useLogScale={useLogScale}
+                onChangeLogScale={setUseLogScale}
+                dataset={m2Dataset}
+                allocPerAsset={allocPerAsset}
+                onSelectOrAuditTicker={handleSelectAsset}
+              />
+            </Suspense>
           ) : (
             <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1231,529 +2275,29 @@ VERDICT: ${portfolioVictoryMultiple}x Total Portfolio Victory for Unforgeable Ph
             </div>
           </div>
 
-          <div className="rounded-2xl bg-[#07080A] border border-white/[0.08] p-4 sm:p-5 space-y-3">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-3 min-h-[28px]">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-neutral-500 min-w-0 truncate">
-                  {isHistoricalStop
-                    ? `${activeTimelineYear} EPOCH EQUITY CURVE (${activeTimelineYear} OPEN → LIVE) // SCRUB TIMELINE`
-                    : horizon === 'ALL_TIME'
-                    ? 'ALL-TIME EQUITY CURVE (SINCE RELEASE → LIVE) // SCRUB TIMELINE'
-                    : `${HORIZON_META[horizon].heading} EQUITY CURVE // SCRUB TIMELINE TO INSPECT`}
-                </div>
+          <CohortEquityChartCard
+            rawSeries={rawSeries}
+            horizon={horizon}
+            activeTimelineYear={activeTimelineYear}
+            isHistoricalStop={isHistoricalStop}
+            useLogScale={useLogScale}
+            onChangeLogScale={setUseLogScale}
+            passExLabel={passExLabel}
+            passExOutlierAvg={passExOutlierAvg}
+            failExLabel={failExLabel}
+            failExOutlierAvg={failExOutlierAvg}
+          />
 
-                <div className="p-0.5 rounded-full bg-[#121418] border border-white/10 flex items-center font-mono text-[10px] shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setUseLogScale(true)}
-                    className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
-                      useLogScale
-                        ? 'bg-[#1D212A] text-white border-white/15'
-                        : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                    }`}
-                  >
-                    Log Scale
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setUseLogScale(false)}
-                    className={`px-2.5 py-1 rounded-full border font-semibold transition-colors duration-150 ${
-                      !useLogScale
-                        ? 'bg-[#1D212A] text-white border-white/15'
-                        : 'text-neutral-400 hover:text-neutral-200 border-transparent'
-                    }`}
-                  >
-                    Linear Scale
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums min-h-[20px]">
-                <span className="text-white font-bold">
-                  [{activePoint.label} — {activePoint.event}]
-                </span>
-                <span className="text-[#49EACB] font-bold">
-                  E &gt; 0: {formatPctSigned((activePoint.passPrimary - 1) * 100)} (
-                  {activePoint.passPrimary >= 1000
-                    ? `${(activePoint.passPrimary / 1000).toFixed(1)}Kx`
-                    : `${activePoint.passPrimary.toFixed(2)}x`}
-                  )
-                </span>
-                {activePoint.passSecondary !== null && (
-                  <span className="text-[#34D399]">
-                    {passExLabel}: {formatPctSigned((activePoint.passSecondary - 1) * 100)}
-                  </span>
-                )}
-                <span className="text-[#EF4444] font-bold">
-                  E = 0: {formatPctSigned((activePoint.failPrimary - 1) * 100)} (
-                  {activePoint.failPrimary.toFixed(2)}x)
-                </span>
-                {activePoint.failSecondary !== null && (
-                  <span className="text-[#F97316]">
-                    {failExLabel}: {formatPctSigned((activePoint.failSecondary - 1) * 100)}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div
-              ref={chartBoxRef}
-              onMouseLeave={() => setHoverPointIdx(null)}
-              className="w-full overflow-hidden rounded-xl bg-[#0B0C0E] border border-white/[0.05] relative"
-            >
-              <svg
-                width={chartWidth}
-                height={svgH}
-                viewBox={`0 0 ${chartWidth} ${svgH}`}
-                className="block w-full select-none"
-              >
-                <defs>
-                  <linearGradient id="gainsPassArea" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#49EACB" stopOpacity="0.26" />
-                    <stop offset="100%" stopColor="#34D399" stopOpacity="0.0" />
-                  </linearGradient>
-                  <linearGradient id="gainsPassStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="#49EACB" />
-                    <stop offset="100%" stopColor="#34D399" />
-                  </linearGradient>
-                  <linearGradient id="gainsFailStroke" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0%" stopColor="#EF4444" />
-                    <stop offset="100%" stopColor="#F97316" />
-                  </linearGradient>
-                </defs>
-
-                {yGridTicks.map((tickVal) => {
-                  const y = mapY(tickVal);
-                  if (y < padT - 4 || y > padT + plotH + 4) return null;
-                  const isBreakeven = Math.abs(tickVal - 1.0) < 0.001;
-                  return (
-                    <g key={tickVal}>
-                      <line
-                        x1={padL}
-                        y1={y}
-                        x2={chartWidth - padR}
-                        y2={y}
-                        stroke={
-                          isBreakeven
-                            ? 'rgba(255,255,255,0.22)'
-                            : 'rgba(255,255,255,0.05)'
-                        }
-                        strokeDasharray={isBreakeven ? '4 4' : undefined}
-                        strokeWidth={isBreakeven ? '1.2' : '1'}
-                      />
-                      <text
-                        x={padL - 8}
-                        y={y + 3.5}
-                        textAnchor="end"
-                        fill={isBreakeven ? '#E5E7EB' : '#6B7280'}
-                        fontSize="9.5"
-                        fontFamily="JetBrains Mono, monospace"
-                      >
-                        {tickVal >= 1_000_000
-                          ? `${(tickVal / 1_000_000).toFixed(0)}Mx`
-                          : tickVal >= 1_000
-                          ? `${(tickVal / 1_000).toFixed(0)}Kx`
-                          : tickVal >= 2
-                          ? `${Number(tickVal.toFixed(1)).toString().replace(/\.0$/, '')}x`
-                          : formatPctSigned((tickVal - 1) * 100)}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                <path d={passAreaPath} fill="url(#gainsPassArea)" />
-
-                {buildPolyline('failSecondary') && (
-                  <path
-                    d={buildPolyline('failSecondary')}
-                    fill="none"
-                    stroke="#F97316"
-                    strokeWidth="1.5"
-                    strokeDasharray="4 4"
-                    strokeOpacity="0.78"
-                  />
-                )}
-                {buildPolyline('passSecondary') && (
-                  <path
-                    d={buildPolyline('passSecondary')}
-                    fill="none"
-                    stroke="#34D399"
-                    strokeWidth="1.7"
-                    strokeDasharray="5 4"
-                    strokeOpacity="0.88"
-                  />
-                )}
-
-                <path
-                  d={buildPolyline('failPrimary')}
-                  fill="none"
-                  stroke="url(#gainsFailStroke)"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                />
-
-                <path
-                  d={buildPolyline('passPrimary')}
-                  fill="none"
-                  stroke="url(#gainsPassStroke)"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                />
-
-                {rawSeries.map((pt, idx) => {
-                  const x = mapX(idx);
-                  const yPass = mapY(pt.passPrimary);
-                  const yFail = mapY(pt.failPrimary);
-                  const isActive = idx === activePointIdx;
-                  const colW = plotW / Math.max(1, rawSeries.length - 1);
-
-                  return (
-                    <g key={pt.label}>
-                      {isActive && (
-                        <line
-                          x1={x}
-                          y1={padT}
-                          x2={x}
-                          y2={padT + plotH}
-                          stroke="rgba(255,255,255,0.22)"
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
-                      )}
-
-                      <circle
-                        cx={x}
-                        cy={yFail}
-                        r={isActive ? 5 : 3}
-                        fill="#0B0C0E"
-                        stroke="#EF4444"
-                        strokeWidth={isActive ? 2.4 : 1.6}
-                      />
-                      <circle
-                        cx={x}
-                        cy={yPass}
-                        r={isActive ? 5.5 : 3.4}
-                        fill="#0B0C0E"
-                        stroke="#49EACB"
-                        strokeWidth={isActive ? 2.6 : 1.8}
-                      />
-
-                      <text
-                        x={x}
-                        y={svgH - 11}
-                        textAnchor="middle"
-                        fill={isActive ? '#FFFFFF' : '#6B7280'}
-                        fontSize="9.5"
-                        fontFamily="JetBrains Mono, monospace"
-                        fontWeight={isActive ? '700' : '400'}
-                      >
-                        {pt.label}
-                      </text>
-
-                      <rect
-                        x={x - colW / 2}
-                        y={0}
-                        width={colW}
-                        height={svgH}
-                        fill="transparent"
-                        className="cursor-crosshair"
-                        onMouseEnter={() => setHoverPointIdx(idx)}
-                        onClick={() => setHoverPointIdx(idx)}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[10.5px] text-neutral-400">
-              <div className="flex flex-wrap items-center gap-4">
-                <span className="inline-flex items-center gap-1.5 text-[#49EACB]">
-                  <span className="w-3 h-0.5 bg-[#49EACB] inline-block" />
-                  <span>PASSED E &gt; 0 Equal-Weight</span>
-                </span>
-                <span className="inline-flex items-center gap-1.5 text-[#34D399]">
-                  <span className="w-3 border-t border-dashed border-[#34D399] inline-block" />
-                  <span>
-                    PASSED {passExLabel} ({formatPctSigned(passExOutlierAvg)})
-                  </span>
-                </span>
-                <span className="inline-flex items-center gap-1.5 text-[#EF4444]">
-                  <span className="w-3 h-0.5 bg-[#EF4444] inline-block" />
-                  <span>FAILED E = 0 Equal-Weight</span>
-                </span>
-                <span className="inline-flex items-center gap-1.5 text-[#F97316]">
-                  <span className="w-3 border-t border-dashed border-[#F97316] inline-block" />
-                  <span>
-                    FAILED {failExLabel} ({formatPctSigned(failExOutlierAvg)})
-                  </span>
-                </span>
-              </div>
-              <span className="text-neutral-500">
-                Click any asset row below to inspect or pull its 6-invariant audit
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-2xl bg-[#0B0C0E] border border-[#49EACB]/25 p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.07]">
-                <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#49EACB]">
-                  <span className="w-2 h-2 rounded-full bg-[#49EACB] shadow-[0_0_8px_#49EACB]" />
-                  <span>PASSED // E &gt; 0 ({cohortRecord.passed.length} Harmonic)</span>
-                </div>
-                <span className="font-mono text-[10.5px] text-neutral-400">
-                  PoW &amp; Physical Commodities
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {sortedPassed.map((item) => {
-                  const pct = item.cyclePct;
-                  const maxWindowPct = Math.max(
-                    120,
-                    ...passedLiquid.map((a) => Math.abs(a.cyclePct || 0)),
-                    ...failedLiquid.map((a) => Math.abs(a.cyclePct || 0))
-                  );
-                  const barPct =
-                    pct === null
-                      ? 0
-                      : horizon === 'ALL_TIME'
-                      ? pct >= 0
-                        ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
-                        : Math.min(100, (Math.abs(pct) / 100) * 65)
-                      : maxWindowPct > 400 && pct >= 0
-                      ? Math.min(
-                          100,
-                          (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
-                        )
-                      : pct >= 0
-                      ? Math.min(100, (pct / maxWindowPct) * 100)
-                      : Math.min(100, (Math.abs(pct) / 100) * 85);
-                  const isPositive = pct === null || pct >= 0;
-
-                  return (
-                    <button
-                      key={item.ticker}
-                      type="button"
-                      onClick={() => onSelectOrAuditTicker(item.ticker)}
-                      className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#171B22] border border-white/[0.06] hover:border-[#49EACB]/40 p-2.5 transition space-y-1.5"
-                    >
-                      <div className="flex items-center justify-between gap-2 font-mono text-xs">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-bold text-white">${item.ticker}</span>
-                          <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[#49EACB]/12 text-[#49EACB] border border-[#49EACB]/35">
-                            {item.grade} • {formatScore(item.auditScore)}
-                          </span>
-                          <span className="text-[11px] text-neutral-400 truncate hidden sm:inline">
-                            {item.name}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
-                            <span className="text-[10.5px] text-neutral-400">
-                              {item.activeBaselineLabel} →{' '}
-                              <strong className="text-neutral-200">
-                                {formatUsdPrice(item.spotPrice)}
-                              </strong>
-                            </span>
-                          ) : item.spotPrice !== null ? (
-                            <span className="text-[10.5px] text-neutral-400">
-                              Live Spot →{' '}
-                              <strong className="text-neutral-200">
-                                {formatUsdPrice(item.spotPrice)}
-                              </strong>
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-neutral-500">
-                              {item.activeBaselineLabel}
-                            </span>
-                          )}
-                          <span
-                            className="font-bold min-w-[68px] text-right"
-                            style={{
-                              color:
-                                pct === null
-                                  ? '#9CA3AF'
-                                  : isPositive
-                                  ? '#49EACB'
-                                  : '#F97316'
-                            }}
-                          >
-                            {pct !== null
-                              ? formatPctSigned(pct)
-                              : item.ticker === 'LN' || item.ticker === 'IGRA'
-                              ? 'Carrier'
-                              : item.spotPrice !== null && horizon !== 'ALL_TIME'
-                              ? 'Pre-Launch'
-                              : item.spotPrice !== null
-                              ? 'Tracked'
-                              : 'Audited'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {pct !== null && (
-                        <div className="w-full h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{
-                              width: `${Math.max(3, barPct)}%`,
-                              backgroundImage: isPositive
-                                ? 'linear-gradient(90deg, #49EACB 0%, #34D399 100%)'
-                                : 'linear-gradient(90deg, #F97316 0%, #EF4444 100%)'
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
-                        <span className="truncate">{item.note}</span>
-                        {item.multiple !== null && (
-                          <span className="shrink-0 text-neutral-300">
-                            {item.multiple >= 1000
-                              ? `${Math.round(item.multiple).toLocaleString()}x`
-                              : item.multiple >= 10
-                              ? `${item.multiple.toFixed(1)}x`
-                              : `${item.multiple.toFixed(2)}x`}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-[#0B0C0E] border border-[#EF4444]/25 p-4 space-y-3">
-              <div className="flex items-center justify-between pb-2.5 border-b border-white/[0.07]">
-                <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#EF4444]">
-                  <span className="w-2 h-2 rounded-full bg-[#EF4444] shadow-[0_0_8px_#EF4444]" />
-                  <span>FAILED // E = 0 ({cohortRecord.failed.length} Flatlined)</span>
-                </div>
-                <span className="font-mono text-[10.5px] text-neutral-400">
-                  PoS &amp; Premined Ledgers (All Grade F)
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {sortedFailed.map((item) => {
-                  const pct = item.cyclePct;
-                  const maxWindowPct = Math.max(
-                    120,
-                    ...passedLiquid.map((a) => Math.abs(a.cyclePct || 0)),
-                    ...failedLiquid.map((a) => Math.abs(a.cyclePct || 0))
-                  );
-                  const barPct =
-                    pct === null
-                      ? 0
-                      : horizon === 'ALL_TIME'
-                      ? pct >= 0
-                        ? Math.min(100, (Math.log10(1 + pct / 10) / Math.log10(15_000_000)) * 100)
-                        : Math.min(100, (Math.abs(pct) / 100) * 85)
-                      : maxWindowPct > 400 && pct >= 0
-                      ? Math.min(
-                          100,
-                          (Math.log10(1 + pct / 10) / Math.log10(1 + maxWindowPct / 10)) * 100
-                        )
-                      : pct >= 0
-                      ? Math.min(100, (pct / maxWindowPct) * 100)
-                      : Math.min(100, (Math.abs(pct) / 100) * 85);
-                  const isPositive = pct === null || pct >= 0;
-
-                  return (
-                    <button
-                      key={item.ticker}
-                      type="button"
-                      onClick={() => onSelectOrAuditTicker(item.ticker)}
-                      className="w-full text-left rounded-xl bg-[#121418] hover:bg-[#191416] border border-white/[0.06] hover:border-[#EF4444]/40 p-2.5 transition space-y-1.5"
-                    >
-                      <div className="flex items-center justify-between gap-2 font-mono text-xs">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="font-bold text-white">${item.ticker}</span>
-                          <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-[#EF4444]/12 text-[#EF4444] border border-[#EF4444]/35">
-                            {item.grade} • {formatScore(item.auditScore)}
-                          </span>
-                          <span className="text-[11px] text-neutral-400 truncate hidden sm:inline">
-                            {item.name}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          {item.spotPrice !== null && item.activeBaselinePrice !== null ? (
-                            <span className="text-[10.5px] text-neutral-400">
-                              {item.activeBaselineLabel} →{' '}
-                              <strong className="text-neutral-200">
-                                {formatUsdPrice(item.spotPrice)}
-                              </strong>
-                            </span>
-                          ) : item.spotPrice !== null ? (
-                            <span className="text-[10.5px] text-neutral-400">
-                              Live Spot →{' '}
-                              <strong className="text-neutral-200">
-                                {formatUsdPrice(item.spotPrice)}
-                              </strong>
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-neutral-500">
-                              {item.activeBaselineLabel}
-                            </span>
-                          )}
-                          <span
-                            className="font-bold min-w-[68px] text-right"
-                            style={{
-                              color:
-                                pct === null
-                                  ? '#9CA3AF'
-                                  : isPositive
-                                  ? '#F97316'
-                                  : '#EF4444'
-                            }}
-                          >
-                            {pct !== null
-                              ? formatPctSigned(pct)
-                              : item.spotPrice !== null && horizon !== 'ALL_TIME'
-                              ? 'Pre-Launch'
-                              : item.spotPrice !== null
-                              ? 'Tracked'
-                              : 'Audited'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {pct !== null && (
-                        <div className="w-full h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all duration-500"
-                            style={{
-                              width: `${Math.max(3, barPct)}%`,
-                              backgroundImage: isPositive
-                                ? 'linear-gradient(90deg, #F97316 0%, #FB923C 100%)'
-                                : 'linear-gradient(90deg, #EF4444 0%, #991B1B 100%)'
-                            }}
-                          />
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 font-mono text-[10px] text-neutral-500">
-                        <span className="truncate">{item.note}</span>
-                        {item.multiple !== null && (
-                          <span className="shrink-0 text-neutral-400">
-                            {item.multiple >= 1000
-                              ? `${Math.round(item.multiple).toLocaleString()}x`
-                              : item.multiple >= 10
-                              ? `${item.multiple.toFixed(1)}x`
-                              : `${item.multiple.toFixed(2)}x`}
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          <CohortAssetListsGrid
+            passedEnriched={passedEnriched}
+            failedEnriched={failedEnriched}
+            passedLiquid={passedLiquid}
+            failedLiquid={failedLiquid}
+            passedTotalCount={cohortRecord.passed.length}
+            failedTotalCount={cohortRecord.failed.length}
+            horizon={horizon}
+            onSelectAsset={handleSelectAsset}
+          />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
             <div className="rounded-2xl bg-[#0B0C0E] border border-white/[0.08] p-4 space-y-1.5">

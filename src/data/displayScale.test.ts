@@ -545,4 +545,70 @@ test('computeDisplayLayoutMetrics removes sidebar horizontal padding and keeps b
   assert.equal(uhdZoomed.bottomControlsOffsetPx, 10);
 });
 
+test('extra-wide 21:9, 24:10, and 32:9 viewports keep 04 Availability and Sync Invariant bar cleanly above the fixed footer', () => {
+  // Ultrawide vertical tier guard: 2560x1080 stays standard, 3440x1440 and 5120x1440 stay 1440
+  assert.equal(resolveDisplayScaleTier({ width: 1917, height: 808 }), 'standard');
+  assert.equal(resolveDisplayScaleTier({ width: 2560, height: 1080 }), 'standard');
+  assert.equal(resolveDisplayScaleTier({ width: 3440, height: 1440 }), '1440');
+  assert.equal(resolveDisplayScaleTier({ width: 5120, height: 1440 }), '1440');
+
+  const extrawideViewports = [
+    [1917, 808],
+    [1920, 820],
+    [2560, 950],
+    [2560, 1080],
+    [3440, 1320],
+    [3440, 1440],
+    [3840, 1600],
+    [5120, 1440]
+  ] as const;
+
+  for (const [w, h] of extrawideViewports) {
+    const dm = computeDisplayLayoutMetrics({ width: w, height: h });
+    const reserve = dm.mainHorizontalPadPx ?? 290;
+    const wrapWidth = w - reserve * 2;
+
+    // Single-bubble bottom buttons also stay clear of footer on extra-wide displays
+    const singleProjectedBottom =
+      h * 0.5 + dm.stageSizePx / 2 + dm.bottomControlsOffsetPx + 122;
+    assert.ok(
+      singleProjectedBottom <= h - 48,
+      `Single-bubble bottom controls at ${w}x${h} must stay above footer (${singleProjectedBottom} <= ${h - 48})`
+    );
+
+    for (const count of [2, 3, 4] as const) {
+      const layout = getConstellationLayout(count, 'desktop', {
+        wrapWidth,
+        viewportHeight: h,
+        pinMaxScale: dm.pinMaxScale
+      });
+      const scale = computeConstellationScale({
+        layoutWidth: layout.width,
+        layoutHeight: layout.height,
+        layoutNodeScale: layout.nodeScale,
+        wrapWidth,
+        viewportHeight: h,
+        pinMaxScale: dm.pinMaxScale,
+        orientationMode: 'desktop'
+      });
+      const scaledArenaHeight = Math.round(layout.height * scale);
+
+      assert.ok(
+        layout.width * scale <= wrapWidth,
+        `${count}-pin at ${w}x${h}: scaled width (${layout.width * scale}) must stay <= wrapWidth (${wrapWidth})`
+      );
+
+      // Top header + pin bar (~290px in GENIUS Time Machine mode) + scaledArenaHeight + Sync Invariant bar (~59px)
+      // must finish strictly above the 56px fixed desktop footer (h - 56) with breathing room.
+      const projectedSyncBottom = 290 + scaledArenaHeight + 59;
+      const footerTop = h - 56;
+      assert.ok(
+        projectedSyncBottom <= footerTop - 10,
+        `${count}-pin at ${w}x${h}: Sync Invariant bottom (${projectedSyncBottom}px) must stay >=10px above footerTop (${footerTop}px)`
+      );
+    }
+  }
+});
+
+
 

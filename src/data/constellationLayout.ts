@@ -56,6 +56,27 @@ export const PIN_HEX_HALF_WIDTH_PX = Math.ceil(
 ); // 188
 export const PIN_HEX_HALF_HEIGHT_PX = PIN_ORBIT_RADIUS_PX + PIN_SAT_WAVE_RADIUS_PX; // 208
 
+// Vertical viewport chrome reserved on desktop multi-pin stage
+export const DESKTOP_CONSTELLATION_CHROME_PX = 326;
+export const DESKTOP_EXTRAWIDE_CONSTELLATION_CHROME_PX = 422;
+export const COMPACT_DESKTOP_CONSTELLATION_CHROME_PX = 384;
+export const EXTRAWIDE_ARENA_ASPECT_THRESHOLD = 1.52;
+
+export function computeDesktopConstellationAvailHeight(
+  viewportHeight: number,
+  wrapWidth?: number
+): number {
+  const safeH = Math.max(480, Number(viewportHeight) || 900);
+  const safeWrap = Number(wrapWidth) || 0;
+  if (safeWrap > 0 && safeWrap / safeH >= EXTRAWIDE_ARENA_ASPECT_THRESHOLD) {
+    return Math.max(256, safeH - DESKTOP_EXTRAWIDE_CONSTELLATION_CHROME_PX);
+  }
+  if (safeH <= 740) {
+    return Math.max(256, safeH - COMPACT_DESKTOP_CONSTELLATION_CHROME_PX);
+  }
+  return Math.max(360, safeH - DESKTOP_CONSTELLATION_CHROME_PX);
+}
+
 export const PIN_HEX_SAT_OFFSETS: ReadonlyArray<{ x: number; y: number }> = ORBIT_ANGLES_DEG.map(
   (deg) => {
     const rad = (deg * Math.PI) / 180;
@@ -706,8 +727,9 @@ export function getConstellationLayout(
     }
 
     // Desktop: deterministically pick the formation that yields the largest bubbles
+    // while keeping both 04 Availability and the Sync Invariant bar cleanly above the fixed footer on extra-wide displays
     const availW = Math.max(280, safeWrap - 8);
-    const availH = Math.max(360, safeViewH - 326);
+    const availH = computeDesktopConstellationAvailHeight(safeViewH, safeWrap);
     const maxScale = Math.min(2.9, Math.max(0.75, fitOptions.pinMaxScale ?? 2.8));
 
     if (count === 2) {

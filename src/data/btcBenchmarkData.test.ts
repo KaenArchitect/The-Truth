@@ -205,3 +205,47 @@ test('historical Time Machine stops (2024, 2020, 1971) dynamically update BTC ba
   assert.equal(spx1971.startPrice, 92.15);
 });
 
+test('custom basket assets (CU, HYPE, S, EUR) and Passed vs Failed basket summaries sync into BTC benchmark matrix', () => {
+  assert.equal(parseReleaseLabelTimestampMs("$0.85 (COMEX '00)"), Date.UTC(2000, 0, 3));
+  assert.equal(parseReleaseLabelTimestampMs('$2.05 (2020 Open)'), Date.UTC(2020, 0, 1));
+
+  const customAudits = {
+    ...PRELOADED_AUDITS,
+    CU: { ticker: 'CU', name: 'Physical Copper', grade: 'C+', totalScore: 3.75 },
+    HYPE: { ticker: 'HYPE', name: 'Hyperliquid', grade: 'F', totalScore: 0 },
+    S: { ticker: 'S', name: 'Sonic', grade: 'F', totalScore: 0 },
+    EUR: { ticker: 'EUR', name: 'Euro', grade: 'F', totalScore: 0 }
+  };
+  const syncedCohort = buildBasketSyncedCohortRecord(customAudits);
+  const pts = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    'PRESENT',
+    'ALL_TIME'
+  );
+  const summary = computeBtcHorizonSummary({
+    points: pts,
+    horizon: 'ALL_TIME',
+    timelineYear: 'PRESENT',
+    cohortRecord: syncedCohort,
+    feedMode: 'SNAPSHOT'
+  });
+
+  const cuRow = summary.cohortMatrix.find((r) => r.ticker === 'CU')!;
+  const hypeRow = summary.cohortMatrix.find((r) => r.ticker === 'HYPE')!;
+  const sRow = summary.cohortMatrix.find((r) => r.ticker === 'S')!;
+  const eurRow = summary.cohortMatrix.find((r) => r.ticker === 'EUR')!;
+
+  assert.ok(cuRow);
+  assert.equal(cuRow.side, 'PASSED');
+  assert.equal(cuRow.startPrice, 3.0); // Jul '10 benchmark open
+  assert.ok(hypeRow);
+  assert.equal(hypeRow.side, 'FAILED');
+  assert.equal(hypeRow.windowNote, "Since Nov '24");
+  assert.ok(sRow);
+  assert.equal(sRow.side, 'FAILED');
+  assert.ok(eurRow);
+  assert.equal(eurRow.startPrice, 1.29);
+
+  assert.equal(summary.passedBasketSummary?.count, 9); // 8 Ex-BTC preloaded liquid + CU
+  assert.ok((summary.failedBasketSummary?.count ?? 0) >= 15);
+});

@@ -1,3 +1,10 @@
+import {
+  resolveCohortBaselinePrice,
+  resolveTimelineBaselineMode,
+  type CohortAssetEntry,
+  type GainsCohortRecord
+} from './gainsCohortData.ts';
+
 export type MacroM2HorizonKey = 'ALL_TIME' | 'D180' | 'Y1' | 'Y2' | 'Y4';
 export type M2SeriesKey = 'KAS' | 'BTC' | 'GOLD' | 'SPX' | 'M2';
 export type M2ComparisonMode = 'INDEXED' | 'REAL_DIV_M2';
@@ -98,6 +105,34 @@ export interface M2AssetSummary {
   beatsM2: boolean;
 }
 
+export interface M2MatrixAssetItem {
+  id: string;
+  ticker: string;
+  auditTicker: string | null;
+  name: string;
+  grade: string;
+  side: 'PASSED' | 'FAILED' | 'MACRO';
+  color: string;
+  isIndexPoints?: boolean;
+  windowNote?: string;
+  startPrice: number;
+  currentPrice: number;
+  nominalMult: number;
+  nominalPct: number;
+  m2AdjustedMult: number;
+  m2AdjustedPct: number;
+  beatsM2: boolean;
+}
+
+export interface M2BasketCohortSummary {
+  side: 'PASSED' | 'FAILED';
+  count: number;
+  beatsCount: number;
+  avgNominalPct: number;
+  avgAdjustedPct: number;
+  avgAdjustedMult: number;
+}
+
 export interface M2HorizonSummary {
   m2StartTrillions: number;
   m2EndTrillions: number;
@@ -107,6 +142,9 @@ export interface M2HorizonSummary {
   headingLabel?: string;
   assets: M2AssetSummary[];
   coreCards?: M2AssetSummary[];
+  cohortMatrix: M2MatrixAssetItem[];
+  passedBasketSummary?: M2BasketCohortSummary;
+  failedBasketSummary?: M2BasketCohortSummary;
 }
 
 export interface M2BenchmarkDataset {
@@ -130,6 +168,74 @@ export const BTC_GENESIS_JUL10_MS = Date.UTC(2010, 6, 18, 0, 0, 0);
 export const KAS_GENESIS_MAY22_PRICE = 0.0001859;
 export const KAS_GENESIS_MAY22_MS = Date.UTC(2022, 4, 30, 0, 0, 0);
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const JUL_2010_BENCHMARK_OPEN_PRICES: Readonly<Record<string, number>> = {
+  XAG: 17.85,
+  CU: 3.0,
+  XPT: 1525.0,
+  XPD: 455.0,
+  EUR: 1.29,
+  GBP: 1.53,
+  CHF: 0.95,
+  CAD: 0.96,
+  AUD: 0.88,
+  JPY: 0.0114,
+  CNY: 0.1475
+};
+
+const MONTH_INDEX_BY_SHORT: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11
+};
+
+export function parseReleaseLabelTimestampMs(label?: string | null): number | null {
+  if (!label) return null;
+  const monthYearMatch = label.match(
+    /\(\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*'(\d{2})\s*\)/i
+  );
+  if (monthYearMatch) {
+    const monIdx = MONTH_INDEX_BY_SHORT[monthYearMatch[1].toLowerCase()];
+    const twoDigit = Number(monthYearMatch[2]);
+    const yr = twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
+    if (monIdx !== undefined && Number.isFinite(yr)) {
+      return Date.UTC(yr, monIdx, 15);
+    }
+  }
+  const comexYearMatch = label.match(/comex\s*'(\d{2})/i);
+  if (comexYearMatch) {
+    const twoDigit = Number(comexYearMatch[1]);
+    const yr = twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
+    if (Number.isFinite(yr)) {
+      return Date.UTC(yr, 0, 3);
+    }
+  }
+  const fourDigitOpenMatch = label.match(/\(\s*(19\d{2}|20\d{2})\s+open/i);
+  if (fourDigitOpenMatch) {
+    return Date.UTC(Number(fourDigitOpenMatch[1]), 0, 1);
+  }
+  const yearOnlyMatch = label.match(/\(\s*'(\d{2})\b/i);
+  if (yearOnlyMatch) {
+    const twoDigit = Number(yearOnlyMatch[1]);
+    const yr = twoDigit >= 70 ? 1900 + twoDigit : 2000 + twoDigit;
+    if (Number.isFinite(yr)) {
+      return Date.UTC(yr, 2, 15);
+    }
+  }
+  if (/krc-20/i.test(label)) {
+    return Date.UTC(2024, 5, 15);
+  }
+  return null;
+}
 
 export function formatM2SupplyLabel(trillions: number): string {
   if (!Number.isFinite(trillions) || trillions <= 0) return '—';
@@ -826,6 +932,46 @@ export function findHistoricalBtcPriceAt(
   return combined[combined.length - 1].price;
 }
 
+export function findHistoricalM2TrillionsAt(
+  targetTsMs: number,
+  extraPoints?: ReadonlyArray<{ tsMs: number; m2Trillions: number }>,
+  latestM2Trillions?: number
+): number {
+  const combined: Array<{ tsMs: number; m2Trillions: number }> = MACRO_HISTORICAL_MILESTONES.map(
+    (m) => ({ tsMs: m.tsMs, m2Trillions: m.m2Trillions })
+  );
+  if (Array.isArray(extraPoints)) {
+    for (const p of extraPoints) {
+      if (p && Number.isFinite(p.tsMs) && Number.isFinite(p.m2Trillions) && p.m2Trillions > 0) {
+        combined.push({ tsMs: p.tsMs, m2Trillions: p.m2Trillions });
+      }
+    }
+  }
+  if (latestM2Trillions && Number.isFinite(latestM2Trillions) && latestM2Trillions > 0) {
+    combined.push({ tsMs: Date.UTC(2026, 10, 26), m2Trillions: latestM2Trillions });
+  }
+  combined.sort((a, b) => a.tsMs - b.tsMs);
+
+  if (combined.length === 0) return 21.7;
+  if (!Number.isFinite(targetTsMs) || targetTsMs <= combined[0].tsMs) {
+    return combined[0].m2Trillions;
+  }
+  if (targetTsMs >= combined[combined.length - 1].tsMs) {
+    return combined[combined.length - 1].m2Trillions;
+  }
+
+  for (let i = 1; i < combined.length; i += 1) {
+    const prev = combined[i - 1];
+    const curr = combined[i];
+    if (targetTsMs <= curr.tsMs) {
+      const span = Math.max(1, curr.tsMs - prev.tsMs);
+      const t = (targetTsMs - prev.tsMs) / span;
+      return prev.m2Trillions + t * (curr.m2Trillions - prev.m2Trillions);
+    }
+  }
+  return combined[combined.length - 1].m2Trillions;
+}
+
 const TIMELINE_STOP_MILESTONE_IDS: Record<string, string[]> = {
   '1913': ['1913', '1944', '1971', '2000', '2008', '2016', '2020', '2024'],
   '1971': ['1971', '1980', '2000', '2008', '2016', '2020', '2024'],
@@ -1015,10 +1161,45 @@ export function resolveBenchmarkSeriesForTimeline(
   return points;
 }
 
+export interface ComputeM2AssetSummariesOptions {
+  cohortRecord?: Pick<GainsCohortRecord, 'passed' | 'failed'> | null;
+  liveSpots?: Record<string, number>;
+  feedMode?: 'SNAPSHOT' | 'LIVE';
+}
+
+function summarizeM2BasketRows(
+  rows: M2MatrixAssetItem[],
+  side: 'PASSED' | 'FAILED'
+): M2BasketCohortSummary {
+  if (rows.length === 0) {
+    return {
+      side,
+      count: 0,
+      beatsCount: 0,
+      avgNominalPct: 0,
+      avgAdjustedPct: 0,
+      avgAdjustedMult: 1.0
+    };
+  }
+  const beatsCount = rows.filter((r) => r.beatsM2).length;
+  const avgNominalPct = rows.reduce((s, r) => s + r.nominalPct, 0) / rows.length;
+  const avgAdjustedMult = rows.reduce((s, r) => s + r.m2AdjustedMult, 0) / rows.length;
+  const avgAdjustedPct = rows.reduce((s, r) => s + r.m2AdjustedPct, 0) / rows.length;
+  return {
+    side,
+    count: rows.length,
+    beatsCount,
+    avgNominalPct,
+    avgAdjustedPct,
+    avgAdjustedMult
+  };
+}
+
 export function computeM2AssetSummaries(
   points: M2ChartPoint[],
   timelineYear?: string | null,
-  horizon: MacroM2HorizonKey = 'ALL_TIME'
+  horizon: MacroM2HorizonKey = 'ALL_TIME',
+  options?: ComputeM2AssetSummariesOptions
 ): M2HorizonSummary {
   if (!points || points.length === 0) {
     return {
@@ -1026,7 +1207,8 @@ export function computeM2AssetSummaries(
       m2EndTrillions: 23.41,
       m2Mult: 1.079,
       m2Pct: 7.9,
-      assets: []
+      assets: [],
+      cohortMatrix: []
     };
   }
   const first = points[0];
@@ -1039,6 +1221,7 @@ export function computeM2AssetSummaries(
     .trim()
     .toUpperCase();
   const isHistoricalStop = hasExplicitTimeline && cleanYear !== 'PRESENT';
+  const numericYear = isHistoricalStop ? Number(cleanYear) : 2026;
 
   const windowTag = isHistoricalStop
     ? `${cleanYear} Open`
@@ -1106,74 +1289,333 @@ export function computeM2AssetSummaries(
     };
   };
 
+  let assets: M2AssetSummary[];
+  let coreCards: M2AssetSummary[];
+
   if (!hasExplicitTimeline) {
-    const assets: M2AssetSummary[] = [
+    assets = [
       makeEntry('KAS', first.kasPrice, last.kasPrice, last.kasMult),
       makeEntry('BTC', first.btcPrice, last.btcPrice, last.btcMult),
       makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult),
       makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult)
     ];
-    return {
-      m2StartTrillions: first.m2Trillions,
-      m2EndTrillions: last.m2Trillions,
-      m2Mult,
-      m2Pct,
-      windowTag,
-      headingLabel,
-      assets,
-      coreCards: assets
-    };
+    coreCards = assets;
+  } else {
+    const kasFirstActive = points.find((p) => p.kasActive !== false);
+    const btcFirstActive = points.find((p) => p.btcActive !== false);
+
+    const kasAvailable = Boolean(kasFirstActive && last.kasActive !== false);
+    const btcAvailable = Boolean(btcFirstActive && last.btcActive !== false);
+
+    const kasCard = makeEntry(
+      'KAS',
+      kasFirstActive?.kasPrice ?? KAS_GENESIS_MAY22_PRICE,
+      last.kasPrice,
+      last.kasMult,
+      {
+        available: kasAvailable,
+        customM2StartTrillions:
+          kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
+            ? last.kasStartM2Trillions
+            : undefined,
+        windowNote:
+          kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
+            ? `Since ${kasFirstActive.label}`
+            : undefined,
+        launchNote: !kasAvailable ? `Pre-Genesis in ${cleanYear} (Nov '21)` : undefined
+      }
+    );
+
+    const btcCard = makeEntry(
+      'BTC',
+      btcFirstActive?.btcPrice ?? BTC_GENESIS_JUL10_PRICE,
+      last.btcPrice,
+      last.btcMult,
+      {
+        available: btcAvailable,
+        customM2StartTrillions:
+          btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
+            ? last.btcStartM2Trillions
+            : undefined,
+        windowNote:
+          btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
+            ? `Since ${btcFirstActive.label}`
+            : undefined,
+        launchNote: !btcAvailable ? `Pre-Genesis in ${cleanYear} (Oct '08)` : undefined
+      }
+    );
+
+    const goldCard = makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult);
+    const spxCard = makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult);
+
+    coreCards = [kasCard, btcCard, goldCard, spxCard];
+    assets = coreCards.filter((c) => c.available !== false);
   }
 
-  const kasFirstActive = points.find((p) => p.kasActive !== false);
-  const btcFirstActive = points.find((p) => p.btcActive !== false);
+  // Synchronize full Passed (E > 0) and Failed (E = 0) audited baskets + S&P 500 vs US M2
+  const cohortRecord = options?.cohortRecord ?? null;
+  const liveSpots = options?.liveSpots || {};
+  const feedMode = options?.feedMode || 'LIVE';
 
-  const kasAvailable = Boolean(kasFirstActive && last.kasActive !== false);
-  const btcAvailable = Boolean(btcFirstActive && last.btcActive !== false);
+  const cohortMatrix: M2MatrixAssetItem[] = [];
+  const seenTickers = new Set<string>();
+  const timelineBaselineMode = hasExplicitTimeline
+    ? resolveTimelineBaselineMode(cleanYear, horizon === 'ALL_TIME' ? 'ALL_TIME' : horizon)
+    : null;
 
-  const kasCard = makeEntry(
-    'KAS',
-    kasFirstActive?.kasPrice ?? KAS_GENESIS_MAY22_PRICE,
-    last.kasPrice,
-    last.kasMult,
-    {
-      available: kasAvailable,
-      customM2StartTrillions:
-        kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
-          ? last.kasStartM2Trillions
-          : undefined,
-      windowNote:
-        kasAvailable && kasFirstActive && kasFirstActive.tsMs > first.tsMs
-          ? `Since ${kasFirstActive.label}`
-          : undefined,
-      launchNote: !kasAvailable ? `Pre-Genesis in ${cleanYear} (Nov '21)` : undefined
+  const resolveCohortItemVsM2 = (
+    item: CohortAssetEntry,
+    side: 'PASSED' | 'FAILED'
+  ): M2MatrixAssetItem | null => {
+    if (seenTickers.has(item.ticker)) return null;
+
+    if (item.ticker === 'KAS' || item.ticker === 'BTC' || item.ticker === 'XAU') {
+      const coreKey = item.ticker === 'XAU' ? 'GOLD' : (item.ticker as 'KAS' | 'BTC');
+      const core = assets.find((a) => a.key === coreKey);
+      seenTickers.add(item.ticker);
+      if (!core) return null;
+      return {
+        id: `${side}:${item.ticker}`,
+        ticker: item.ticker,
+        auditTicker: item.ticker,
+        name: item.name,
+        grade: item.grade,
+        side,
+        color: core.color,
+        windowNote: core.windowNote,
+        startPrice: core.startPrice,
+        currentPrice: core.currentPrice,
+        nominalMult: core.nominalMult,
+        nominalPct: core.nominalPct,
+        m2AdjustedMult: core.m2AdjustedMult,
+        m2AdjustedPct: core.m2AdjustedPct,
+        beatsM2: core.beatsM2
+      };
     }
-  );
 
-  const btcCard = makeEntry(
-    'BTC',
-    btcFirstActive?.btcPrice ?? BTC_GENESIS_JUL10_PRICE,
-    last.btcPrice,
-    last.btcMult,
-    {
-      available: btcAvailable,
-      customM2StartTrillions:
-        btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
-          ? last.btcStartM2Trillions
-          : undefined,
-      windowNote:
-        btcAvailable && btcFirstActive && btcFirstActive.tsMs > first.tsMs
-          ? `Since ${btcFirstActive.label}`
-          : undefined,
-      launchNote: !btcAvailable ? `Pre-Genesis in ${cleanYear} (Oct '08)` : undefined
+    if (item.ticker === 'ETH') {
+      const ethFirstActive = hasExplicitTimeline
+        ? points.find((p) => p.ethActive !== false)
+        : first;
+      const ethAvailable = hasExplicitTimeline
+        ? Boolean(ethFirstActive && last.ethActive !== false)
+        : true;
+      seenTickers.add('ETH');
+      if (!ethAvailable || !ethFirstActive) return null;
+
+      const startPrice =
+        ethFirstActive.ethPrice && ethFirstActive.ethPrice > 0
+          ? ethFirstActive.ethPrice
+          : hasExplicitTimeline
+          ? 2.77
+          : 1940;
+      const liveEth = feedMode === 'LIVE' ? Number(liveSpots.ETH) : NaN;
+      const currentPrice =
+        feedMode === 'LIVE' && Number.isFinite(liveEth) && liveEth > 0
+          ? liveEth
+          : last.ethPrice && last.ethPrice > 0
+          ? last.ethPrice
+          : item.snapshotSpot ?? 1782.23;
+      const customM2Start =
+        hasExplicitTimeline &&
+        ethFirstActive.tsMs > first.tsMs &&
+        (last.ethStartM2Trillions ?? 0) > 0
+          ? last.ethStartM2Trillions!
+          : first.m2Trillions;
+      const effectiveM2Mult =
+        customM2Start > 0 ? Math.max(0.01, last.m2Trillions / customM2Start) : m2Mult;
+      const nominalMult = currentPrice / startPrice;
+      const nominalPct = (nominalMult - 1) * 100;
+      const m2AdjustedMult = nominalMult / effectiveM2Mult;
+      const m2AdjustedPct = (m2AdjustedMult - 1) * 100;
+
+      return {
+        id: `${side}:ETH`,
+        ticker: 'ETH',
+        auditTicker: 'ETH',
+        name: item.name,
+        grade: item.grade,
+        side,
+        color: '#A78BFA',
+        windowNote:
+          hasExplicitTimeline && ethFirstActive.tsMs > first.tsMs
+            ? `Since ${ethFirstActive.label}`
+            : undefined,
+        startPrice,
+        currentPrice,
+        nominalMult,
+        nominalPct,
+        m2AdjustedMult,
+        m2AdjustedPct,
+        beatsM2: m2AdjustedMult >= 1.0
+      };
     }
+
+    const liveVal = feedMode === 'LIVE' ? Number(liveSpots[item.ticker]) : NaN;
+    const spotPrice =
+      feedMode === 'LIVE' && Number.isFinite(liveVal) && liveVal > 0
+        ? liveVal
+        : item.snapshotSpot;
+    if (!spotPrice || spotPrice <= 0) return null;
+
+    let startPrice: number | null = null;
+    let matchingM2Mult = m2Mult;
+    let windowNote: string | undefined;
+
+    if (!hasExplicitTimeline) {
+      if (horizon === 'D180') {
+        startPrice = item.price180d ?? null;
+      } else if (horizon === 'Y1') {
+        startPrice = item.price1y ?? null;
+      } else if (horizon === 'Y2') {
+        startPrice = item.price2y ?? null;
+      } else if (horizon === 'Y4') {
+        startPrice = item.price4y ?? null;
+      } else {
+        const launchTs = parseReleaseLabelTimestampMs(item.releaseLabel);
+        if (launchTs && launchTs > KAS_GENESIS_MAY22_MS + 30 * DAY_MS) {
+          startPrice = item.releasePrice ?? item.basePrice ?? null;
+          const m2AtLaunch = findHistoricalM2TrillionsAt(launchTs, points, last.m2Trillions);
+          if (m2AtLaunch > 0 && last.m2Trillions > 0) {
+            matchingM2Mult = Math.max(0.01, last.m2Trillions / m2AtLaunch);
+          }
+          const m = item.releaseLabel?.match(/\(([^)]+)\)/);
+          if (m) windowNote = `Since ${m[1]}`;
+        } else {
+          startPrice = item.basePrice ?? item.releasePrice ?? null;
+        }
+      }
+    } else if (timelineBaselineMode === 'RELEASE') {
+      const jul2010Open = JUL_2010_BENCHMARK_OPEN_PRICES[item.ticker];
+      if (jul2010Open !== undefined) {
+        startPrice = jul2010Open;
+        windowNote = "Since Jul '10";
+      } else {
+        const resolved = resolveCohortBaselinePrice(item, 'RELEASE');
+        startPrice = resolved.price;
+        const launchTs = parseReleaseLabelTimestampMs(item.releaseLabel);
+        if (launchTs && launchTs > BTC_GENESIS_JUL10_MS + 15 * DAY_MS) {
+          const m2AtLaunch = findHistoricalM2TrillionsAt(launchTs, points, last.m2Trillions);
+          if (m2AtLaunch > 0 && last.m2Trillions > 0) {
+            matchingM2Mult = Math.max(0.01, last.m2Trillions / m2AtLaunch);
+          }
+          const m = item.releaseLabel?.match(/\(([^)]+)\)/);
+          if (m) {
+            windowNote = /krc-20/i.test(m[1]) ? "Since Jun '24" : `Since ${m[1]}`;
+          }
+        }
+      }
+    } else if (timelineBaselineMode) {
+      const resolved = resolveCohortBaselinePrice(item, timelineBaselineMode);
+      startPrice = resolved.price;
+      if (isHistoricalStop && startPrice && startPrice > 0) {
+        const launchTs = parseReleaseLabelTimestampMs(resolved.label);
+        if (launchTs && launchTs > first.tsMs + 20 * DAY_MS) {
+          const m2AtLaunch = findHistoricalM2TrillionsAt(launchTs, points, last.m2Trillions);
+          if (m2AtLaunch > 0 && last.m2Trillions > 0) {
+            matchingM2Mult = Math.max(0.01, last.m2Trillions / m2AtLaunch);
+          }
+          const m = resolved.label.match(/\(([^)]+)\)/);
+          if (m && !/open|est/i.test(m[1])) {
+            windowNote = `Since ${m[1]}`;
+          }
+        } else if (numericYear < 2008 && !windowNote) {
+          windowNote = `Since ${cleanYear}`;
+        }
+      }
+    }
+
+    if (!startPrice || startPrice <= 0) return null;
+
+    const nominalMult = spotPrice / startPrice;
+    const nominalPct = (nominalMult - 1) * 100;
+    const m2AdjustedMult = nominalMult / Math.max(0.01, matchingM2Mult);
+    const m2AdjustedPct = (m2AdjustedMult - 1) * 100;
+
+    seenTickers.add(item.ticker);
+    return {
+      id: `${side}:${item.ticker}`,
+      ticker: item.ticker,
+      auditTicker: item.ticker,
+      name: item.name,
+      grade: item.grade,
+      side,
+      color: side === 'PASSED' ? '#34D399' : '#EF4444',
+      windowNote,
+      startPrice,
+      currentPrice: spotPrice,
+      nominalMult,
+      nominalPct,
+      m2AdjustedMult,
+      m2AdjustedPct,
+      beatsM2: m2AdjustedMult >= 1.0
+    };
+  };
+
+  if (cohortRecord) {
+    for (const p of cohortRecord.passed) {
+      const row = resolveCohortItemVsM2(p, 'PASSED');
+      if (row) cohortMatrix.push(row);
+    }
+    for (const f of cohortRecord.failed) {
+      const row = resolveCohortItemVsM2(f, 'FAILED');
+      if (row) cohortMatrix.push(row);
+    }
+  } else {
+    for (const core of assets) {
+      if (core.key === 'SPX') continue;
+      cohortMatrix.push({
+        id: `CORE:${core.key}`,
+        ticker: core.ticker,
+        auditTicker: core.key === 'GOLD' ? 'XAU' : core.ticker,
+        name: core.name,
+        grade: core.key === 'KAS' ? 'A+' : core.key === 'BTC' ? 'B+' : 'B',
+        side: 'PASSED',
+        color: core.color,
+        windowNote: core.windowNote,
+        startPrice: core.startPrice,
+        currentPrice: core.currentPrice,
+        nominalMult: core.nominalMult,
+        nominalPct: core.nominalPct,
+        m2AdjustedMult: core.m2AdjustedMult,
+        m2AdjustedPct: core.m2AdjustedPct,
+        beatsM2: core.beatsM2
+      });
+    }
+  }
+
+  const spxCore = assets.find((a) => a.key === 'SPX');
+  if (spxCore) {
+    cohortMatrix.push({
+      id: 'MACRO:SPX',
+      ticker: 'S&P 500',
+      auditTicker: null,
+      name: 'S&P 500 Index',
+      grade: 'INDEX',
+      side: 'MACRO',
+      color: '#60A5FA',
+      isIndexPoints: true,
+      windowNote: spxCore.windowNote,
+      startPrice: spxCore.startPrice,
+      currentPrice: spxCore.currentPrice,
+      nominalMult: spxCore.nominalMult,
+      nominalPct: spxCore.nominalPct,
+      m2AdjustedMult: spxCore.m2AdjustedMult,
+      m2AdjustedPct: spxCore.m2AdjustedPct,
+      beatsM2: spxCore.beatsM2
+    });
+  }
+
+  cohortMatrix.sort((a, b) => b.m2AdjustedPct - a.m2AdjustedPct);
+
+  const passedBasketSummary = summarizeM2BasketRows(
+    cohortMatrix.filter((r) => r.side === 'PASSED'),
+    'PASSED'
   );
-
-  const goldCard = makeEntry('GOLD', first.goldPrice, last.goldPrice, last.goldMult);
-  const spxCard = makeEntry('SPX', first.spxPrice, last.spxPrice, last.spxMult);
-
-  const coreCards = [kasCard, btcCard, goldCard, spxCard];
-  const assets = coreCards.filter((c) => c.available !== false);
+  const failedBasketSummary = summarizeM2BasketRows(
+    cohortMatrix.filter((r) => r.side === 'FAILED'),
+    'FAILED'
+  );
 
   return {
     m2StartTrillions: first.m2Trillions,
@@ -1183,7 +1625,10 @@ export function computeM2AssetSummaries(
     windowTag,
     headingLabel,
     assets,
-    coreCards
+    coreCards,
+    cohortMatrix,
+    passedBasketSummary,
+    failedBasketSummary
   };
 }
 

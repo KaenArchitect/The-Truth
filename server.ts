@@ -31,7 +31,9 @@ import {
   type RawGeminiAuditPayload
 } from './src/data/rubricSpec.ts';
 import {
+  DAILY_CHALLENGE_LIMIT,
   DAILY_NEW_FULL_PULL_LIMIT,
+  SIGNED_IN_DAILY_CHALLENGE_LIMIT,
   SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
   STATIC_TOP_150_FALLBACK_ENTRIES,
   TOKENIZED_COMMODITY_WRAPPER_TICKERS,
@@ -40,6 +42,7 @@ import {
   getUserDailyQuotaStatus,
   pruneStaleQuotaDays,
   refundDailyPull,
+  resolveDailyChallengeLimit,
   resolveDailyPullLimit,
   resolveFiatCurrencyQuery,
   resolvePhysicalCommodityQuery,
@@ -48,7 +51,9 @@ import {
 } from './src/data/auditQuotaAndScope.ts';
 import {
   ensureFreshLiveGainsCohort,
+  getCachedExtraResolvedEntries,
   getCachedWindowTrajectories,
+  getLastLiveSpotMap,
   getPersistedGainsCohort,
   savePersistedGainsCohort,
   syncLivePricesAndPersistGainsCohort
@@ -95,6 +100,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const CACHE_FILE_PATH = '/tmp/truth_audit_cache.json';
 const DAILY_QUOTA_FILE_PATH = '/tmp/truth_daily_pull_ledger.json';
+const DAILY_CHALLENGE_QUOTA_FILE_PATH = '/tmp/truth_daily_challenge_ledger.json';
 
 function isStrictCreditLockActive(): boolean {
   return String(process.env.STRICT_CREDIT_LOCK || '').toLowerCase() === 'true';
@@ -358,6 +364,42 @@ function persistDailyQuotaLedger(): void {
 
 hydrateDailyQuotaLedger();
 
+let dailyChallengeQuotaLedger: DailyQuotaLedger = {};
+
+function hydrateDailyChallengeQuotaLedger(): void {
+  try {
+    if (fs.existsSync(DAILY_CHALLENGE_QUOTA_FILE_PATH)) {
+      const raw = fs.readFileSync(DAILY_CHALLENGE_QUOTA_FILE_PATH, 'utf8');
+      const parsed = JSON.parse(raw) as DailyQuotaLedger;
+      if (parsed && typeof parsed === 'object') {
+        dailyChallengeQuotaLedger = pruneStaleQuotaDays(parsed);
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load daily challenge quota ledger (starting fresh):', err);
+    dailyChallengeQuotaLedger = {};
+  }
+}
+
+let challengeQuotaWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistDailyChallengeQuotaLedger(): void {
+  dailyChallengeQuotaLedger = pruneStaleQuotaDays(dailyChallengeQuotaLedger);
+  if (challengeQuotaWriteTimer) clearTimeout(challengeQuotaWriteTimer);
+  challengeQuotaWriteTimer = setTimeout(() => {
+    challengeQuotaWriteTimer = null;
+    void fs.promises
+      .writeFile(
+        DAILY_CHALLENGE_QUOTA_FILE_PATH,
+        JSON.stringify(dailyChallengeQuotaLedger),
+        'utf8'
+      )
+      .catch((err) => console.warn('Could not persist daily challenge quota ledger:', err));
+  }, 120);
+}
+
+hydrateDailyChallengeQuotaLedger();
+
 interface ResolvedServerPrincipal {
   primaryKey: string;
   allKeys: string[];
@@ -374,12 +416,7 @@ async function resolveVerifiedRequestPrincipal(
   const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
   const ip = forwarded || req.ip || req.socket.remoteAddress || 'unknown';
   const verifiedUser = await verifyFirebaseBearerToken(req.headers.authorization);
-  const rawUserId =
-    verifiedUser?.uid ||
-    (typeof body?.userId === 'string' && body.userId) ||
-    (typeof req.headers['x-truth-user-id'] === 'string' && req.headers['x-truth-user-id']) ||
-    (typeof req.query.userId === 'string' && req.query.userId) ||
-    null;
+  const rawUserId = verifiedUser?.uid || null;
   const clientId =
     (typeof body?.clientId === 'string' && body.clientId) ||
     (typeof req.headers['x-truth-client-id'] === 'string' && req.headers['x-truth-client-id']) ||
@@ -703,15 +740,27 @@ async function createApp(): Promise<express.Express> {
 
   app.get('/api/config', async (req: Request, res: Response) => {
     const principal = await resolveVerifiedRequestPrincipal(req);
+    const nowMs = Date.now();
     const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: Boolean(principal.verifiedUser),
+      isAdmin: principal.isAdmin
+    });
+    const userChallengeLimit = resolveDailyChallengeLimit({
       isAuthenticated: Boolean(principal.verifiedUser),
       isAdmin: principal.isAdmin
     });
     const dailyQuota = getUserDailyQuotaStatus(
       dailyQuotaLedger,
       principal.allKeys,
-      Date.now(),
+      nowMs,
       userPullLimit,
+      principal.isAdmin
+    );
+    const dailyChallengeQuota = getUserDailyQuotaStatus(
+      dailyChallengeQuotaLedger,
+      principal.allKeys,
+      nowMs,
+      userChallengeLimit,
       principal.isAdmin
     );
     res.json({
@@ -722,8 +771,12 @@ async function createApp(): Promise<express.Express> {
       dailyPullLimit: userPullLimit,
       anonymousDailyPullLimit: DAILY_NEW_FULL_PULL_LIMIT,
       signedInDailyPullLimit: SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
+      dailyChallengeLimit: userChallengeLimit,
+      anonymousDailyChallengeLimit: DAILY_CHALLENGE_LIMIT,
+      signedInDailyChallengeLimit: SIGNED_IN_DAILY_CHALLENGE_LIMIT,
       unrestrictedMetalsAndNetworks: true,
       dailyQuota,
+      dailyChallengeQuota,
       models: {
         audit: 'gemini-4-hydrogen',
         reaudit: 'gemini-4-hydrogen',
@@ -743,24 +796,39 @@ async function createApp(): Promise<express.Express> {
     const admin = await requireVerifiedAdmin(req, res);
     if (!admin) return;
     dailyQuotaLedger = {};
+    dailyChallengeQuotaLedger = {};
     rateBuckets.clear();
     persistDailyQuotaLedger();
+    persistDailyChallengeQuotaLedger();
     const principal = await resolveVerifiedRequestPrincipal(req);
+    const nowMs = Date.now();
     const userPullLimit = resolveDailyPullLimit({
+      isAuthenticated: true,
+      isAdmin: true
+    });
+    const userChallengeLimit = resolveDailyChallengeLimit({
       isAuthenticated: true,
       isAdmin: true
     });
     const dailyQuota = getUserDailyQuotaStatus(
       dailyQuotaLedger,
       principal.allKeys,
-      Date.now(),
+      nowMs,
       userPullLimit,
+      true
+    );
+    const dailyChallengeQuota = getUserDailyQuotaStatus(
+      dailyChallengeQuotaLedger,
+      principal.allKeys,
+      nowMs,
+      userChallengeLimit,
       true
     );
     res.json({
       ok: true,
       clearedBy: admin.email,
-      dailyQuota
+      dailyQuota,
+      dailyChallengeQuota
     });
   });
 
@@ -841,13 +909,15 @@ async function createApp(): Promise<express.Express> {
             record: ReturnType<typeof getPersistedGainsCohort>;
             liveSpotMap: Record<string, number>;
             windowTrajectories: ReturnType<typeof getCachedWindowTrajectories>;
+            extraResolvedEntries: ReturnType<typeof getCachedExtraResolvedEntries>;
           }>((resolve) =>
             setTimeout(
               () =>
                 resolve({
                   record: getPersistedGainsCohort(),
-                  liveSpotMap: {},
-                  windowTrajectories: getCachedWindowTrajectories()
+                  liveSpotMap: getLastLiveSpotMap(),
+                  windowTrajectories: getCachedWindowTrajectories(),
+                  extraResolvedEntries: getCachedExtraResolvedEntries()
                 }),
               4500
             )
@@ -856,7 +926,8 @@ async function createApp(): Promise<express.Express> {
         res.json({
           record: result.record,
           liveSpotMap: result.liveSpotMap,
-          windowTrajectories: result.windowTrajectories
+          windowTrajectories: result.windowTrajectories,
+          extraResolvedEntries: result.extraResolvedEntries
         });
         return;
       }
@@ -864,7 +935,12 @@ async function createApp(): Promise<express.Express> {
       // Fallback cleanly to persisted record
     }
     const record = getPersistedGainsCohort();
-    res.json({ record, windowTrajectories: getCachedWindowTrajectories() });
+    res.json({
+      record,
+      liveSpotMap: getLastLiveSpotMap(),
+      windowTrajectories: getCachedWindowTrajectories(),
+      extraResolvedEntries: getCachedExtraResolvedEntries()
+    });
   });
 
   app.put('/api/gains-cohort', async (req: Request, res: Response) => {
@@ -1358,6 +1434,8 @@ ${JSON.stringify(parsed)}`;
       userInput?: string;
       isGeniusMode?: boolean;
       timelineYear?: string | null;
+      clientId?: string;
+      userId?: string | null;
     };
 
     const mode = body.mode;
@@ -1396,7 +1474,12 @@ ${JSON.stringify(parsed)}`;
       return;
     }
 
-    const principal = await resolveVerifiedRequestPrincipal(req);
+    const principal = await resolveVerifiedRequestPrincipal(req, body);
+    const userChallengeLimit = resolveDailyChallengeLimit({
+      isAuthenticated: Boolean(principal.verifiedUser),
+      isAdmin: principal.isAdmin
+    });
+
     if (isStrictCreditLockActive() && !principal.isAdmin) {
       res.status(423).json({
         error: 'STRICT_CREDIT_LOCK is active on the server. Cached reads remain unlimited.'
@@ -1420,6 +1503,44 @@ ${JSON.stringify(parsed)}`;
     } catch (err) {
       res.status(503).json({ error: formatGeminiErrorMessage(err) });
       return;
+    }
+
+    let didConsumeChallengeSlot = false;
+    let activeChallengeQuota =
+      mode === 'CHALLENGE'
+        ? getUserDailyQuotaStatus(
+            dailyChallengeQuotaLedger,
+            principal.allKeys,
+            Date.now(),
+            userChallengeLimit,
+            principal.isAdmin
+          )
+        : undefined;
+
+    if (mode === 'CHALLENGE') {
+      const challengeAttempt = consumeDailyPull(
+        dailyChallengeQuotaLedger,
+        principal.allKeys,
+        Date.now(),
+        userChallengeLimit,
+        principal.isAdmin
+      );
+      if (!challengeAttempt.allowed) {
+        const signInHint = !principal.verifiedUser
+          ? ` Sign in with Google to unlock ${SIGNED_IN_DAILY_CHALLENGE_LIMIT} daily challenges.`
+          : '';
+        res.status(429).json({
+          error: `Daily challenge limit reached (${challengeAttempt.status.used}/${challengeAttempt.status.limit} challenges used today — resets 00:00 UTC).${signInHint}`,
+          challengeQuota: challengeAttempt.status
+        });
+        return;
+      }
+      if (!principal.isAdmin) {
+        dailyChallengeQuotaLedger = challengeAttempt.nextLedger;
+        persistDailyChallengeQuotaLedger();
+        didConsumeChallengeSlot = true;
+      }
+      activeChallengeQuota = challengeAttempt.status;
     }
 
     const targetInv = targetAudit.invariants[invIdx];
@@ -1597,7 +1718,11 @@ ADJUDICATION RULES (ZERO SYCOPHANCY — PURE PHYSICS & CODEBASE LAW):
           }
         }
 
-        res.json({ parsed, sources: freshBundle.sources });
+        res.json({
+          parsed,
+          sources: freshBundle.sources,
+          challengeQuota: activeChallengeQuota
+        });
         return;
       }
 
@@ -1661,7 +1786,22 @@ ${
 
       res.json({ bodyText, sources: [] });
     } catch (err) {
-      res.status(502).json({ error: formatGeminiErrorMessage(err) });
+      let refundedChallengeQuota = activeChallengeQuota;
+      if (didConsumeChallengeSlot) {
+        dailyChallengeQuotaLedger = refundDailyPull(dailyChallengeQuotaLedger, principal.allKeys);
+        persistDailyChallengeQuotaLedger();
+        refundedChallengeQuota = getUserDailyQuotaStatus(
+          dailyChallengeQuotaLedger,
+          principal.allKeys,
+          Date.now(),
+          userChallengeLimit,
+          principal.isAdmin
+        );
+      }
+      res.status(502).json({
+        error: formatGeminiErrorMessage(err),
+        ...(refundedChallengeQuota ? { challengeQuota: refundedChallengeQuota } : {})
+      });
     }
   });
 

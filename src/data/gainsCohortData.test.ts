@@ -442,18 +442,57 @@ test('resolveTimelineBaselineMode, historical resolveCohortBaselinePrice, and bu
   assert.equal(traj1971[6].failAll, 1.0);
   assert.ok(Math.abs(traj1971[6].passAll - 66.0) < 0.01);
 
-  const { formatMultipleCompact, formatSimOutcomeUsd } = await import('./gainsCohortData.ts');
+  const { formatMultipleCompact, formatSimOutcomeUsd, KNOWN_AUDIT_COHORT_METADATA, preserveCustomCohortEntries, mergeResolvedEntriesIntoCohortRecord } = await import('./gainsCohortData.ts');
   assert.equal(formatMultipleCompact(0.000012), '<0.0001x');
   assert.equal(formatMultipleCompact(71.14), '71.1x');
   assert.equal(formatMultipleCompact(1450), '1.4Kx');
   assert.equal(formatMultipleCompact(1460), '1.5Kx');
   assert.equal(formatSimOutcomeUsd(5000 * 71.14), '$355.7K');
   assert.equal(formatSimOutcomeUsd(0.00004), '<$0.0001');
+
+  // Verify curated symbol routing & collision guards for physical metals, custom crypto, and fiat
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.CU.yahooSymbol, 'HG=F');
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.HYPE.yahooSymbol, 'HYPE32196-USD');
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.S.yahooSymbol, 'S32684-USD');
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.EUR.yahooSymbol, 'EURUSD=X');
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.NIGHT.yahooSymbol, null);
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.GRAM.yahooSymbol, null);
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.CC.yahooSymbol, null);
+  assert.equal(KNOWN_AUDIT_COHORT_METADATA.ZKAS.yahooSymbol, null);
+
+  // Verify preserveCustomCohortEntries retains custom basket baselines/spots across 27-item server updates
+  const serverBase = getDefaultGainsCohortRecord();
+  const withCustom = mergeResolvedEntriesIntoCohortRecord(serverBase, {
+    DOGE: {
+      ticker: 'DOGE',
+      name: 'Dogecoin',
+      grade: 'B',
+      auditScore: 4.23,
+      releasePrice: 0.0005,
+      releaseLabel: "$0.0005 (Dec '13)",
+      price180d: 0.14,
+      price1y: 0.16,
+      snapshotSpot: 0.22,
+      liquidCycle: true
+    },
+    HYPE: {
+      ticker: 'HYPE',
+      name: 'Hyperliquid',
+      grade: 'F',
+      auditScore: 0,
+      releasePrice: 3.81,
+      releaseLabel: "$3.81 (Nov '24)",
+      price180d: 26.5,
+      price1y: 24.8,
+      snapshotSpot: 28.4,
+      liquidCycle: true
+    }
+  });
+  const serverUpdated = applySpotPricesToCohortRecord(serverBase, { BTC: 99000 }).nextRecord;
+  const preserved = preserveCustomCohortEntries(serverUpdated, withCustom);
+  assert.equal(preserved.passed.find((a) => a.ticker === 'BTC')?.snapshotSpot, 99000);
+  assert.equal(preserved.passed.find((a) => a.ticker === 'DOGE')?.releasePrice, 0.0005);
+  assert.equal(preserved.passed.find((a) => a.ticker === 'DOGE')?.snapshotSpot, 0.22);
+  assert.equal(preserved.failed.find((a) => a.ticker === 'HYPE')?.releasePrice, 3.81);
+  assert.equal(preserved.failed.find((a) => a.ticker === 'HYPE')?.snapshotSpot, 28.4);
 });
-
-
-
-
-
-
-

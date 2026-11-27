@@ -1,12 +1,15 @@
 import fs from 'node:fs';
 import {
   FAILED_COHORT_GAINS,
+  KNOWN_AUDIT_COHORT_METADATA,
+  MAX_ASSETS_PER_COHORT,
   PASSED_COHORT_GAINS,
   applySpotPricesToCohortRecord,
   buildBasketSyncedCohortRecord,
   classifyAuditBasketSide,
   formatCohortTimestampLabel,
   formatUsdPrice,
+  mergeResolvedEntriesIntoCohortRecord,
   normalizeCohortTicker,
   sanitizeCohortAssetEntry,
   sanitizeGainsCohortRecord,
@@ -32,6 +35,7 @@ let memoryCohort: GainsCohortRecord | null = null;
 let lastLiveSyncCompletedAtMs = 0;
 let lastLiveSpotMap: Record<string, number> = {};
 const cachedBarsByTicker = new Map<string, HistoricalBar[]>();
+const cachedExtraResolvedByTicker = new Map<string, CohortAssetEntry>();
 let cachedWindowTrajectories: WindowTrajectoriesMap = {};
 let inFlightLiveSync: Promise<{
   record: GainsCohortRecord;
@@ -41,9 +45,27 @@ let inFlightLiveSync: Promise<{
   extraResolvedEntries: Record<string, CohortAssetEntry>;
 }> | null = null;
 
-const CATALOG_META_BY_TICKER = new Map<string, CohortAssetEntry>(
-  [...PASSED_COHORT_GAINS, ...FAILED_COHORT_GAINS].map((item) => [item.ticker, item])
-);
+const CATALOG_META_BY_TICKER = new Map<string, CohortAssetEntry>();
+const CURATED_YAHOO_SYMBOL_BY_TICKER = new Map<string, string | null>();
+
+for (const item of [...PASSED_COHORT_GAINS, ...FAILED_COHORT_GAINS]) {
+  CATALOG_META_BY_TICKER.set(item.ticker, item);
+  CURATED_YAHOO_SYMBOL_BY_TICKER.set(item.ticker, item.yahooSymbol ?? null);
+}
+for (const [tk, meta] of Object.entries(KNOWN_AUDIT_COHORT_METADATA)) {
+  const side = classifyAuditBasketSide({
+    ticker: tk,
+    grade: meta.grade,
+    totalScore: meta.auditScore
+  });
+  const cleaned = sanitizeCohortAssetEntry({ ...meta, ticker: tk }, side);
+  if (cleaned && !CATALOG_META_BY_TICKER.has(tk)) {
+    CATALOG_META_BY_TICKER.set(tk, cleaned);
+  }
+  if (meta.yahooSymbol !== undefined && !CURATED_YAHOO_SYMBOL_BY_TICKER.has(tk)) {
+    CURATED_YAHOO_SYMBOL_BY_TICKER.set(tk, meta.yahooSymbol ?? null);
+  }
+}
 
 function backfillCatalogMetadata(record: GainsCohortRecord): GainsCohortRecord {
   const enrich = (item: CohortAssetEntry): CohortAssetEntry => {
@@ -55,10 +77,17 @@ function backfillCatalogMetadata(record: GainsCohortRecord): GainsCohortRecord {
     const price1y = item.price1y !== undefined ? item.price1y : cat.price1y ?? null;
     const price2y = item.price2y !== undefined ? item.price2y : cat.price2y ?? null;
     const price4y = item.price4y !== undefined ? item.price4y : cat.price4y ?? null;
-    const yahooSymbol =
-      item.yahooSymbol !== undefined && item.yahooSymbol !== null
-        ? item.yahooSymbol
-        : cat.yahooSymbol ?? null;
+    const curatedYahoo = CURATED_YAHOO_SYMBOL_BY_TICKER.get(item.ticker);
+    const isGenericYahoo =
+      item.yahooSymbol === `${item.ticker}-USD` &&
+      curatedYahoo !== undefined &&
+      curatedYahoo !== `${item.ticker}-USD`;
+    const yahooSymbol = isGenericYahoo
+      ? curatedYahoo
+      : item.yahooSymbol !== undefined && item.yahooSymbol !== null
+      ? item.yahooSymbol
+      : cat.yahooSymbol ?? null;
+    const snapshotSpot = item.snapshotSpot ?? cat.snapshotSpot ?? null;
     const hasBaseline =
       (item.basePrice !== null && item.basePrice > 0) ||
       (releasePrice !== null && releasePrice > 0) ||
@@ -74,8 +103,9 @@ function backfillCatalogMetadata(record: GainsCohortRecord): GainsCohortRecord {
       price1y,
       price2y,
       price4y,
+      snapshotSpot,
       yahooSymbol,
-      liquidCycle: Boolean(item.liquidCycle || (hasBaseline && item.snapshotSpot && item.snapshotSpot > 0))
+      liquidCycle: Boolean(item.liquidCycle || (hasBaseline && snapshotSpot && snapshotSpot > 0))
     };
   };
 
@@ -126,6 +156,14 @@ export function getCachedWindowTrajectories(): WindowTrajectoriesMap {
   return cachedWindowTrajectories;
 }
 
+export function getCachedExtraResolvedEntries(): Record<string, CohortAssetEntry> {
+  return Object.fromEntries(cachedExtraResolvedByTicker.entries());
+}
+
+export function getLastLiveSpotMap(): Record<string, number> {
+  return { ...lastLiveSpotMap };
+}
+
 export function savePersistedGainsCohort(
   rawPayload: Partial<GainsCohortRecord>
 ): GainsCohortRecord {
@@ -170,6 +208,7 @@ function findBarPriceNear(
 }
 
 export interface YahooChartParsed {
+  resolvedSymbol: string;
   spotPrice: number | null;
   releasePrice: number | null;
   releaseLabel?: string;
@@ -180,24 +219,125 @@ export interface YahooChartParsed {
   bars: HistoricalBar[];
 }
 
+export interface YahooSymbolMatchContext {
+  ticker: string;
+  name: string;
+  isCuratedSymbol: boolean;
+}
+
 const yahooChartResponseCache = new Map<
   string,
   { fetchedAtMs: number; parsed: YahooChartParsed }
 >();
 const inFlightYahooCharts = new Map<string, Promise<YahooChartParsed | null>>();
+const yahooSymbolSearchCache = new Map<
+  string,
+  { fetchedAtMs: number; symbol: string | null }
+>();
 
-export async function fetchYahooReleaseAndSpot(
+function doesYahooMetaMatchAssetName(
+  metaShortOrLongName: string,
+  expectedTicker: string,
+  expectedAssetName: string
+): boolean {
+  const cleanMeta = metaShortOrLongName
+    .replace(/\bUSD\b/gi, '')
+    .replace(/\([^)]*\)/g, ' ')
+    .trim()
+    .toLowerCase();
+  if (!cleanMeta) return true;
+
+  const lowerName = expectedAssetName.trim().toLowerCase();
+  const lowerTicker = expectedTicker.trim().toLowerCase();
+
+  if (/\.(vip|io|finance|meme|club|xyz)\b/i.test(metaShortOrLongName) && !lowerName.includes('.')) {
+    return false;
+  }
+  if (/prev\.\s*toncoin/i.test(metaShortOrLongName) && !lowerName.includes('toncoin')) {
+    return false;
+  }
+
+  if (!lowerName || lowerName === lowerTicker) return true;
+  if (cleanMeta.includes(lowerName) || lowerName.includes(cleanMeta)) return true;
+
+  const nameTokens = lowerName
+    .split(/[^a-z0-9]+/)
+    .filter((tok) => tok.length >= 3 && tok !== 'network' && tok !== 'protocol' && tok !== 'coin' && tok !== 'token');
+  if (nameTokens.length === 0) return true;
+
+  return nameTokens.some((tok) => cleanMeta.includes(tok));
+}
+
+async function searchYahooNumberedCryptoSymbol(
+  ticker: string,
+  assetName: string
+): Promise<string | null> {
+  const cacheKey = `${ticker}:${assetName.trim().toLowerCase()}`;
+  const cached = yahooSymbolSearchCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAtMs < 60 * 60 * 1000) {
+    return cached.symbol;
+  }
+  try {
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(
+        assetName
+      )}&quotesCount=6&newsCount=0`,
+      {
+        signal: AbortSignal.timeout(4500),
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'Mozilla/5.0 (compatible; ThermodynamicTruthBot/1.0)'
+        }
+      }
+    );
+    if (!res.ok) {
+      yahooSymbolSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), symbol: null });
+      return null;
+    }
+    const json = (await res.json()) as {
+      quotes?: Array<{
+        symbol?: string;
+        quoteType?: string;
+        shortname?: string;
+        longname?: string;
+      }>;
+    };
+    const numberedRe = new RegExp(`^${ticker}\\d+-USD$`, 'i');
+    const exactRe = new RegExp(`^${ticker}-USD$`, 'i');
+    const quotes = Array.isArray(json?.quotes) ? json.quotes : [];
+    for (const q of quotes) {
+      const sym = String(q?.symbol || '').trim().toUpperCase();
+      if (!sym || (!numberedRe.test(sym) && !exactRe.test(sym))) continue;
+      const label = `${q?.shortname || ''} ${q?.longname || ''}`.trim();
+      if (doesYahooMetaMatchAssetName(label, ticker, assetName)) {
+        yahooSymbolSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), symbol: sym });
+        return sym;
+      }
+    }
+    yahooSymbolSearchCache.set(cacheKey, { fetchedAtMs: Date.now(), symbol: null });
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchYahooChartRaw(
   symbol: string,
-  forceRefresh = false
-): Promise<YahooChartParsed | null> {
+  forceRefresh = false,
+  matchCtx?: YahooSymbolMatchContext
+): Promise<{ parsed: YahooChartParsed | null; collidedOrMissing: boolean }> {
   const key = symbol.trim().toUpperCase();
   const cached = yahooChartResponseCache.get(key);
   if (!forceRefresh && cached && Date.now() - cached.fetchedAtMs < LIVE_SYNC_TTL_MS) {
-    return cached.parsed;
+    return { parsed: cached.parsed, collidedOrMissing: false };
   }
   const existingFlight = inFlightYahooCharts.get(key);
-  if (existingFlight) return existingFlight;
+  if (existingFlight) {
+    const awaited = await existingFlight;
+    return { parsed: awaited, collidedOrMissing: awaited === null };
+  }
 
+  let collidedOrMissing = false;
   const reqPromise = (async (): Promise<YahooChartParsed | null> => {
     try {
       const res = await fetch(
@@ -212,12 +352,19 @@ export async function fetchYahooReleaseAndSpot(
           }
         }
       );
-      if (!res.ok) return cached?.parsed ?? null;
+      if (!res.ok) {
+        if (res.status === 404) collidedOrMissing = true;
+        return cached?.parsed ?? null;
+      }
 
       const json = (await res.json()) as {
         chart?: {
           result?: Array<{
-            meta?: { regularMarketPrice?: number };
+            meta?: {
+              regularMarketPrice?: number;
+              shortName?: string;
+              longName?: string;
+            };
             timestamp?: number[];
             indicators?: {
               quote?: Array<{
@@ -230,7 +377,21 @@ export async function fetchYahooReleaseAndSpot(
       };
 
       const result = json?.chart?.result?.[0];
-      if (!result) return cached?.parsed ?? null;
+      if (!result) {
+        collidedOrMissing = true;
+        return cached?.parsed ?? null;
+      }
+
+      if (matchCtx && !matchCtx.isCuratedSymbol) {
+        const metaTitle = `${result.meta?.shortName || ''} ${result.meta?.longName || ''}`.trim();
+        if (
+          metaTitle &&
+          !doesYahooMetaMatchAssetName(metaTitle, matchCtx.ticker, matchCtx.name)
+        ) {
+          collidedOrMissing = true;
+          return null;
+        }
+      }
 
       const rawSpot = Number(result.meta?.regularMarketPrice);
       const spotPrice = Number.isFinite(rawSpot) && rawSpot > 0 ? rawSpot : null;
@@ -278,6 +439,7 @@ export async function fetchYahooReleaseAndSpot(
       const price4y = findBarPriceNear(bars, nowMs - 1461 * DAY_MS);
 
       const parsed: YahooChartParsed = {
+        resolvedSymbol: key,
         spotPrice,
         releasePrice,
         releaseLabel,
@@ -297,7 +459,35 @@ export async function fetchYahooReleaseAndSpot(
   })();
 
   inFlightYahooCharts.set(key, reqPromise);
-  return reqPromise;
+  const parsed = await reqPromise;
+  return { parsed, collidedOrMissing };
+}
+
+export async function fetchYahooReleaseAndSpot(
+  symbol: string,
+  forceRefresh = false,
+  matchCtx?: YahooSymbolMatchContext
+): Promise<YahooChartParsed | null> {
+  const initial = await fetchYahooChartRaw(symbol, forceRefresh, matchCtx);
+  if (initial.parsed) return initial.parsed;
+
+  if (
+    initial.collidedOrMissing &&
+    matchCtx &&
+    !matchCtx.isCuratedSymbol &&
+    matchCtx.name &&
+    matchCtx.name.toUpperCase() !== matchCtx.ticker.toUpperCase()
+  ) {
+    const discovered = await searchYahooNumberedCryptoSymbol(matchCtx.ticker, matchCtx.name);
+    if (discovered && discovered.toUpperCase() !== symbol.trim().toUpperCase()) {
+      const retry = await fetchYahooChartRaw(discovered, forceRefresh, {
+        ...matchCtx,
+        isCuratedSymbol: true
+      });
+      return retry.parsed;
+    }
+  }
+  return null;
 }
 
 const WINDOW_SPECS: Array<{
@@ -484,28 +674,78 @@ function sanitizeExtraSyncItems(
     if (!tk || !safeTickerRe.test(tk) || seen.has(tk)) continue;
     seen.add(tk);
 
+    const cat = CATALOG_META_BY_TICKER.get(tk);
+    const hasCuratedYahoo = CURATED_YAHOO_SYMBOL_BY_TICKER.has(tk);
+    const curatedYahoo = CURATED_YAHOO_SYMBOL_BY_TICKER.get(tk);
+    const cachedPrev = cachedExtraResolvedByTicker.get(tk);
+
     const side = classifyAuditBasketSide({
       ticker: tk,
-      grade: raw.grade,
-      totalScore: raw.auditScore
+      grade: raw.grade ?? cat?.grade ?? cachedPrev?.grade,
+      totalScore: raw.auditScore ?? cat?.auditScore ?? cachedPrev?.auditScore
     });
-    const rawCb = raw.coinbasePair ? String(raw.coinbasePair).trim().toUpperCase() : `${tk}-USD`;
-    const rawGecko = raw.geckoId ? String(raw.geckoId).trim().toLowerCase() : null;
-    const rawYahoo = raw.yahooSymbol ? String(raw.yahooSymbol).trim().toUpperCase() : `${tk}-USD`;
+
+    const rawCbCandidate =
+      raw.coinbasePair !== undefined ? raw.coinbasePair : cat?.coinbasePair;
+    const isGenericCb =
+      typeof rawCbCandidate === 'string' &&
+      rawCbCandidate.trim().toUpperCase() === `${tk}-USD` &&
+      cat !== undefined &&
+      cat.coinbasePair === null;
+    const resolvedCb = isGenericCb
+      ? null
+      : rawCbCandidate !== undefined
+      ? rawCbCandidate
+        ? String(rawCbCandidate).trim().toUpperCase()
+        : null
+      : `${tk}-USD`;
+
+    const rawGeckoCandidate =
+      raw.geckoId !== undefined ? raw.geckoId : cat?.geckoId ?? cachedPrev?.geckoId ?? null;
+    const resolvedGecko = rawGeckoCandidate
+      ? String(rawGeckoCandidate).trim().toLowerCase()
+      : null;
+
+    let resolvedYahoo: string | null;
+    if (hasCuratedYahoo) {
+      const clientStr = raw.yahooSymbol ? String(raw.yahooSymbol).trim().toUpperCase() : null;
+      resolvedYahoo =
+        clientStr && clientStr !== `${tk}-USD`
+          ? clientStr
+          : curatedYahoo ?? null;
+    } else if (cachedPrev?.yahooSymbol) {
+      resolvedYahoo = cachedPrev.yahooSymbol;
+    } else if (raw.yahooSymbol !== undefined) {
+      resolvedYahoo = raw.yahooSymbol ? String(raw.yahooSymbol).trim().toUpperCase() : null;
+    } else {
+      resolvedYahoo = `${tk}-USD`;
+    }
 
     const cleaned = sanitizeCohortAssetEntry(
       {
+        ...cachedPrev,
+        ...cat,
         ...raw,
         ticker: tk,
-        coinbasePair: rawCb && safePairRe.test(rawCb) ? rawCb : null,
-        geckoId: rawGecko && safeGeckoRe.test(rawGecko) ? rawGecko : null,
-        yahooSymbol: rawYahoo && safeYahooRe.test(rawYahoo) ? rawYahoo : null
+        name: String(raw.name || cat?.name || cachedPrev?.name || tk),
+        basePrice: raw.basePrice ?? cachedPrev?.basePrice ?? cat?.basePrice ?? null,
+        baselineLabel: raw.baselineLabel || cachedPrev?.baselineLabel || cat?.baselineLabel,
+        releasePrice: raw.releasePrice ?? cachedPrev?.releasePrice ?? cat?.releasePrice ?? null,
+        releaseLabel: raw.releaseLabel || cachedPrev?.releaseLabel || cat?.releaseLabel,
+        price180d: raw.price180d ?? cachedPrev?.price180d ?? cat?.price180d ?? null,
+        price1y: raw.price1y ?? cachedPrev?.price1y ?? cat?.price1y ?? null,
+        price2y: raw.price2y ?? cachedPrev?.price2y ?? cat?.price2y ?? null,
+        price4y: raw.price4y ?? cachedPrev?.price4y ?? cat?.price4y ?? null,
+        snapshotSpot: raw.snapshotSpot ?? cachedPrev?.snapshotSpot ?? cat?.snapshotSpot ?? null,
+        coinbasePair: resolvedCb && safePairRe.test(resolvedCb) ? resolvedCb : null,
+        geckoId: resolvedGecko && safeGeckoRe.test(resolvedGecko) ? resolvedGecko : null,
+        yahooSymbol: resolvedYahoo && safeYahooRe.test(resolvedYahoo) ? resolvedYahoo : null
       },
       side
     );
     if (cleaned) {
       out.push(cleaned);
-      if (out.length >= 30) break;
+      if (out.length >= MAX_ASSETS_PER_COHORT * 2) break;
     }
   }
   return out;
@@ -525,13 +765,18 @@ export async function syncLivePricesAndPersistGainsCohort(
   const initialExistingSet = new Set(
     [...currentSnapshot.passed, ...currentSnapshot.failed].map((i) => i.ticker)
   );
-  const preSanitizedExtras = sanitizeExtraSyncItems(extraItems, initialExistingSet);
+  const incomingNewExtras = sanitizeExtraSyncItems(extraItems, initialExistingSet).filter(
+    (item) => {
+      const prev = cachedExtraResolvedByTicker.get(item.ticker);
+      return !prev || (!prev.liquidCycle && Boolean(item.yahooSymbol || item.geckoId || item.coinbasePair));
+    }
+  );
   const hasClientOverrides = Boolean(
     clientSpotOverrides && Object.keys(clientSpotOverrides).length > 0
   );
-  const hasExtraItems = preSanitizedExtras.length > 0;
+  const hasUncachedExtras = incomingNewExtras.length > 0;
 
-  if (!hasClientOverrides && !hasExtraItems) {
+  if (!hasClientOverrides && !hasUncachedExtras) {
     if (inFlightLiveSync) {
       return inFlightLiveSync;
     }
@@ -541,7 +786,7 @@ export async function syncLivePricesAndPersistGainsCohort(
         syncedTickers: [],
         liveSpotMap: { ...lastLiveSpotMap },
         windowTrajectories: cachedWindowTrajectories,
-        extraResolvedEntries: {}
+        extraResolvedEntries: getCachedExtraResolvedEntries()
       };
     }
   }
@@ -550,7 +795,11 @@ export async function syncLivePricesAndPersistGainsCohort(
     const current = getPersistedGainsCohort();
     const persistedItems: CohortAssetEntry[] = [...current.passed, ...current.failed];
     const existingTickerSet = new Set(persistedItems.map((i) => i.ticker));
-    const sanitizedExtras = sanitizeExtraSyncItems(extraItems, existingTickerSet);
+    const combinedRawExtras: Array<Partial<CohortAssetEntry>> = [
+      ...(Array.isArray(extraItems) ? extraItems : []),
+      ...Array.from(cachedExtraResolvedByTicker.values())
+    ];
+    const sanitizedExtras = sanitizeExtraSyncItems(combinedRawExtras, existingTickerSet);
     const allItems: CohortAssetEntry[] = [...persistedItems, ...sanitizedExtras];
 
     const liveSpotMap: Record<string, number> = {};
@@ -615,17 +864,25 @@ export async function syncLivePricesAndPersistGainsCohort(
     }
 
     // 3. Yahoo Finance chart endpoint (?range=max&interval=1wk):
-    //    covers physical metals, fallbacks, earliest releasePrice for custom assets,
+    //    covers physical metals, fiat FX, fallbacks, earliest releasePrice for custom assets,
     //    AND 180d/1y/2y/4y rolling window baselines + weekly bars for real equity curves.
     const needsYahooRefresh = cachedBarsByTicker.size < 8;
     const yahooTargets = allItems
       .map((item) => {
-        const yahooSym =
-          item.yahooSymbol ||
-          (item.yahooSymbol !== null && (item.coinbasePair || item.geckoId)
-            ? `${item.ticker}-USD`
-            : null);
-        return { item, yahooSym };
+        const hasExplicitNull =
+          CURATED_YAHOO_SYMBOL_BY_TICKER.has(item.ticker) &&
+          CURATED_YAHOO_SYMBOL_BY_TICKER.get(item.ticker) === null;
+        const yahooSym = hasExplicitNull
+          ? null
+          : item.yahooSymbol ||
+            (item.yahooSymbol !== null && (item.coinbasePair || item.geckoId)
+              ? `${item.ticker}-USD`
+              : null);
+        const isCuratedSymbol = Boolean(
+          CURATED_YAHOO_SYMBOL_BY_TICKER.get(item.ticker) ||
+            (yahooSym && yahooSym !== `${item.ticker}-USD`)
+        );
+        return { item, yahooSym, isCuratedSymbol };
       })
       .filter(
         ({ item, yahooSym }) =>
@@ -638,8 +895,12 @@ export async function syncLivePricesAndPersistGainsCohort(
 
     if (yahooTargets.length > 0) {
       await Promise.allSettled(
-        yahooTargets.map(async ({ item, yahooSym }) => {
-          const parsed = await fetchYahooReleaseAndSpot(yahooSym!);
+        yahooTargets.map(async ({ item, yahooSym, isCuratedSymbol }) => {
+          const parsed = await fetchYahooReleaseAndSpot(yahooSym!, false, {
+            ticker: item.ticker,
+            name: item.name,
+            isCuratedSymbol
+          });
           if (!parsed) return;
           if (!liveSpotMap[item.ticker] && parsed.spotPrice) {
             liveSpotMap[item.ticker] = parsed.spotPrice;
@@ -648,7 +909,7 @@ export async function syncLivePricesAndPersistGainsCohort(
             cachedBarsByTicker.set(item.ticker, parsed.bars);
           }
           const ov: ReleaseBaselineOverride = {
-            yahooSymbol: yahooSym!,
+            yahooSymbol: parsed.resolvedSymbol || yahooSym!,
             price180d: parsed.price180d,
             price1y: parsed.price1y,
             price2y: parsed.price2y,
@@ -678,8 +939,7 @@ export async function syncLivePricesAndPersistGainsCohort(
       releaseOverrides
     );
 
-    // Resolve newly pulled custom extraItems so basket percentages update immediately
-    const extraResolvedEntries: Record<string, CohortAssetEntry> = {};
+    // Resolve custom extraItems and persist them in cachedExtraResolvedByTicker across syncs
     if (sanitizedExtras.length > 0) {
       const tempExtrasRecord: GainsCohortRecord = {
         ...current,
@@ -710,12 +970,23 @@ export async function syncLivePricesAndPersistGainsCohort(
         ...resolvedExtrasRecord.passed,
         ...resolvedExtrasRecord.failed
       ]) {
-        extraResolvedEntries[resolvedItem.ticker] = resolvedItem;
+        cachedExtraResolvedByTicker.set(resolvedItem.ticker, resolvedItem);
+      }
+      // Also preserve curated catalog extras that were already liquid without needing a fresh tick
+      for (const rawExtra of sanitizedExtras) {
+        if (!cachedExtraResolvedByTicker.has(rawExtra.ticker)) {
+          cachedExtraResolvedByTicker.set(rawExtra.ticker, rawExtra);
+        }
       }
     }
 
+    const extraResolvedEntries = getCachedExtraResolvedEntries();
     const activeRecord = updatedTickers.length > 0 ? nextRecord : current;
-    const nextTraj = computeWindowTrajectoriesFromBars(activeRecord, liveSpotMap);
+    const trajectoryInputRecord = mergeResolvedEntriesIntoCohortRecord(
+      activeRecord,
+      extraResolvedEntries
+    );
+    const nextTraj = computeWindowTrajectoriesFromBars(trajectoryInputRecord, liveSpotMap);
     if (Object.keys(nextTraj).length > 0) {
       cachedWindowTrajectories = nextTraj;
     }
@@ -741,7 +1012,7 @@ export async function syncLivePricesAndPersistGainsCohort(
     };
   };
 
-  if (hasClientOverrides || hasExtraItems) {
+  if (hasClientOverrides || hasUncachedExtras) {
     return runSync();
   }
 
@@ -774,7 +1045,7 @@ export async function ensureFreshLiveGainsCohort(
       syncedTickers: [],
       liveSpotMap: { ...lastLiveSpotMap },
       windowTrajectories: cachedWindowTrajectories,
-      extraResolvedEntries: {}
+      extraResolvedEntries: getCachedExtraResolvedEntries()
     };
   }
   return syncLivePricesAndPersistGainsCohort();

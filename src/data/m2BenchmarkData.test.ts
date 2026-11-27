@@ -186,3 +186,50 @@ test('resolveBenchmarkSeriesForTimeline and computeM2AssetSummaries sync M2 base
   assert.equal(transformM2PointNullable(pts1971[0], 'REAL_DIV_M2').BTC, null);
 });
 
+test('computeM2AssetSummaries synchronizes full Passed and Failed baskets (including CU, HYPE, S, EUR) vs US M2', async () => {
+  const { buildBasketSyncedCohortRecord } = await import('./gainsCohortData.ts');
+  const { PRELOADED_AUDITS } = await import('./preloadedAudits.ts');
+
+  const customAudits = {
+    ...PRELOADED_AUDITS,
+    CU: { ticker: 'CU', name: 'Physical Copper', grade: 'C+', totalScore: 3.75 },
+    HYPE: { ticker: 'HYPE', name: 'Hyperliquid', grade: 'F', totalScore: 0 },
+    S: { ticker: 'S', name: 'Sonic', grade: 'F', totalScore: 0 },
+    EUR: { ticker: 'EUR', name: 'Euro', grade: 'F', totalScore: 0 }
+  };
+  const syncedCohort = buildBasketSyncedCohortRecord(customAudits);
+  const ptsPresent = resolveBenchmarkSeriesForTimeline(
+    DEFAULT_M2_BENCHMARK_DATASET,
+    'PRESENT',
+    'ALL_TIME'
+  );
+  const sumPresent = computeM2AssetSummaries(ptsPresent, 'PRESENT', 'ALL_TIME', {
+    cohortRecord: syncedCohort,
+    liveSpots: { CU: 4.5, HYPE: 30.0 },
+    feedMode: 'LIVE'
+  });
+
+  const cuRow = sumPresent.cohortMatrix.find((r) => r.ticker === 'CU')!;
+  const hypeRow = sumPresent.cohortMatrix.find((r) => r.ticker === 'HYPE')!;
+  const btcRow = sumPresent.cohortMatrix.find((r) => r.ticker === 'BTC')!;
+  const spxRow = sumPresent.cohortMatrix.find((r) => r.ticker === 'S&P 500')!;
+
+  assert.ok(btcRow);
+  assert.equal(btcRow.side, 'PASSED');
+  assert.ok(cuRow);
+  assert.equal(cuRow.currentPrice, 4.5);
+  assert.equal(cuRow.startPrice, 3.0);
+  assert.ok(hypeRow);
+  assert.equal(hypeRow.currentPrice, 30.0);
+  assert.equal(hypeRow.side, 'FAILED');
+  assert.ok(spxRow);
+  assert.equal(spxRow.side, 'MACRO');
+
+  assert.equal(sumPresent.passedBasketSummary?.count, 10); // 9 preloaded liquid (incl. BTC) + CU
+  assert.ok((sumPresent.failedBasketSummary?.count ?? 0) >= 15);
+  for (let i = 1; i < sumPresent.cohortMatrix.length; i += 1) {
+    assert.ok(
+      sumPresent.cohortMatrix[i - 1].m2AdjustedPct >= sumPresent.cohortMatrix[i].m2AdjustedPct
+    );
+  }
+});

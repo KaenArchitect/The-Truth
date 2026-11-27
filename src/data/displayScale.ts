@@ -1,3 +1,5 @@
+import { computeDesktopConstellationAvailHeight } from './constellationLayout.ts';
+
 export type DisplayScaleTier = 'standard' | '1440' | '2160';
 
 export interface DisplayScaleInput {
@@ -110,8 +112,8 @@ const ESTIMATED_TOP_HEADROOM_PX = 193;
 export function resolveDisplayScaleTier({ width, height }: DisplayScaleInput): DisplayScaleTier {
   const w = Math.max(0, Number(width) || 0);
   const h = Math.max(0, Number(height) || 0);
-  if (h >= 1680 || w >= 3000) return '2160';
-  if (h >= 1150 || w >= 2200) return '1440';
+  if (h >= 1680 || (w >= 3000 && h >= 1500)) return '2160';
+  if (h >= 1150 || (w >= 2200 && h >= 1120)) return '1440';
   return 'standard';
 }
 
@@ -199,14 +201,14 @@ export function computeDisplayLayoutMetrics({
   const arenaBottomY = h * 0.5 + stageSizePx / 2;
   const footerTopY = h - DEFAULT_FOOTER_HEIGHT_PX;
   const targetFooterBreathingPx =
-    tier === '2160' ? 90 : tier === '1440' ? (h >= 1360 ? 52 : 38) : h >= 1000 ? 32 : 18;
+    h >= 1680 ? 90 : h >= 1360 ? 52 : h >= 1150 ? 38 : h >= 1000 ? 32 : 18;
 
   const naturalOffsetPx =
     footerTopY - arenaBottomY - ESTIMATED_SETTLED_CONTROLS_HEIGHT_PX - targetFooterBreathingPx;
   const minOffsetPx =
-    tier === '2160'
+    h >= 1680
       ? 28
-      : tier === '1440'
+      : h >= 1150
       ? 18
       : h >= 1000
       ? 12
@@ -220,7 +222,7 @@ export function computeDisplayLayoutMetrics({
     : Math.round(Math.max(minOffsetPx, naturalOffsetPx));
 
   const buttonRowGapPx =
-    tier === '2160' ? 20 : tier === '1440' ? 14 : h < 800 ? 8 : h < 860 ? 10 : 12;
+    h >= 1680 ? 20 : h >= 1150 ? 14 : h < 800 ? 8 : h < 860 ? 10 : 12;
 
   return {
     tier,
@@ -266,14 +268,13 @@ export function computeConstellationScale({
   const safeHView = Math.max(480, Number(viewportHeight) || 900);
 
   const widthFitScale = Math.max(0.32, (safeWrap - 8) / safeW);
-  const desktopAvailableHeight =
-    safeHView < 800 ? Math.max(256, safeHView - 384) : Math.max(360, safeHView - 326);
+  const desktopAvailableHeight = computeDesktopConstellationAvailHeight(safeHView, safeWrap);
   const horizontalAvailableHeight = Math.max(250, safeHView - 250);
   const verticalTwoAvailableHeight = Math.max(460, safeHView - 184);
   const maxContainerScale = pinMaxScale / safeNodeScale;
   const heightFitScale =
     orientationMode === 'desktop'
-      ? Math.max(safeHView < 800 ? 0.62 : 0.76, desktopAvailableHeight / safeH)
+      ? Math.max(safeHView <= 740 ? 0.62 : 0.68, desktopAvailableHeight / safeH)
       : orientationMode === 'horizontal'
       ? Math.max(0.58, horizontalAvailableHeight / safeH)
       : orientationMode === 'vertical' && safeH <= 900

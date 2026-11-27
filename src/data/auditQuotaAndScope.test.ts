@@ -285,5 +285,68 @@ test('Signed-in non-admin users get 5 daily full-pull audits and signing in afte
   assert.equal(sixthAttempt.status.remaining, 0);
 });
 
+test('Daily challenge quota enforces 7 challenges signed out and 13 signed in (with admin unlimited bypass)', async () => {
+  const {
+    DAILY_CHALLENGE_LIMIT,
+    SIGNED_IN_DAILY_CHALLENGE_LIMIT,
+    resolveDailyChallengeLimit
+  } = await import('./auditQuotaAndScope.ts');
+
+  assert.equal(DAILY_CHALLENGE_LIMIT, 7);
+  assert.equal(SIGNED_IN_DAILY_CHALLENGE_LIMIT, 13);
+  assert.equal(resolveDailyChallengeLimit({ isAuthenticated: false, isAdmin: false }), 7);
+  assert.equal(resolveDailyChallengeLimit({ isAuthenticated: true, isAdmin: false }), 13);
+  assert.equal(resolveDailyChallengeLimit({ isAuthenticated: true, isAdmin: true }), 13);
+
+  const t0 = Date.UTC(2026, 10, 27, 15, 0, 0);
+  const anonKeys = resolveQuotaPrincipalKeys({
+    clientId: 'challenge-browser-1',
+    ip: '198.51.100.88'
+  }).allKeys;
+  let challengeLedger = {};
+
+  for (let i = 1; i <= 7; i++) {
+    const attempt = consumeDailyPull(challengeLedger, anonKeys, t0 + i * 1000, 7, false);
+    assert.equal(attempt.allowed, true);
+    assert.equal(attempt.status.used, i);
+    assert.equal(attempt.status.remaining, 7 - i);
+    challengeLedger = attempt.nextLedger;
+  }
+
+  const eighthAnon = consumeDailyPull(challengeLedger, anonKeys, t0 + 8000, 7, false);
+  assert.equal(eighthAnon.allowed, false);
+  assert.equal(eighthAnon.status.remaining, 0);
+
+  // Signing in with Google unlocks 13/day (6 remaining after 7 used)
+  const signedInKeys = resolveQuotaPrincipalKeys({
+    userId: 'google-uid-challenger',
+    clientId: 'challenge-browser-1',
+    ip: '198.51.100.88'
+  }).allKeys;
+  const afterSignIn = getUserDailyQuotaStatus(challengeLedger, signedInKeys, t0 + 9000, 13, false);
+  assert.equal(afterSignIn.limit, 13);
+  assert.equal(afterSignIn.used, 7);
+  assert.equal(afterSignIn.remaining, 6);
+  assert.equal(afterSignIn.allowed, true);
+
+  for (let used = 8; used <= 13; used++) {
+    const attempt = consumeDailyPull(challengeLedger, signedInKeys, t0 + used * 1000, 13, false);
+    assert.equal(attempt.allowed, true);
+    assert.equal(attempt.status.used, used);
+    assert.equal(attempt.status.remaining, 13 - used);
+    challengeLedger = attempt.nextLedger;
+  }
+
+  const fourteenthSignedIn = consumeDailyPull(challengeLedger, signedInKeys, t0 + 15000, 13, false);
+  assert.equal(fourteenthSignedIn.allowed, false);
+  assert.equal(fourteenthSignedIn.status.remaining, 0);
+
+  // Admin stays unlimited
+  const adminChallenge = consumeDailyPull(challengeLedger, signedInKeys, t0 + 16000, 13, true);
+  assert.equal(adminChallenge.allowed, true);
+  assert.equal(adminChallenge.status.unlimited, true);
+});
+
+
 
 

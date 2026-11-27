@@ -147,6 +147,7 @@ import {
   computeCohortLiquidMetricsList,
   formatPctSigned,
   mergeResolvedEntriesIntoCohortRecord,
+  preserveCustomCohortEntries,
   resolveTimelineBaselineMode,
   sanitizeGainsCohortRecord,
   type CohortAssetEntry,
@@ -162,7 +163,8 @@ import {
 import {
   MOBILE_TUTORIAL_STEPS,
   TUTORIAL_STEPS,
-  TUTORIAL_STORAGE_KEY,
+  hasSeenCurrentTutorial,
+  markCurrentTutorialSeen,
   buildCleanHomeUrl,
   clampTutorialStepIndex,
   isBottomChromeInAppBrowser,
@@ -170,7 +172,9 @@ import {
 } from './data/tutorialSteps.ts';
 import { resolvePinOrientationMode } from './data/constellationOrientation.ts';
 import {
+  DAILY_CHALLENGE_LIMIT,
   DAILY_NEW_FULL_PULL_LIMIT,
+  SIGNED_IN_DAILY_CHALLENGE_LIMIT,
   SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
   type QuotaStatus
 } from './data/auditQuotaAndScope.ts';
@@ -536,6 +540,14 @@ function ThermodynamicAuditApp() {
     dayKey: '',
     resetAtUtc: ''
   });
+  const [dailyChallengeQuota, setDailyChallengeQuota] = useState<QuotaStatus>({
+    limit: DAILY_CHALLENGE_LIMIT,
+    used: 0,
+    remaining: DAILY_CHALLENGE_LIMIT,
+    allowed: true,
+    dayKey: '',
+    resetAtUtc: ''
+  });
   const [confirmFullReauditKey, setConfirmFullReauditKey] = useState<string | null>(null);
   const [archiveToast, setArchiveToast] = useState<ArchiveToastState | null>(null);
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
@@ -598,7 +610,7 @@ function ThermodynamicAuditApp() {
     ) {
       return false;
     }
-    return window.localStorage.getItem(TUTORIAL_STORAGE_KEY) !== '1';
+    return !hasSeenCurrentTutorial(window.localStorage);
   });
   const [tutorialStepIndex, setTutorialStepIndex] = useState(0);
   const [showImportBox, setShowImportBox] = useState(false);
@@ -1042,7 +1054,7 @@ function ThermodynamicAuditApp() {
             baseRec,
             syncJson.extraResolvedEntries
           );
-          setGainsCohortRecord(mergedRec);
+          setGainsCohortRecord((prev) => preserveCustomCohortEntries(mergedRec, prev));
         }
         if (syncJson?.liveSpotMap && Object.keys(syncJson.liveSpotMap).length > 0) {
           setGainsLiveSpots((prev) => ({ ...prev, ...syncJson.liveSpotMap }));
@@ -1064,34 +1076,32 @@ function ThermodynamicAuditApp() {
           payload: {
             record?: Partial<GainsCohortRecord>;
             liveSpotMap?: Record<string, number>;
+            extraResolvedEntries?: Record<string, CohortAssetEntry>;
           } | null
         ) => {
           if (!active) return;
           let sanitizedServerRecord: GainsCohortRecord | null = null;
           if (payload?.record) {
-            sanitizedServerRecord = sanitizeGainsCohortRecord(payload.record);
+            sanitizedServerRecord = mergeResolvedEntriesIntoCohortRecord(
+              sanitizeGainsCohortRecord(payload.record),
+              payload.extraResolvedEntries
+            );
             setGainsCohortRecord((prev) =>
-              mergeResolvedEntriesIntoCohortRecord(
-                sanitizedServerRecord!,
-                prev
-                  ? Object.fromEntries(
-                      [...prev.passed, ...prev.failed].map((a) => [a.ticker, a])
-                    )
-                  : null
-              )
+              preserveCustomCohortEntries(sanitizedServerRecord!, prev)
             );
           }
           if (payload?.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
             setGainsLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
           }
 
-          // Only run an extra sync if local audits contain custom tickers missing from server cohort
+          // Only run an extra sync if local audits contain custom tickers missing from server cohort & extra cache
           if (sanitizedServerRecord) {
             const serverTickers = new Set(
               [...sanitizedServerRecord.passed, ...sanitizedServerRecord.failed].map(
                 (a) => a.ticker
               )
             );
+            const resolvedExtraSet = new Set(Object.keys(payload?.extraResolvedEntries || {}));
             const localSynced = buildBasketSyncedCohortRecord(
               auditsRef.current,
               sanitizedServerRecord
@@ -1099,7 +1109,12 @@ function ThermodynamicAuditApp() {
             const hasUnsyncedCustomTicker = [
               ...localSynced.passed,
               ...localSynced.failed
-            ].some((item) => !serverTickers.has(item.ticker));
+            ].some(
+              (item) =>
+                !serverTickers.has(item.ticker) &&
+                !resolvedExtraSet.has(item.ticker) &&
+                Boolean(item.yahooSymbol || item.geckoId || item.coinbasePair)
+            );
             if (hasUnsyncedCustomTicker) {
               void syncBasketLiveGains();
             }
@@ -1133,22 +1148,7 @@ function ThermodynamicAuditApp() {
 
   const handleCohortSynced = useCallback(
     (record: GainsCohortRecord, spots: Record<string, number>) => {
-      setGainsCohortRecord((prev) =>
-        prev
-          ? mergeResolvedEntriesIntoCohortRecord(
-              record,
-              Object.fromEntries(
-                [...prev.passed, ...prev.failed]
-                  .filter(
-                    (a) =>
-                      !record.passed.some((p) => p.ticker === a.ticker) &&
-                      !record.failed.some((f) => f.ticker === a.ticker)
-                  )
-                  .map((a) => [a.ticker, a])
-              )
-            )
-          : record
-      );
+      setGainsCohortRecord((prev) => preserveCustomCohortEntries(record, prev));
       if (spots && Object.keys(spots).length > 0) {
         setGainsLiveSpots((prev) => ({ ...prev, ...spots }));
       }
@@ -1234,6 +1234,7 @@ function ThermodynamicAuditApp() {
         strictCreditLock?: boolean;
         isAdmin?: boolean;
         dailyQuota?: QuotaStatus;
+        dailyChallengeQuota?: QuotaStatus;
         donate?: {
           kasAddress?: string;
           btcAddress?: string;
@@ -1246,6 +1247,9 @@ function ThermodynamicAuditApp() {
       setStrictCreditLock(Boolean(cfg.strictCreditLock));
       if (cfg.dailyQuota) {
         setDailyQuota(cfg.dailyQuota);
+      }
+      if (cfg.dailyChallengeQuota) {
+        setDailyChallengeQuota(cfg.dailyChallengeQuota);
       }
       if (cfg.donate) {
         setDonateConfig(cfg.donate);
@@ -1496,7 +1500,7 @@ function ThermodynamicAuditApp() {
             );
           } else {
             flashArchiveToast(
-              `Google Sync Active (${signedIn.email || 'Verified'}) • ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} Daily Audits Unlocked`,
+              `Google Sync Active (${signedIn.email || 'Verified'}) • ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} Audits & ${SIGNED_IN_DAILY_CHALLENGE_LIMIT} Challenges/Day Unlocked`,
               'saved'
             );
           }
@@ -1527,10 +1531,12 @@ function ThermodynamicAuditApp() {
       });
       const payload = (await res.json().catch(() => null)) as {
         dailyQuota?: QuotaStatus;
+        dailyChallengeQuota?: QuotaStatus;
         error?: string;
       } | null;
       if (!res.ok) throw new Error(payload?.error || `HTTP ${res.status}`);
       if (payload?.dailyQuota) setDailyQuota(payload.dailyQuota);
+      if (payload?.dailyChallengeQuota) setDailyChallengeQuota(payload.dailyChallengeQuota);
       flashArchiveToast('Admin: Daily quota ledger & IP rate limits cleared', 'saved');
     } catch (err) {
       flashArchiveToast(
@@ -3349,6 +3355,7 @@ function ThermodynamicAuditApp() {
 
     setSingleInvNotice(null);
     setSingleInvBusy({ key: logKey, mode: 'CHALLENGE' });
+    const clientId = getOrCreateClientQuotaId();
 
     try {
       const idToken = await getFirebaseIdToken();
@@ -3356,6 +3363,7 @@ function ThermodynamicAuditApp() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-truth-client-id': clientId,
           ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
         },
         body: JSON.stringify({
@@ -3364,7 +3372,8 @@ function ThermodynamicAuditApp() {
           invId,
           userInput: rawClaim,
           isGeniusMode,
-          timelineYear
+          timelineYear,
+          clientId
         })
       });
 
@@ -3385,8 +3394,13 @@ function ThermodynamicAuditApp() {
           carrierLayerOneVelocityCap?: number;
         };
         sources?: GroundingSource[];
+        challengeQuota?: QuotaStatus;
         error?: string;
       } | null;
+
+      if (payload?.challengeQuota) {
+        setDailyChallengeQuota(payload.challengeQuota);
+      }
 
       if (!response.ok || !payload?.parsed) {
         throw new Error(payload?.error || `Challenge adjudication failed (HTTP ${response.status}).`);
@@ -3710,11 +3724,7 @@ function ThermodynamicAuditApp() {
   const closeTutorial = useCallback(
     (markSeen = true, options?: { resetToHome?: boolean }) => {
       if (markSeen && typeof window !== 'undefined') {
-        try {
-          window.localStorage.setItem(TUTORIAL_STORAGE_KEY, '1');
-        } catch {
-          // Ignore storage errors in restricted environments
-        }
+        markCurrentTutorialSeen(window.localStorage);
       }
       setIsTutorialOpen(false);
 
@@ -4910,7 +4920,7 @@ function ThermodynamicAuditApp() {
         className={`relative z-30 w-full px-3 sm:px-4 lg:px-4 xl:px-6 flex flex-col items-center ${
           !isLandingIdle && isCompactHeight
             ? 'pt-2 md:pt-2.5 pb-0.5'
-            : !isLandingIdle && !isMultiStage
+            : !isLandingIdle
             ? 'pt-3 md:pt-3.5 pb-0.5'
             : 'pt-3.5 md:pt-5 pb-2'
         }`}
@@ -5566,7 +5576,11 @@ function ThermodynamicAuditApp() {
         className={`relative z-10 flex-1 w-full ${
           stackBasketsBelow
             ? 'px-4 sm:px-6 pb-3 sm:pb-4'
-            : isMultiStage || viewportMetrics.height < 680
+            : isMultiStage
+            ? `px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] ${
+                expandedSyncInvId ? 'pb-4 md:pb-20' : 'pb-4 md:pb-14'
+              }`
+            : viewportMetrics.height < 680
             ? 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-4 md:pb-16'
             : 'px-4 md:pl-[196px] md:pr-[196px] lg:pl-[244px] lg:pr-[244px] xl:pl-[290px] xl:pr-[290px] pb-1 md:pb-0'
         } flex flex-col items-center justify-start ${
@@ -5574,8 +5588,8 @@ function ThermodynamicAuditApp() {
             ? 'pt-0.5 sm:pt-1'
             : isMultiStage
             ? isCompactHeight
-              ? 'pt-2 sm:pt-2.5'
-              : 'pt-3 sm:pt-4'
+              ? 'pt-1.5 sm:pt-2'
+              : 'pt-2 sm:pt-2.5'
             : 'pt-7 sm:pt-8'
         }`}
       >
@@ -5645,7 +5659,7 @@ function ThermodynamicAuditApp() {
               <div
                 key="multi-stage"
                 className={`animate-stage-enter w-full flex flex-col items-center ${
-                  isCompactHeight ? 'gap-2 md:gap-3' : 'gap-2.5 md:gap-5'
+                  isCompactHeight ? 'gap-2 md:gap-2.5' : 'gap-2.5 md:gap-3'
                 }`}
               >
                 <div
@@ -5742,7 +5756,10 @@ function ThermodynamicAuditApp() {
                   style={{
                     height: `${scaledArenaHeight}px`,
                     overflow: 'clip',
-                    overflowClipMargin: '24px'
+                    overflowClipMargin: `${Math.max(
+                      28,
+                      Math.ceil(32 * layout.nodeScale * responsiveScale)
+                    )}px`
                   }}
                 >
                   <div
@@ -6073,9 +6090,7 @@ function ThermodynamicAuditApp() {
                 {/* Synchronized Cross-Bubble Invariant Matrix Bar */}
                 <div
                   ref={syncComparisonAnchorRef}
-                  className={`w-full space-y-2.5 md:space-y-3 scroll-mt-4 ${
-                    isCompactHeight ? 'pt-0' : 'pt-0 md:pt-2'
-                  }`}
+                  className="w-full space-y-2.5 md:space-y-3 scroll-mt-4 pt-0.5"
                   style={{ maxWidth: `${syncInvariantGrid.containerMaxWidthPx}px` }}
                 >
                   <div
@@ -8149,12 +8164,30 @@ function ThermodynamicAuditApp() {
                               />
 
                               <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-white/[0.06]">
-                                <span className="font-mono text-[10px] text-neutral-500">
-                                  Mode:{' '}
-                                  <strong style={{ color: accent.primary }}>
-                                    {isGeniusMode ? 'GENIUS' : 'NORMIE'}
-                                  </strong>{' '}
-                                  • Evaluates only Inv #{activeModalInvariant.id} (~85% fewer tokens)
+                                <span className="font-mono text-[10px] text-neutral-500 flex flex-wrap items-center gap-1.5">
+                                  <span>
+                                    Mode:{' '}
+                                    <strong style={{ color: accent.primary }}>
+                                      {isGeniusMode ? 'GENIUS' : 'NORMIE'}
+                                    </strong>{' '}
+                                    • Evaluates only Inv #{activeModalInvariant.id} (~85% fewer tokens)
+                                  </span>
+                                  <span
+                                    data-testid="challenge-console-quota-badge"
+                                    className="px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/10 font-semibold tabular-nums"
+                                    style={{
+                                      color:
+                                        dailyChallengeQuota.unlimited ||
+                                        isAdminSession ||
+                                        dailyChallengeQuota.remaining > 0
+                                          ? accent.primary
+                                          : '#FACC15'
+                                    }}
+                                  >
+                                    {dailyChallengeQuota.unlimited || isAdminSession
+                                      ? 'Challenges: ∞'
+                                      : `Challenges: ${dailyChallengeQuota.remaining} / ${dailyChallengeQuota.limit}`}
+                                  </span>
                                 </span>
 
                                 <div className="w-full sm:w-auto grid grid-cols-2 sm:flex sm:items-center gap-2">
@@ -8217,21 +8250,39 @@ function ThermodynamicAuditApp() {
 
                             {singleInvNotice && (
                               <div
-                                className="px-3.5 py-2 rounded-xl bg-[#121418] font-mono text-xs flex items-center justify-between gap-2"
+                                className="px-3.5 py-2 rounded-xl bg-[#121418] font-mono text-xs flex flex-wrap items-center justify-between gap-2"
                                 style={{
                                   border: `1px solid ${accent.secondaryBorder}`,
                                   color: accent.secondary
                                 }}
                               >
-                                <span>{singleInvNotice.text}</span>
-                                <button
-                                  type="button"
-                                  aria-label="Dismiss notice"
-                                  onClick={() => setSingleInvNotice(null)}
-                                  className="text-neutral-400 hover:text-white"
-                                >
-                                  <X className="w-3.5 h-3.5" />
-                                </button>
+                                <span className="flex-1 min-w-0">{singleInvNotice.text}</span>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {firebaseAuth &&
+                                    !archiveUser &&
+                                    /Daily challenge limit|Sign in with Google/i.test(
+                                      singleInvNotice.text
+                                    ) && (
+                                      <button
+                                        type="button"
+                                        disabled={authBusy}
+                                        onClick={handleGoogleArchiveAuth}
+                                        className="px-2.5 py-1 rounded-full bg-[#49EACB]/15 text-[#49EACB] border border-[#49EACB]/45 hover:bg-[#49EACB]/25 text-[10.5px] font-bold transition disabled:opacity-50"
+                                      >
+                                        {authBusy
+                                          ? 'Signing In...'
+                                          : `Google Sign-In (${SIGNED_IN_DAILY_CHALLENGE_LIMIT}/day)`}
+                                      </button>
+                                    )}
+                                  <button
+                                    type="button"
+                                    aria-label="Dismiss notice"
+                                    onClick={() => setSingleInvNotice(null)}
+                                    className="text-neutral-400 hover:text-white"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             )}
 
@@ -8998,7 +9049,7 @@ function ThermodynamicAuditApp() {
             aria-modal="true"
             aria-label="Thermodynamic Archive & API Credit Shield"
             onClick={(e) => e.stopPropagation()}
-            className="animate-modal-sheet w-full max-w-3xl max-h-[90vh] rounded-3xl bg-[#121418] border border-white/15 flex flex-col overflow-hidden shadow-[0_28px_80px_rgba(0,0,0,0.88)]"
+            className="animate-modal-sheet w-full max-w-4xl max-h-[90vh] rounded-3xl bg-[#121418] border border-white/15 flex flex-col overflow-hidden shadow-[0_28px_80px_rgba(0,0,0,0.88)]"
           >
             <div className="px-5 sm:px-7 py-4 bg-[#0B0C0E]/90 border-b border-white/[0.08] flex items-center justify-between gap-3">
               <div>
@@ -9020,7 +9071,7 @@ function ThermodynamicAuditApp() {
             </div>
 
             <div className="p-5 sm:p-7 overflow-y-auto space-y-5">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <div className="p-3.5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07]">
                   <div className="font-mono text-[10px] uppercase tracking-wider text-neutral-500">
                     Total Archived Assets
@@ -9052,12 +9103,15 @@ function ThermodynamicAuditApp() {
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07]">
+                <div
+                  data-testid="archive-daily-audits-counter"
+                  className="p-3.5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07]"
+                >
                   <div className="font-mono text-[10px] uppercase tracking-wider text-neutral-500">
                     Daily New Full Pulls
                   </div>
                   <div
-                    className="font-display text-2xl font-bold mt-1"
+                    className="font-display text-2xl font-bold mt-1 tabular-nums"
                     style={{
                       color:
                         dailyQuota.unlimited || isAdminSession || dailyQuota.remaining > 0
@@ -9072,7 +9126,36 @@ function ThermodynamicAuditApp() {
                   <div className="font-mono text-[10px] text-neutral-400 mt-0.5">
                     {dailyQuota.unlimited || isAdminSession
                       ? `Admin Provision (${archiveUser?.email || PRIMARY_ADMIN_EMAIL})`
-                      : 'Metals & all networks • Resets 00:00 UTC'}
+                      : `${DAILY_NEW_FULL_PULL_LIMIT} guest • ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} signed in • 00:00 UTC`}
+                  </div>
+                </div>
+
+                <div
+                  data-testid="archive-daily-challenges-counter"
+                  className="p-3.5 rounded-2xl bg-[#0B0C0E] border border-white/[0.07]"
+                >
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-neutral-500">
+                    Daily Challenges
+                  </div>
+                  <div
+                    className="font-display text-2xl font-bold mt-1 tabular-nums"
+                    style={{
+                      color:
+                        dailyChallengeQuota.unlimited ||
+                        isAdminSession ||
+                        dailyChallengeQuota.remaining > 0
+                          ? '#49EACB'
+                          : '#FACC15'
+                    }}
+                  >
+                    {dailyChallengeQuota.unlimited || isAdminSession
+                      ? '∞ UNLIMITED'
+                      : `${dailyChallengeQuota.remaining} / ${dailyChallengeQuota.limit}`}
+                  </div>
+                  <div className="font-mono text-[10px] text-neutral-400 mt-0.5">
+                    {dailyChallengeQuota.unlimited || isAdminSession
+                      ? `Admin Provision (${archiveUser?.email || PRIMARY_ADMIN_EMAIL})`
+                      : `${DAILY_CHALLENGE_LIMIT} guest • ${SIGNED_IN_DAILY_CHALLENGE_LIMIT} signed in • 00:00 UTC`}
                   </div>
                 </div>
 
@@ -9128,10 +9211,10 @@ function ThermodynamicAuditApp() {
                     </div>
                     <p className="text-xs text-neutral-400 leading-relaxed">
                       {isAdminSession
-                        ? `Admin session active: daily ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT}-pull limit, IP rate limits, and server credit locks are bypassed. All new audits auto-publish to Firestore and Vault moderation controls are unlocked below.`
+                        ? `Admin session active: daily ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT}-pull and ${SIGNED_IN_DAILY_CHALLENGE_LIMIT}-challenge limits, IP rate limits, and server credit locks are bypassed. All new audits auto-publish to Firestore and Vault moderation controls are unlocked below.`
                         : archiveUser
-                        ? `Signed-in Google session active: ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits unlocked, and new custom audits, contest verdicts, and imported snapshots automatically publish to the shared Firestore Archive.`
-                        : `Sign in with a verified Google account to unlock ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits (up from ${DAILY_NEW_FULL_PULL_LIMIT}) and publish new audits into the shared Firestore Vault.`}
+                        ? `Signed-in Google session active: ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits and ${SIGNED_IN_DAILY_CHALLENGE_LIMIT} daily challenges unlocked, and new custom audits, contest verdicts, and imported snapshots automatically publish to the shared Firestore Archive.`
+                        : `Sign in with a verified Google account to unlock ${SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT} daily new full-pull audits (up from ${DAILY_NEW_FULL_PULL_LIMIT}) and ${SIGNED_IN_DAILY_CHALLENGE_LIMIT} daily challenges (up from ${DAILY_CHALLENGE_LIMIT}), and publish new audits into the shared Firestore Vault.`}
                     </p>
                   </div>
 
@@ -9214,7 +9297,9 @@ function ThermodynamicAuditApp() {
                     Every searched token checks the Preloaded + Shared Cloud Archive first (0
                     credits). Live uncached full pulls are{' '}
                     <strong className="text-neutral-200">
-                      {isAdminSession ? 'unlimited for your admin account' : `limited to ${dailyQuota.limit} per user/day`}
+                      {isAdminSession
+                        ? 'unlimited for your admin account'
+                        : `limited to ${dailyQuota.limit} audits and ${dailyChallengeQuota.limit} challenges per user/day`}
                     </strong>{' '}
                     across all physical metals, fiat currencies, Layer-1 networks, L2s, and overlays
                     (zero CMC rank cutoffs). Toggle <strong className="text-neutral-200">Strict Lock</strong> during

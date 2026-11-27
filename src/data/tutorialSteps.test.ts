@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   IN_APP_AD_BROWSER_BOTTOM_OFFSET_PX,
+  LEGACY_TUTORIAL_STORAGE_KEYS,
   MOBILE_BOTTOM_AD_SAFE_OFFSET_PX,
   MOBILE_TUTORIAL_STEPS,
+  TUTORIAL_RELEASE_STAMP,
   TUTORIAL_STEPS,
   TUTORIAL_STORAGE_KEY,
   buildCleanHomeUrl,
@@ -13,12 +15,14 @@ import {
   computeSpotlightCardPosition,
   getMobileBottomClearancePx,
   getTutorialStepsForViewport,
-  isBottomChromeInAppBrowser
+  hasSeenCurrentTutorial,
+  isBottomChromeInAppBrowser,
+  markCurrentTutorialSeen
 } from './tutorialSteps.ts';
 
 test('TUTORIAL_STEPS covers all 7 core capabilities (including Time Machine) plus the hidden Easter Egg step with sequential numbers', () => {
   assert.equal(TUTORIAL_STEPS.length, 8);
-  assert.equal(TUTORIAL_STORAGE_KEY, 'truth_tutorial_seen_v1');
+  assert.equal(TUTORIAL_STORAGE_KEY, 'truth_tutorial_seen_v2');
 
   const ids = new Set<string>();
   TUTORIAL_STEPS.forEach((step, idx) => {
@@ -35,6 +39,14 @@ test('TUTORIAL_STEPS covers all 7 core capabilities (including Time Machine) plu
   assert.equal(timeMachineStep.targetId, 'time-machine');
   assert.equal(timeMachineStep.actionId, 'demo-time-machine');
   assert.match(timeMachineStep.title, /Time Machine/i);
+
+  const stepOne = TUTORIAL_STEPS[0];
+  assert.match(stepOne.summary, /relies on you interacting/i);
+  assert.match(stepOne.summary, /unbiased, living, learning cached AI system/i);
+  assert.match(stepOne.summary, /Challenge/i);
+  assert.match(stepOne.summary, /Time Machine/i);
+  assert.match(stepOne.summary, /Do not just take it for its word/i);
+  assert.match(stepOne.instructions.join(' '), /7 daily challenges.*13 signed in/i);
 
   const easterEggStep = TUTORIAL_STEPS[TUTORIAL_STEPS.length - 1];
   assert.equal(easterEggStep.isEasterEggStep, true);
@@ -238,4 +250,27 @@ test('buildCleanHomeUrl strips asset, compare, modal, and timeline deep-link par
     '/?autostart=1'
   );
 });
+
+test('hasSeenCurrentTutorial resets tutorial once for returning v1 visitors and stays dismissed afterward', () => {
+  const store = new Map<string, string>([[LEGACY_TUTORIAL_STORAGE_KEYS[0], '1']]);
+  const mockStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    }
+  };
+
+  // Returning visitor from prior publish ('truth_tutorial_seen_v1' = '1') gets tutorial again
+  assert.equal(hasSeenCurrentTutorial(mockStorage), false);
+
+  // Once dismissed or completed, they do NOT get it again on subsequent reloads
+  markCurrentTutorialSeen(mockStorage);
+  assert.equal(hasSeenCurrentTutorial(mockStorage), true);
+  assert.equal(store.get(TUTORIAL_STORAGE_KEY), TUTORIAL_RELEASE_STAMP);
+  assert.equal(store.has(LEGACY_TUTORIAL_STORAGE_KEYS[0]), false);
+});
+
 
