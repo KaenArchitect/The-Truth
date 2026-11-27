@@ -2138,3 +2138,45 @@ export function buildHistoricalTimelineCohortTrajectory(
     };
   });
 }
+
+export function formatMultipleCompact(mult: number): string {
+  if (!Number.isFinite(mult) || mult <= 0) return '—';
+  if (mult >= 1_000_000) return `${(mult / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}Mx`;
+  if (mult >= 1000) return `${(mult / 1000).toFixed(1).replace(/\.0$/, '')}Kx`;
+  if (mult >= 100) return `${Math.round(mult).toLocaleString()}x`;
+  if (mult >= 10) return `${mult.toFixed(1)}x`;
+  if (mult >= 0.01) return `${mult.toFixed(2)}x`;
+  if (mult < 0.0001) return '<0.0001x';
+  return `${mult.toFixed(4)}x`;
+}
+
+export function formatSimOutcomeUsd(val: number): string {
+  if (!Number.isFinite(val) || val < 0) return '—';
+  if (val === 0) return '$0';
+  if (val >= 1_000_000_000_000) {
+    return `$${(val / 1_000_000_000_000).toFixed(2).replace(/\.?0+$/, '')}T`;
+  }
+  if (val >= 1_000_000_000) {
+    return `$${(val / 1_000_000_000).toFixed(2).replace(/\.?0+$/, '')}B`;
+  }
+  if (val >= 1_000_000) {
+    return `$${(val / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  }
+  if (val >= 10_000) {
+    return `$${(val / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  if (val >= 1) {
+    return `$${Math.round(val).toLocaleString()}`;
+  }
+  if (val >= 0.1) {
+    return `$${val.toFixed(2)}`;
+  }
+  if (val >= 0.01) {
+    return `$${val.toFixed(3)}`;
+  }
+  if (val >= 0.0001) {
+    return `$${val.toFixed(4)}`;
+  }
+  return '<$0.0001';
+}
+

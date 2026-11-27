@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { GradeAccent } from '../data/rubricSpec.ts';
 import {
   TRUTH_HOME_QUOTES,
@@ -8,13 +8,17 @@ import {
   type TruthQuoteItem
 } from '../data/truthQuotes.ts';
 
-export interface HeroQuoteReaderState {
-  active: boolean;
+export interface HeroQuoteSnapshot {
   quoteIndex: number;
   item: TruthQuoteItem;
   parsed: ParsedHeroQuote;
   stepIndex: number;
   reducedMotion: boolean;
+}
+
+export interface HeroQuoteController {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => HeroQuoteSnapshot;
   nextQuote: () => void;
   prevQuote: () => void;
   setHovered: (hovered: boolean) => void;
@@ -22,20 +26,95 @@ export interface HeroQuoteReaderState {
 
 const POST_QUOTE_HOLD_MS = 2350;
 
-export function useHeroTruthQuoteReader(active: boolean): HeroQuoteReaderState {
-  const [quoteIndex, setQuoteIndex] = useState<number>(0);
-  const [stepIndex, setStepIndex] = useState<number>(0);
-  const [reducedMotion, setReducedMotion] = useState<boolean>(() =>
-    typeof window !== 'undefined'
-      ? Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
-      : false
-  );
+const PARSED_QUOTES_CACHE: ParsedHeroQuote[] = TRUTH_HOME_QUOTES.map((q) =>
+  parseQuoteAroundTitle(q.quote)
+);
+
+function buildQuoteSnapshot(
+  quoteIndex: number,
+  rawStepIndex: number,
+  reducedMotion: boolean
+): HeroQuoteSnapshot {
+  const safeIdx =
+    ((quoteIndex % TRUTH_HOME_QUOTES.length) + TRUTH_HOME_QUOTES.length) %
+    TRUTH_HOME_QUOTES.length;
+  const item = TRUTH_HOME_QUOTES[safeIdx];
+  const parsed = PARSED_QUOTES_CACHE[safeIdx];
+  return {
+    quoteIndex: safeIdx,
+    item,
+    parsed,
+    stepIndex: reducedMotion ? parsed.totalSteps : rawStepIndex,
+    reducedMotion
+  };
+}
+
+export function useHeroTruthQuoteReader(active: boolean): HeroQuoteController {
+  const listenersRef = useRef<Set<() => void>>(new Set());
   const hoveredRef = useRef<boolean>(false);
+  const stateRef = useRef<{
+    quoteIndex: number;
+    stepIndex: number;
+    reducedMotion: boolean;
+    snapshot: HeroQuoteSnapshot;
+  } | null>(null);
+
+  if (stateRef.current === null) {
+    const initialReduced =
+      typeof window !== 'undefined'
+        ? Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+        : false;
+    stateRef.current = {
+      quoteIndex: 0,
+      stepIndex: 0,
+      reducedMotion: initialReduced,
+      snapshot: buildQuoteSnapshot(0, 0, initialReduced)
+    };
+  }
+
+  const controller = useMemo<HeroQuoteController>(() => {
+    const notify = () => {
+      listenersRef.current.forEach((fn) => fn());
+    };
+    return {
+      subscribe: (listener: () => void) => {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
+        };
+      },
+      getSnapshot: () => stateRef.current!.snapshot,
+      nextQuote: () => {
+        const st = stateRef.current!;
+        st.quoteIndex = (st.quoteIndex + 1) % TRUTH_HOME_QUOTES.length;
+        st.stepIndex = 0;
+        st.snapshot = buildQuoteSnapshot(st.quoteIndex, 0, st.reducedMotion);
+        notify();
+      },
+      prevQuote: () => {
+        const st = stateRef.current!;
+        st.quoteIndex =
+          (st.quoteIndex - 1 + TRUTH_HOME_QUOTES.length) % TRUTH_HOME_QUOTES.length;
+        st.stepIndex = 0;
+        st.snapshot = buildQuoteSnapshot(st.quoteIndex, 0, st.reducedMotion);
+        notify();
+      },
+      setHovered: (hovered: boolean) => {
+        hoveredRef.current = hovered;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined;
     const mql = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = (e: MediaQueryListEvent) => setReducedMotion(e.matches);
+    const onChange = (e: MediaQueryListEvent) => {
+      const st = stateRef.current!;
+      if (st.reducedMotion === e.matches) return;
+      st.reducedMotion = e.matches;
+      st.snapshot = buildQuoteSnapshot(st.quoteIndex, st.stepIndex, st.reducedMotion);
+      listenersRef.current.forEach((fn) => fn());
+    };
     if (mql.addEventListener) {
       mql.addEventListener('change', onChange);
       return () => mql.removeEventListener('change', onChange);
@@ -43,71 +122,83 @@ export function useHeroTruthQuoteReader(active: boolean): HeroQuoteReaderState {
     return undefined;
   }, []);
 
-  const item = TRUTH_HOME_QUOTES[quoteIndex % TRUTH_HOME_QUOTES.length];
-  const parsed = useMemo(() => parseQuoteAroundTitle(item.quote), [item.quote]);
-
-  const nextQuote = useCallback(() => {
-    setQuoteIndex((prev) => (prev + 1) % TRUTH_HOME_QUOTES.length);
-    setStepIndex(0);
-  }, []);
-
-  const prevQuote = useCallback(() => {
-    setQuoteIndex((prev) => (prev - 1 + TRUTH_HOME_QUOTES.length) % TRUTH_HOME_QUOTES.length);
-    setStepIndex(0);
-  }, []);
-
-  const setHovered = useCallback((hovered: boolean) => {
-    hoveredRef.current = hovered;
-  }, []);
-
   useEffect(() => {
     if (!active) return undefined;
-    if (reducedMotion) {
-      setStepIndex(parsed.totalSteps);
-      return undefined;
-    }
+    let stepTimer: number | null = null;
+    let holdTimer: number | null = null;
+    let pollId: number | null = null;
+    let cancelled = false;
 
-    if (stepIndex < parsed.totalSteps) {
-      const waitMs = parsed.stepDurationsMs[stepIndex] ?? 220;
-      const timerId = window.setTimeout(() => {
-        setStepIndex((s) => s + 1);
-      }, waitMs);
-      return () => window.clearTimeout(timerId);
-    }
+    const clearAll = () => {
+      if (stepTimer !== null) window.clearTimeout(stepTimer);
+      if (holdTimer !== null) window.clearTimeout(holdTimer);
+      if (pollId !== null) window.clearInterval(pollId);
+      stepTimer = null;
+      holdTimer = null;
+      pollId = null;
+    };
 
-    // Finished speaking all words — hold the completed quote, then advance unless hovered
-    const holdTimer = window.setTimeout(() => {
-      if (!hoveredRef.current && (typeof document === 'undefined' || !document.hidden)) {
-        setQuoteIndex((prev) => (prev + 1) % TRUTH_HOME_QUOTES.length);
-        setStepIndex(0);
-      } else {
-        // Re-check gently if hovered so unhovering resumes smoothly
-        const pollId = window.setInterval(() => {
-          if (!hoveredRef.current && (typeof document === 'undefined' || !document.hidden)) {
-            window.clearInterval(pollId);
-            setQuoteIndex((prev) => (prev + 1) % TRUTH_HOME_QUOTES.length);
-            setStepIndex(0);
-          }
-        }, 650);
-        return () => window.clearInterval(pollId);
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const st = stateRef.current!;
+      const parsed = PARSED_QUOTES_CACHE[st.quoteIndex];
+      if (st.reducedMotion) {
+        if (st.stepIndex !== parsed.totalSteps) {
+          st.stepIndex = parsed.totalSteps;
+          st.snapshot = buildQuoteSnapshot(st.quoteIndex, st.stepIndex, st.reducedMotion);
+          listenersRef.current.forEach((fn) => fn());
+        }
+        return;
       }
-      return undefined;
-    }, POST_QUOTE_HOLD_MS);
 
-    return () => window.clearTimeout(holdTimer);
-  }, [active, reducedMotion, stepIndex, parsed]);
+      if (st.stepIndex < parsed.totalSteps) {
+        const waitMs = parsed.stepDurationsMs[st.stepIndex] ?? 220;
+        stepTimer = window.setTimeout(() => {
+          stepTimer = null;
+          if (cancelled) return;
+          st.stepIndex += 1;
+          st.snapshot = buildQuoteSnapshot(st.quoteIndex, st.stepIndex, st.reducedMotion);
+          listenersRef.current.forEach((fn) => fn());
+          scheduleNext();
+        }, waitMs);
+        return;
+      }
 
-  return {
-    active,
-    quoteIndex,
-    item,
-    parsed,
-    stepIndex: reducedMotion ? parsed.totalSteps : stepIndex,
-    reducedMotion,
-    nextQuote,
-    prevQuote,
-    setHovered
-  };
+      holdTimer = window.setTimeout(() => {
+        holdTimer = null;
+        if (cancelled) return;
+        const advanceQuote = () => {
+          st.quoteIndex = (st.quoteIndex + 1) % TRUTH_HOME_QUOTES.length;
+          st.stepIndex = 0;
+          st.snapshot = buildQuoteSnapshot(st.quoteIndex, 0, st.reducedMotion);
+          listenersRef.current.forEach((fn) => fn());
+          scheduleNext();
+        };
+
+        if (!hoveredRef.current && (typeof document === 'undefined' || !document.hidden)) {
+          advanceQuote();
+        } else {
+          pollId = window.setInterval(() => {
+            if (!hoveredRef.current && (typeof document === 'undefined' || !document.hidden)) {
+              if (pollId !== null) {
+                window.clearInterval(pollId);
+                pollId = null;
+              }
+              advanceQuote();
+            }
+          }, 650);
+        }
+      }, POST_QUOTE_HOLD_MS);
+    };
+
+    scheduleNext();
+    return () => {
+      cancelled = true;
+      clearAll();
+    };
+  }, [active]);
+
+  return controller;
 }
 
 function renderSpokenWordSpan(
@@ -149,7 +240,7 @@ function renderSpokenWordSpan(
 }
 
 interface HeroQuoteLeadInBubbleProps {
-  reader: HeroQuoteReaderState;
+  reader: HeroQuoteController;
   accent: GradeAccent;
   compact: boolean;
 }
@@ -159,7 +250,12 @@ export const HeroQuoteLeadInBubble = memo(function HeroQuoteLeadInBubble({
   accent,
   compact
 }: HeroQuoteLeadInBubbleProps) {
-  const { parsed, stepIndex, item, nextQuote, setHovered } = reader;
+  const { parsed, stepIndex, item } = useSyncExternalStore(
+    reader.subscribe,
+    reader.getSnapshot,
+    reader.getSnapshot
+  );
+  const { nextQuote, setHovered } = reader;
   const hasBefore = parsed.beforeWords.length > 0;
 
   return (
@@ -223,7 +319,7 @@ export const HeroQuoteLeadInBubble = memo(function HeroQuoteLeadInBubble({
 
 interface HeroQuoteTitleTextProps {
   isLandingIdle: boolean;
-  reader: HeroQuoteReaderState;
+  reader: HeroQuoteController;
   accent: GradeAccent;
 }
 
@@ -232,6 +328,12 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
   reader,
   accent
 }: HeroQuoteTitleTextProps) {
+  const { parsed, stepIndex } = useSyncExternalStore(
+    reader.subscribe,
+    reader.getSnapshot,
+    reader.getSnapshot
+  );
+
   if (!isLandingIdle) {
     return (
       <h1 className="font-display text-2xl sm:text-[30px] font-bold tracking-tight text-white leading-none">
@@ -239,8 +341,6 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
       </h1>
     );
   }
-
-  const { parsed, stepIndex } = reader;
   const isTheCurrent = parsed.hasLeadingThe && parsed.theStepIndex !== null && stepIndex === parsed.theStepIndex;
   const isTruthCurrent = stepIndex === parsed.truthStepIndex;
   const isTitleCurrent = isTheCurrent || isTruthCurrent;
@@ -333,7 +433,7 @@ export const HeroQuoteTitleText = memo(function HeroQuoteTitleText({
 });
 
 interface HeroQuoteFollowThroughProps {
-  reader: HeroQuoteReaderState;
+  reader: HeroQuoteController;
   accent: GradeAccent;
   compact: boolean;
 }
@@ -343,7 +443,12 @@ export const HeroQuoteFollowThrough = memo(function HeroQuoteFollowThrough({
   accent,
   compact
 }: HeroQuoteFollowThroughProps) {
-  const { parsed, stepIndex, item, nextQuote, prevQuote, setHovered } = reader;
+  const { parsed, stepIndex, item } = useSyncExternalStore(
+    reader.subscribe,
+    reader.getSnapshot,
+    reader.getSnapshot
+  );
+  const { nextQuote, prevQuote, setHovered } = reader;
   const hasAfter = parsed.afterWords.length > 0;
 
   return (

@@ -6,9 +6,11 @@ import {
   type HistoricalPriceBar,
   type M2BenchmarkDataset
 } from '../data/m2BenchmarkData.ts';
+import { fetchYahooReleaseAndSpot } from './gainsCohortStore.ts';
 
 const M2_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const ASSET_CACHE_TTL_MS = 5 * 60 * 1000;
+const FIVE_YEARS_MS = Math.round(5.2 * 365.25 * 24 * 60 * 60 * 1000);
 
 let cachedFredM2Rows: FredM2Row[] = [];
 let fredFetchedAtMs = 0;
@@ -49,52 +51,18 @@ async function fetchFredM2Rows(): Promise<FredM2Row[]> {
   return cachedFredM2Rows;
 }
 
-async function fetchYahooAssetSeries(symbol: string): Promise<YahooAssetHistory | null> {
-  try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        symbol
-      )}?range=5y&interval=1wk`,
-      {
-        signal: AbortSignal.timeout(6000),
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible; ThermodynamicTruthBot/1.0)'
-        }
-      }
-    );
-    if (!res.ok) return null;
-    const json = (await res.json()) as {
-      chart?: {
-        result?: Array<{
-          meta?: { regularMarketPrice?: number };
-          timestamp?: number[];
-          indicators?: { quote?: Array<{ close?: Array<number | null> }> };
-        }>;
-      };
-    };
-    const result = json?.chart?.result?.[0];
-    if (!result) return null;
-
-    const rawSpot = Number(result.meta?.regularMarketPrice);
-    const spot = Number.isFinite(rawSpot) && rawSpot > 0 ? rawSpot : null;
-    const tsList = Array.isArray(result.timestamp) ? result.timestamp : [];
-    const closes = Array.isArray(result.indicators?.quote?.[0]?.close)
-      ? result.indicators!.quote![0].close!
-      : [];
-
-    const bars: HistoricalPriceBar[] = [];
-    for (let i = 0; i < tsList.length; i += 1) {
-      const tsSec = Number(tsList[i]);
-      const p = Number(closes[i]);
-      if (Number.isFinite(tsSec) && tsSec > 0 && Number.isFinite(p) && p > 0) {
-        bars.push({ tsMs: tsSec * 1000, price: p });
-      }
-    }
-    return { spot, bars };
-  } catch {
-    return null;
-  }
+async function fetchYahooAssetSeries(
+  symbol: string,
+  forceRefresh = false
+): Promise<YahooAssetHistory | null> {
+  const parsed = await fetchYahooReleaseAndSpot(symbol, forceRefresh);
+  if (!parsed || parsed.bars.length === 0) return null;
+  const cutoffMs = Date.now() - FIVE_YEARS_MS;
+  const recentBars = parsed.bars.filter((b) => b.tsMs >= cutoffMs);
+  return {
+    spot: parsed.spotPrice,
+    bars: recentBars.length > 0 ? recentBars : parsed.bars
+  };
 }
 
 export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M2BenchmarkDataset> {
@@ -110,11 +78,11 @@ export async function getLiveM2BenchmarkDataset(forceRefresh = false): Promise<M
   const run = async (): Promise<M2BenchmarkDataset> => {
     const [m2Rows, btcHist, kasHist, ethHist, spxHist, goldHist] = await Promise.all([
       fetchFredM2Rows(),
-      fetchYahooAssetSeries('BTC-USD'),
-      fetchYahooAssetSeries('KAS-USD'),
-      fetchYahooAssetSeries('ETH-USD'),
-      fetchYahooAssetSeries('^GSPC'),
-      fetchYahooAssetSeries('GC=F')
+      fetchYahooAssetSeries('BTC-USD', forceRefresh),
+      fetchYahooAssetSeries('KAS-USD', forceRefresh),
+      fetchYahooAssetSeries('ETH-USD', forceRefresh),
+      fetchYahooAssetSeries('^GSPC', forceRefresh),
+      fetchYahooAssetSeries('GC=F', forceRefresh)
     ]);
 
     if (

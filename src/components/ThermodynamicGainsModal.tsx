@@ -343,26 +343,10 @@ export function ThermodynamicGainsModal({
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
     setIsSyncingLive(true);
-    const clientSpots: Record<string, number> = {};
     const snapshotCohort = canonicalSyncRecordRef.current;
     const allItems = [...snapshotCohort.passed, ...snapshotCohort.failed];
 
     try {
-      const cbTargets = allItems.filter((item) => Boolean(item.coinbasePair));
-      await Promise.allSettled(
-        cbTargets.map(async (item) => {
-          const res = await fetch(
-            `https://api.coinbase.com/v2/prices/${item.coinbasePair}/spot`
-          );
-          if (!res.ok) return;
-          const json = (await res.json()) as { data?: { amount?: string } };
-          const amt = Number(json?.data?.amount);
-          if (Number.isFinite(amt) && amt > 0) {
-            clientSpots[item.ticker] = amt;
-          }
-        })
-      );
-
       // Refresh FRED M2 + Yahoo S&P500 / Gold / BTC / KAS / ETH benchmark alongside cohort spots
       void fetch('/api/m2-benchmark?refresh=1', { cache: 'no-store' })
         .then((res) => (res.ok ? res.json() : null))
@@ -381,7 +365,7 @@ export function ThermodynamicGainsModal({
         })
         .catch(() => {});
 
-      // Persist synced basket lists + backend CoinGecko & Yahoo Finance spots/release baselines
+      // Persist synced basket lists + backend Coinbase, CoinGecko & Yahoo Finance spots/release baselines
       const idToken = firebaseAuth?.currentUser?.emailVerified ? await getFirebaseIdToken() : null;
       const syncHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
       if (idToken) {
@@ -391,7 +375,6 @@ export function ThermodynamicGainsModal({
         method: 'POST',
         headers: syncHeaders,
         body: JSON.stringify({
-          spotOverrides: clientSpots,
           extraItems: allItems.map((it) => ({
             ticker: it.ticker,
             name: it.name,
@@ -411,7 +394,7 @@ export function ThermodynamicGainsModal({
           windowTrajectories?: WindowTrajectoriesMap;
           extraResolvedEntries?: Record<string, CohortAssetEntry>;
         };
-        const mergedSpots = { ...clientSpots, ...(syncJson.liveSpotMap || {}) };
+        const mergedSpots = { ...(syncJson.liveSpotMap || {}) };
         if (syncJson.windowTrajectories) {
           setWindowTrajectories(syncJson.windowTrajectories);
         }
@@ -444,8 +427,6 @@ export function ThermodynamicGainsModal({
             );
           }
         }
-      } else if (Object.keys(clientSpots).length > 0) {
-        setLiveSpots((prev) => ({ ...prev, ...clientSpots }));
       }
     } catch {
       // Graceful fallback to verified snapshot prices on any network block
@@ -470,7 +451,10 @@ export function ThermodynamicGainsModal({
         })
       );
     }
-    const timer = setInterval(syncLiveExchangeSpots, 30000);
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void syncLiveExchangeSpots();
+    }, 30000);
     return () => clearInterval(timer);
   }, [feedMode, syncLiveExchangeSpots, lastLiveSyncLabel]);
 

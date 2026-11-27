@@ -33,6 +33,7 @@ import {
 import {
   DAILY_NEW_FULL_PULL_LIMIT,
   SIGNED_IN_DAILY_NEW_FULL_PULL_LIMIT,
+  STATIC_TOP_150_FALLBACK_ENTRIES,
   TOKENIZED_COMMODITY_WRAPPER_TICKERS,
   consumeDailyPull,
   evaluateMarketScope,
@@ -45,12 +46,10 @@ import {
   resolveQuotaPrincipalKeys,
   type DailyQuotaLedger
 } from './src/data/auditQuotaAndScope.ts';
-import { getMarketCapDirectory } from './src/server/cmcTop150.ts';
 import {
   ensureFreshLiveGainsCohort,
   getCachedWindowTrajectories,
   getPersistedGainsCohort,
-  resetPersistedGainsCohort,
   savePersistedGainsCohort,
   syncLivePricesAndPersistGainsCohort
 } from './src/server/gainsCohortStore.ts';
@@ -302,6 +301,13 @@ function checkIpRateLimit(
   const ip = forwarded || req.ip || req.socket.remoteAddress || 'unknown';
   const key = `${bucketKey}:${ip}`;
   const now = Date.now();
+  if (rateBuckets.size > 200) {
+    for (const [k, b] of rateBuckets.entries()) {
+      const active = b.timestamps.filter((ts) => now - ts < windowMs);
+      if (active.length === 0) rateBuckets.delete(k);
+      else b.timestamps = active;
+    }
+  }
   const bucket = rateBuckets.get(key) || { timestamps: [] };
   bucket.timestamps = bucket.timestamps.filter((ts) => now - ts < windowMs);
 
@@ -351,9 +357,6 @@ function persistDailyQuotaLedger(): void {
 }
 
 hydrateDailyQuotaLedger();
-
-// Warm Top-150 market cap directory on startup in the background (0 Gemini credits)
-void getMarketCapDirectory().catch(() => {});
 
 interface ResolvedServerPrincipal {
   primaryKey: string;
@@ -736,29 +739,6 @@ async function createApp(): Promise<express.Express> {
     });
   });
 
-  app.get('/api/quota', async (req: Request, res: Response) => {
-    const principal = await resolveVerifiedRequestPrincipal(req);
-    const userPullLimit = resolveDailyPullLimit({
-      isAuthenticated: Boolean(principal.verifiedUser),
-      isAdmin: principal.isAdmin
-    });
-    const dailyQuota = getUserDailyQuotaStatus(
-      dailyQuotaLedger,
-      principal.allKeys,
-      Date.now(),
-      userPullLimit,
-      principal.isAdmin
-    );
-    res.json({
-      isAuthenticated: Boolean(principal.verifiedUser),
-      isAdmin: principal.isAdmin,
-      adminEmail: principal.isAdmin ? principal.verifiedEmail : null,
-      dailyPullLimit: userPullLimit,
-      unrestrictedMetalsAndNetworks: true,
-      dailyQuota
-    });
-  });
-
   app.post('/api/admin/clear-quota', async (req: Request, res: Response) => {
     const admin = await requireVerifiedAdmin(req, res);
     if (!admin) return;
@@ -947,13 +927,6 @@ async function createApp(): Promise<express.Express> {
     }
   });
 
-  app.post('/api/gains-cohort/reset', async (req: Request, res: Response) => {
-    const admin = await requireVerifiedAdmin(req, res);
-    if (!admin) return;
-    const record = resetPersistedGainsCohort();
-    res.json({ record });
-  });
-
   app.get('/api/m2-benchmark', async (req: Request, res: Response) => {
     try {
       const force = req.query.refresh === '1';
@@ -1051,12 +1024,11 @@ async function createApp(): Promise<express.Express> {
     // 1) UNRESTRICTED METALS & NETWORKS SCOPE VALIDATION (only rejects empty/invalid inputs)
     const existingRootAudit = existingBaseline || lookupCachedAudit(rawQuery);
     const scopeQuery = existingRootAudit ? existingRootAudit.ticker || rawQuery : rawQuery;
-    const marketDir = await getMarketCapDirectory();
     const scopeResult = evaluateMarketScope({
       query: scopeQuery,
       cachedAuditHit: false,
       isExplicitReaudit: Boolean(existingRootAudit),
-      marketEntries: marketDir.entries
+      marketEntries: STATIC_TOP_150_FALLBACK_ENTRIES
     });
 
     if (!scopeResult.allowed) {

@@ -193,6 +193,19 @@ import {
   type DotDiscoveryGameState,
   type DotDiscoveryInteraction
 } from './data/dotDiscoveryGame.ts';
+
+const IDLE_LANDING_ACCENT: ReturnType<typeof getGradeAccent> = {
+  primary: '#49EACB',
+  secondary: '#34D399',
+  softBg: 'rgba(73, 234, 203, 0.10)',
+  secondarySoftBg: 'rgba(52, 211, 153, 0.10)',
+  border: 'rgba(73, 234, 203, 0.32)',
+  secondaryBorder: 'rgba(52, 211, 153, 0.28)',
+  glow: 'rgba(73, 234, 203, 0.16)',
+  secondaryGlow: 'rgba(52, 211, 153, 0.14)',
+  gradientCss: 'linear-gradient(135deg, #49EACB 0%, #34D399 100%)',
+  textOnAccent: '#041713'
+};
 import {
   CORE_REFERENCE_TICKERS,
   ECOSYSTEM_OVERLAY_TICKERS,
@@ -991,27 +1004,6 @@ function ThermodynamicAuditApp() {
         gainsCohortRecordRef.current
       );
       const allItems = [...currentSynced.passed, ...currentSynced.failed];
-      const clientSpots: Record<string, number> = {};
-
-      const cbTargets = allItems.filter((item) => Boolean(item.coinbasePair));
-      await Promise.allSettled(
-        cbTargets.map(async (item) => {
-          const res = await fetch(
-            `https://api.coinbase.com/v2/prices/${encodeURIComponent(item.coinbasePair!)}/spot`,
-            { cache: 'no-store' }
-          );
-          if (!res.ok) return;
-          const json = (await res.json()) as { data?: { amount?: string } };
-          const amt = Number(json?.data?.amount);
-          if (Number.isFinite(amt) && amt > 0) {
-            clientSpots[item.ticker] = amt;
-          }
-        })
-      );
-
-      if (Object.keys(clientSpots).length > 0) {
-        setGainsLiveSpots((prev) => ({ ...prev, ...clientSpots }));
-      }
 
       const idToken = firebaseAuth?.currentUser?.emailVerified
         ? await getFirebaseIdToken()
@@ -1026,7 +1018,6 @@ function ThermodynamicAuditApp() {
         cache: 'no-store',
         headers: syncHeaders,
         body: JSON.stringify({
-          spotOverrides: clientSpots,
           extraItems: allItems.map((it) => ({
             ticker: it.ticker,
             name: it.name,
@@ -1053,9 +1044,8 @@ function ThermodynamicAuditApp() {
           );
           setGainsCohortRecord(mergedRec);
         }
-        const mergedSpots = { ...clientSpots, ...(syncJson?.liveSpotMap || {}) };
-        if (Object.keys(mergedSpots).length > 0) {
-          setGainsLiveSpots((prev) => ({ ...prev, ...mergedSpots }));
+        if (syncJson?.liveSpotMap && Object.keys(syncJson.liveSpotMap).length > 0) {
+          setGainsLiveSpots((prev) => ({ ...prev, ...syncJson.liveSpotMap }));
         }
       }
     } catch {
@@ -1067,7 +1057,7 @@ function ThermodynamicAuditApp() {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/gains-cohort?refresh=1', { cache: 'no-store' })
+    fetch('/api/gains-cohort', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then(
         (
@@ -1077,10 +1067,12 @@ function ThermodynamicAuditApp() {
           } | null
         ) => {
           if (!active) return;
+          let sanitizedServerRecord: GainsCohortRecord | null = null;
           if (payload?.record) {
+            sanitizedServerRecord = sanitizeGainsCohortRecord(payload.record);
             setGainsCohortRecord((prev) =>
               mergeResolvedEntriesIntoCohortRecord(
-                sanitizeGainsCohortRecord(payload.record),
+                sanitizedServerRecord!,
                 prev
                   ? Object.fromEntries(
                       [...prev.passed, ...prev.failed].map((a) => [a.ticker, a])
@@ -1092,11 +1084,29 @@ function ThermodynamicAuditApp() {
           if (payload?.liveSpotMap && Object.keys(payload.liveSpotMap).length > 0) {
             setGainsLiveSpots((prev) => ({ ...prev, ...payload.liveSpotMap }));
           }
+
+          // Only run an extra sync if local audits contain custom tickers missing from server cohort
+          if (sanitizedServerRecord) {
+            const serverTickers = new Set(
+              [...sanitizedServerRecord.passed, ...sanitizedServerRecord.failed].map(
+                (a) => a.ticker
+              )
+            );
+            const localSynced = buildBasketSyncedCohortRecord(
+              auditsRef.current,
+              sanitizedServerRecord
+            );
+            const hasUnsyncedCustomTicker = [
+              ...localSynced.passed,
+              ...localSynced.failed
+            ].some((item) => !serverTickers.has(item.ticker));
+            if (hasUnsyncedCustomTicker) {
+              void syncBasketLiveGains();
+            }
+          }
         }
       )
       .catch(() => {});
-
-    void syncBasketLiveGains();
 
     return () => {
       active = false;
@@ -1989,18 +1999,7 @@ function ThermodynamicAuditApp() {
       : displayAudits.KAS || displayAudits.BTC || audits.KAS;
   const baseAccent = hasActiveAudit
     ? getGradeAccent(currentAudit.grade)
-    : {
-        primary: '#49EACB',
-        secondary: '#34D399',
-        softBg: 'rgba(73, 234, 203, 0.10)',
-        secondarySoftBg: 'rgba(52, 211, 153, 0.10)',
-        border: 'rgba(73, 234, 203, 0.32)',
-        secondaryBorder: 'rgba(52, 211, 153, 0.28)',
-        glow: 'rgba(73, 234, 203, 0.16)',
-        secondaryGlow: 'rgba(52, 211, 153, 0.14)',
-        gradientCss: 'linear-gradient(135deg, #49EACB 0%, #34D399 100%)',
-        textOnAccent: '#041713'
-      };
+    : IDLE_LANDING_ACCENT;
   const activeScanStage = CORE_SCAN_STAGES[scanStepIdx] || CORE_SCAN_STAGES[0];
   const runningAuditState = isAuditing ? computeRunningAuditAccent(resolvedStepScores) : null;
   const accent = isAuditing && runningAuditState ? runningAuditState.accent : baseAccent;
@@ -2021,7 +2020,10 @@ function ThermodynamicAuditApp() {
     currentAudit.invariants.find((i) => i.id === hoveredInvId) || null;
   const activeModalInvariant =
     currentAudit.invariants.find((i) => i.id === modalInvId) || currentAudit.invariants[0];
-  const currentGeniusParagraphs = getGeniusForensicParagraphs(currentAudit);
+  const currentGeniusParagraphs = useMemo(
+    () => getGeniusForensicParagraphs(currentAudit),
+    [currentAudit]
+  );
 
   const liveCostFloorScore = Number(currentAudit.invariants?.[1]?.score ?? 0);
   const rawHistoricalSnapshots = useMemo(
@@ -2071,39 +2073,43 @@ function ThermodynamicAuditApp() {
       ? activeEpochSnapshot.invariants['02']?.score ?? 0
       : liveCostFloorScore;
 
-  const scorecardRows = currentAudit.invariants.map((baseInv, idx) => {
-    const id = baseInv.id || `0${idx + 1}`;
-    const snapInv = activeEpochSnapshot?.invariants?.[id];
-    const useHistoricalSnap = !isFinalLiveEpoch && Boolean(snapInv);
-    const rawScore = useHistoricalSnap && snapInv ? snapInv.score : baseInv.score;
-    const numericScore =
-      typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : 0;
-    const status = useHistoricalSnap
-      ? snapInv?.status || baseInv.status || 'ACTIVE'
-      : baseInv.status || snapInv?.status || 'ACTIVE';
-    const isVoid = isInvariantVoidUnanchored(id, scorecardCostFloorScore, rawScore, status);
-    return {
-      id,
-      shortName: baseInv.shortName,
-      label:
-        useHistoricalSnap && snapInv?.label
-          ? snapInv.label
-          : baseInv.title || DEFAULT_TITLES[idx] || baseInv.shortName,
-      title: baseInv.title || snapInv?.label || DEFAULT_TITLES[idx] || baseInv.shortName,
-      rawScore,
-      numericScore,
-      status,
-      isVoid,
-      frontierReference: useHistoricalSnap
-        ? snapInv?.frontierReference
-        : baseInv.frontierReference || snapInv?.frontierReference,
-      telemetry:
-        useHistoricalSnap && snapInv
-          ? snapInv.telemetry
-          : baseInv.telemetry || snapInv?.telemetry || '',
-      baseInv
-    };
-  });
+  const scorecardRows = useMemo(
+    () =>
+      currentAudit.invariants.map((baseInv, idx) => {
+        const id = baseInv.id || `0${idx + 1}`;
+        const snapInv = activeEpochSnapshot?.invariants?.[id];
+        const useHistoricalSnap = !isFinalLiveEpoch && Boolean(snapInv);
+        const rawScore = useHistoricalSnap && snapInv ? snapInv.score : baseInv.score;
+        const numericScore =
+          typeof rawScore === 'number' && Number.isFinite(rawScore) ? rawScore : 0;
+        const status = useHistoricalSnap
+          ? snapInv?.status || baseInv.status || 'ACTIVE'
+          : baseInv.status || snapInv?.status || 'ACTIVE';
+        const isVoid = isInvariantVoidUnanchored(id, scorecardCostFloorScore, rawScore, status);
+        return {
+          id,
+          shortName: baseInv.shortName,
+          label:
+            useHistoricalSnap && snapInv?.label
+              ? snapInv.label
+              : baseInv.title || DEFAULT_TITLES[idx] || baseInv.shortName,
+          title: baseInv.title || snapInv?.label || DEFAULT_TITLES[idx] || baseInv.shortName,
+          rawScore,
+          numericScore,
+          status,
+          isVoid,
+          frontierReference: useHistoricalSnap
+            ? snapInv?.frontierReference
+            : baseInv.frontierReference || snapInv?.frontierReference,
+          telemetry:
+            useHistoricalSnap && snapInv
+              ? snapInv.telemetry
+              : baseInv.telemetry || snapInv?.telemetry || '',
+          baseInv
+        };
+      }),
+    [currentAudit.invariants, activeEpochSnapshot, isFinalLiveEpoch, scorecardCostFloorScore]
+  );
 
   const activeScorecardRow =
     scorecardRows.find((r) => r.id === activeModalInvariant.id) || scorecardRows[0];
@@ -4799,320 +4805,6 @@ function ThermodynamicAuditApp() {
           : ''
       } bg-[#0B0C0E] text-[#F3F4F6] flex flex-col justify-between relative overflow-x-clip selection:bg-[#49EACB]/25 selection:text-[#49EACB] font-sans`}
     >
-      <style>{`
-        html { scrollbar-gutter: stable; }
-        .font-sans { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
-        .font-display { font-family: 'Space Grotesk', 'Inter', sans-serif; }
-        .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; }
-        .spring-orbit {
-          transition:
-            transform 460ms cubic-bezier(0.20, 1.22, 0.32, 1),
-            translate 460ms cubic-bezier(0.20, 1.22, 0.32, 1),
-            scale 460ms cubic-bezier(0.20, 1.22, 0.32, 1),
-            opacity 280ms ease,
-            box-shadow 320ms ease,
-            border-color 320ms ease;
-        }
-        .color-glide {
-          transition:
-            color 480ms cubic-bezier(0.22, 1, 0.36, 1),
-            background-color 480ms cubic-bezier(0.22, 1, 0.36, 1),
-            border-color 480ms cubic-bezier(0.22, 1, 0.36, 1),
-            box-shadow 480ms cubic-bezier(0.22, 1, 0.36, 1),
-            opacity 340ms ease,
-            transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
-            translate 340ms cubic-bezier(0.22, 1, 0.36, 1),
-            scale 340ms cubic-bezier(0.22, 1, 0.36, 1);
-        }
-        @keyframes deltaTintShift {
-          0%, 100% {
-            opacity: 0.12;
-          }
-          50% {
-            opacity: 0.88;
-          }
-        }
-        .delta-tint-shift {
-          animation: deltaTintShift 3.6s ease-in-out infinite;
-          will-change: opacity;
-        }
-        @keyframes selectContentFade {
-          0% {
-            opacity: 0.14;
-            transform: scale(0.94) translateY(4px);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-        .animate-select-fade {
-          animation: selectContentFade 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
-        }
-        @keyframes cardCrossfade {
-          0% {
-            opacity: 0;
-            transform: translateY(5px) scale(0.985);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-        .animate-card-fade {
-          animation: cardCrossfade 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
-        }
-        @keyframes pinNodeAppear {
-          0% {
-            opacity: 0;
-            transform: scale(0.8);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-        .animate-pin-enter {
-          animation: pinNodeAppear 400ms cubic-bezier(0.20, 1.18, 0.32, 1) both;
-        }
-        @keyframes stageCrossfade {
-          0% {
-            opacity: 0;
-            transform: translateY(10px) scale(0.975);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-        .animate-stage-enter {
-          animation: stageCrossfade 360ms cubic-bezier(0.22, 1, 0.36, 1) 40ms backwards;
-        }
-        @keyframes syncExpandDown {
-          0% {
-            opacity: 0;
-            transform: translateY(-10px) scaleY(0.95);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scaleY(1);
-          }
-        }
-        .animate-sync-expand-down {
-          animation: syncExpandDown 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
-          transform-origin: top center;
-        }
-        @keyframes modalBackdropFade {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        .animate-modal-backdrop {
-          animation: modalBackdropFade 220ms ease-out both;
-          will-change: opacity;
-        }
-        @keyframes modalSheetPop {
-          0% {
-            opacity: 0;
-            transform: translateY(10px) scale(0.975);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-          }
-        }
-        .animate-modal-sheet {
-          animation: modalSheetPop 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
-          will-change: transform, opacity;
-        }
-        @keyframes scanPulseRing {
-          0% { transform: scale(0.88); opacity: 0.85; }
-          100% { transform: scale(1.65); opacity: 0; }
-        }
-        .animate-scan-pulse {
-          animation: scanPulseRing 360ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        @keyframes dashFlow {
-          from { stroke-dashoffset: 0; }
-          to { stroke-dashoffset: -24; }
-        }
-        @keyframes dashFlowReverse {
-          from { stroke-dashoffset: 0; }
-          to { stroke-dashoffset: 24; }
-        }
-        .sim-flow-line {
-          animation: dashFlow 1.15s linear infinite;
-        }
-        .sim-flow-line-reverse {
-          animation: dashFlowReverse 1.15s linear infinite;
-        }
-        @keyframes spinSlowCw {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        @keyframes spinSlowCcw {
-          from { transform: rotate(360deg); }
-          to { transform: rotate(0deg); }
-        }
-        .spin-cw {
-          animation: spinSlowCw 9s linear infinite;
-          transform-origin: center;
-        }
-        .spin-ccw {
-          animation: spinSlowCcw 6.5s linear infinite;
-          transform-origin: center;
-        }
-        .hero-search-dock {
-          transition:
-            transform 740ms cubic-bezier(0.22, 1, 0.36, 1),
-            translate 740ms cubic-bezier(0.22, 1, 0.36, 1),
-            opacity 420ms ease;
-          will-change: transform, translate;
-        }
-        .hero-title-scale {
-          transform-origin: bottom center;
-          transition:
-            transform 740ms cubic-bezier(0.22, 1, 0.36, 1),
-            scale 740ms cubic-bezier(0.22, 1, 0.36, 1);
-          will-change: transform, scale;
-        }
-        @keyframes bgFieldPulse {
-          0%, 100% {
-            transform: translate3d(0, 0, 0) scale3d(0.95, 0.95, 1);
-            opacity: 0.42;
-          }
-          50% {
-            transform: translate3d(0, 0, 0) scale3d(1.06, 1.06, 1);
-            opacity: 0.98;
-          }
-        }
-        @keyframes bgCoreBreath {
-          0%, 100% {
-            transform: translate3d(-50%, -50%, 0) scale3d(0.84, 0.84, 1);
-            opacity: 0.36;
-          }
-          50% {
-            transform: translate3d(-50%, -50%, 0) scale3d(1.22, 1.22, 1);
-            opacity: 0.95;
-          }
-        }
-        @keyframes bgHaloWave {
-          0% {
-            transform: translate3d(-50%, -50%, 0) scale3d(0.74, 0.74, 1);
-            opacity: 0;
-          }
-          42% {
-            opacity: 0.5;
-          }
-          100% {
-            transform: translate3d(-50%, -50%, 0) scale3d(1.46, 1.46, 1);
-            opacity: 0;
-          }
-        }
-        .bg-field-pulse {
-          opacity: 0.72;
-          backface-visibility: hidden;
-        }
-        .bg-core-breath {
-          transform: translate3d(-50%, -50%, 0);
-          animation: bgCoreBreath var(--bg-pulse-dur, 4.4s) ease-in-out infinite;
-          backface-visibility: hidden;
-          will-change: transform, opacity;
-        }
-        .bg-halo-wave {
-          transform: translate3d(-50%, -50%, 0);
-          animation: bgHaloWave var(--bg-pulse-dur, 4.4s) cubic-bezier(0.22, 1, 0.36, 1) infinite;
-          backface-visibility: hidden;
-        }
-        @keyframes geniusVortexSpin {
-          0% {
-            transform: translate3d(-50%, -50%, 0) rotate(0deg);
-          }
-          100% {
-            transform: translate3d(-50%, -50%, 0) rotate(360deg);
-          }
-        }
-        @keyframes geniusMathFloat {
-          0%, 100% {
-            transform: translate3d(-50%, -50%, 0) translate3d(0px, 0px, 0) rotate(0deg) scale(var(--math-scale, 1));
-          }
-          50% {
-            transform: translate3d(-50%, -50%, 0) translate3d(var(--math-dx, 14px), var(--math-dy, -12px), 0) rotate(var(--math-rot, 1.5deg)) scale(var(--math-scale, 1));
-          }
-        }
-        .genius-vortex-spin {
-          transform: translate3d(-50%, -50%, 0);
-          animation: geniusVortexSpin var(--vortex-dur, 52s) linear infinite;
-          backface-visibility: hidden;
-          will-change: transform;
-        }
-        .genius-math-float {
-          transform: translate3d(-50%, -50%, 0) scale(var(--math-scale, 1));
-          animation: geniusMathFloat var(--math-dur, 24s) ease-in-out infinite;
-          animation-delay: var(--math-delay, 0s);
-          backface-visibility: hidden;
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .bg-field-pulse,
-          .bg-core-breath,
-          .bg-halo-wave,
-          .genius-vortex-spin,
-          .genius-math-float,
-          .delta-tint-shift,
-          .sim-flow-line,
-          .sim-flow-line-reverse {
-            animation: none !important;
-          }
-          .animate-stage-enter,
-          .animate-pin-enter,
-          .animate-card-fade,
-          .animate-sync-expand-down,
-          .animate-modal-backdrop,
-          .animate-modal-sheet {
-            animation: none !important;
-            opacity: 1;
-            transform: none;
-          }
-        }
-        .bg-anim-paused .bg-field-pulse,
-        .bg-anim-paused .bg-core-breath,
-        .bg-anim-paused .bg-halo-wave,
-        .bg-halo-wave.bg-anim-paused,
-        .bg-anim-paused .genius-vortex-spin,
-        .bg-anim-paused .genius-math-float,
-        .genius-vortex-spin.bg-anim-paused,
-        .genius-math-float.bg-anim-paused {
-          animation-play-state: paused;
-        }
-        @keyframes truthShockwave {
-          0% {
-            transform: translate(-50%, -50%) scale(0.3);
-            opacity: 0.96;
-          }
-          100% {
-            transform: translate(-50%, -50%) scale(16);
-            opacity: 0;
-          }
-        }
-        @keyframes truthSparkOut {
-          0% {
-            transform: translate(-50%, -50%) rotate(var(--spark-angle, 0deg)) translateX(4px) scale(1);
-            opacity: 1;
-          }
-          100% {
-            transform: translate(-50%, -50%) rotate(var(--spark-angle, 0deg)) translateX(88px) scale(0.15);
-            opacity: 0;
-          }
-        }
-        .truth-shockwave-ring {
-          animation: truthShockwave 700ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        .truth-spark-ray {
-          animation: truthSparkOut 660ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-        }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
-
       {/* Zero-Blur GPU-Composited Pulsing Gradient (NORMIE) <-> Swirling Universe + Physics Laws (GENIUS) */}
       {(() => {
         const activeBackdropScore = isAuditing && runningAuditState

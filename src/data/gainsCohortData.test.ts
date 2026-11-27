@@ -441,7 +441,16 @@ test('resolveTimelineBaselineMode, historical resolveCohortBaselinePrice, and bu
   assert.equal(traj1971[6].label, 'Now');
   assert.equal(traj1971[6].failAll, 1.0);
   assert.ok(Math.abs(traj1971[6].passAll - 66.0) < 0.01);
+
+  const { formatMultipleCompact, formatSimOutcomeUsd } = await import('./gainsCohortData.ts');
+  assert.equal(formatMultipleCompact(0.000012), '<0.0001x');
+  assert.equal(formatMultipleCompact(71.14), '71.1x');
+  assert.equal(formatMultipleCompact(1450), '1.4Kx');
+  assert.equal(formatMultipleCompact(1460), '1.5Kx');
+  assert.equal(formatSimOutcomeUsd(5000 * 71.14), '$355.7K');
+  assert.equal(formatSimOutcomeUsd(0.00004), '<$0.0001');
 });
+
 
 
 

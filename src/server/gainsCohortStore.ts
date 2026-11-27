@@ -103,12 +103,16 @@ function loadFromDisk(): GainsCohortRecord {
   return getDefaultSyncedCohort();
 }
 
+let cohortWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
 function saveToDisk(record: GainsCohortRecord): void {
-  try {
-    fs.writeFileSync(GAINS_COHORT_FILE, JSON.stringify(record), 'utf8');
-  } catch (err) {
-    console.warn('Could not persist gains cohort file:', err);
-  }
+  if (cohortWriteTimer) clearTimeout(cohortWriteTimer);
+  cohortWriteTimer = setTimeout(() => {
+    cohortWriteTimer = null;
+    void fs.promises
+      .writeFile(GAINS_COHORT_FILE, JSON.stringify(record), 'utf8')
+      .catch((err) => console.warn('Could not persist gains cohort file:', err));
+  }, 120);
 }
 
 export function getPersistedGainsCohort(): GainsCohortRecord {
@@ -142,16 +146,6 @@ export function savePersistedGainsCohort(
   return sanitized;
 }
 
-export function resetPersistedGainsCohort(): GainsCohortRecord {
-  const defaults = getDefaultSyncedCohort();
-  memoryCohort = defaults;
-  lastLiveSyncCompletedAtMs = 0;
-  lastLiveSpotMap = {};
-  cachedWindowTrajectories = {};
-  saveToDisk(defaults);
-  return defaults;
-}
-
 function findBarPriceNear(
   bars: HistoricalBar[],
   targetMs: number,
@@ -175,7 +169,7 @@ function findBarPriceNear(
   return best.price;
 }
 
-interface YahooChartParsed {
+export interface YahooChartParsed {
   spotPrice: number | null;
   releasePrice: number | null;
   releaseLabel?: string;
@@ -186,98 +180,124 @@ interface YahooChartParsed {
   bars: HistoricalBar[];
 }
 
-async function fetchYahooReleaseAndSpot(symbol: string): Promise<YahooChartParsed | null> {
-  try {
-    const res = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        symbol
-      )}?range=max&interval=1wk`,
-      {
-        signal: AbortSignal.timeout(6000),
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible; ThermodynamicTruthBot/1.0)'
+const yahooChartResponseCache = new Map<
+  string,
+  { fetchedAtMs: number; parsed: YahooChartParsed }
+>();
+const inFlightYahooCharts = new Map<string, Promise<YahooChartParsed | null>>();
+
+export async function fetchYahooReleaseAndSpot(
+  symbol: string,
+  forceRefresh = false
+): Promise<YahooChartParsed | null> {
+  const key = symbol.trim().toUpperCase();
+  const cached = yahooChartResponseCache.get(key);
+  if (!forceRefresh && cached && Date.now() - cached.fetchedAtMs < LIVE_SYNC_TTL_MS) {
+    return cached.parsed;
+  }
+  const existingFlight = inFlightYahooCharts.get(key);
+  if (existingFlight) return existingFlight;
+
+  const reqPromise = (async (): Promise<YahooChartParsed | null> => {
+    try {
+      const res = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+          symbol
+        )}?range=max&interval=1wk`,
+        {
+          signal: AbortSignal.timeout(6000),
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'Mozilla/5.0 (compatible; ThermodynamicTruthBot/1.0)'
+          }
+        }
+      );
+      if (!res.ok) return cached?.parsed ?? null;
+
+      const json = (await res.json()) as {
+        chart?: {
+          result?: Array<{
+            meta?: { regularMarketPrice?: number };
+            timestamp?: number[];
+            indicators?: {
+              quote?: Array<{
+                open?: Array<number | null>;
+                close?: Array<number | null>;
+              }>;
+            };
+          }>;
+        };
+      };
+
+      const result = json?.chart?.result?.[0];
+      if (!result) return cached?.parsed ?? null;
+
+      const rawSpot = Number(result.meta?.regularMarketPrice);
+      const spotPrice = Number.isFinite(rawSpot) && rawSpot > 0 ? rawSpot : null;
+
+      const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
+      const quote = result.indicators?.quote?.[0];
+      const opens = Array.isArray(quote?.open) ? quote.open : [];
+      const closes = Array.isArray(quote?.close) ? quote.close : [];
+
+      let releasePrice: number | null = null;
+      let releaseLabel: string | undefined;
+      const bars: HistoricalBar[] = [];
+
+      for (let i = 0; i < timestamps.length; i += 1) {
+        const tsSec = Number(timestamps[i]);
+        if (!Number.isFinite(tsSec) || tsSec <= 0) continue;
+        const openVal = Number(opens[i]);
+        const closeVal = Number(closes[i]);
+        const firstCandidate =
+          Number.isFinite(openVal) && openVal > 0
+            ? openVal
+            : Number.isFinite(closeVal) && closeVal > 0
+            ? closeVal
+            : null;
+        const closeCandidate =
+          Number.isFinite(closeVal) && closeVal > 0 ? closeVal : firstCandidate;
+
+        if (releasePrice === null && firstCandidate !== null) {
+          releasePrice = firstCandidate;
+          const d = new Date(tsSec * 1000);
+          const mon = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+          const yr = String(d.getUTCFullYear()).slice(-2);
+          releaseLabel = `${formatUsdPrice(firstCandidate)} (${mon} '${yr})`;
+        }
+
+        if (closeCandidate !== null) {
+          bars.push({ tsMs: tsSec * 1000, price: closeCandidate });
         }
       }
-    );
-    if (!res.ok) return null;
 
-    const json = (await res.json()) as {
-      chart?: {
-        result?: Array<{
-          meta?: { regularMarketPrice?: number };
-          timestamp?: number[];
-          indicators?: {
-            quote?: Array<{
-              open?: Array<number | null>;
-              close?: Array<number | null>;
-            }>;
-          };
-        }>;
+      const nowMs = Date.now();
+      const price180d = findBarPriceNear(bars, nowMs - 180 * DAY_MS);
+      const price1y = findBarPriceNear(bars, nowMs - 365 * DAY_MS);
+      const price2y = findBarPriceNear(bars, nowMs - 730 * DAY_MS);
+      const price4y = findBarPriceNear(bars, nowMs - 1461 * DAY_MS);
+
+      const parsed: YahooChartParsed = {
+        spotPrice,
+        releasePrice,
+        releaseLabel,
+        price180d,
+        price1y,
+        price2y,
+        price4y,
+        bars
       };
-    };
-
-    const result = json?.chart?.result?.[0];
-    if (!result) return null;
-
-    const rawSpot = Number(result.meta?.regularMarketPrice);
-    const spotPrice = Number.isFinite(rawSpot) && rawSpot > 0 ? rawSpot : null;
-
-    const timestamps = Array.isArray(result.timestamp) ? result.timestamp : [];
-    const quote = result.indicators?.quote?.[0];
-    const opens = Array.isArray(quote?.open) ? quote.open : [];
-    const closes = Array.isArray(quote?.close) ? quote.close : [];
-
-    let releasePrice: number | null = null;
-    let releaseLabel: string | undefined;
-    const bars: HistoricalBar[] = [];
-
-    for (let i = 0; i < timestamps.length; i += 1) {
-      const tsSec = Number(timestamps[i]);
-      if (!Number.isFinite(tsSec) || tsSec <= 0) continue;
-      const openVal = Number(opens[i]);
-      const closeVal = Number(closes[i]);
-      const firstCandidate =
-        Number.isFinite(openVal) && openVal > 0
-          ? openVal
-          : Number.isFinite(closeVal) && closeVal > 0
-          ? closeVal
-          : null;
-      const closeCandidate =
-        Number.isFinite(closeVal) && closeVal > 0 ? closeVal : firstCandidate;
-
-      if (releasePrice === null && firstCandidate !== null) {
-        releasePrice = firstCandidate;
-        const d = new Date(tsSec * 1000);
-        const mon = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
-        const yr = String(d.getUTCFullYear()).slice(-2);
-        releaseLabel = `${formatUsdPrice(firstCandidate)} (${mon} '${yr})`;
-      }
-
-      if (closeCandidate !== null) {
-        bars.push({ tsMs: tsSec * 1000, price: closeCandidate });
-      }
+      yahooChartResponseCache.set(key, { fetchedAtMs: nowMs, parsed });
+      return parsed;
+    } catch {
+      return cached?.parsed ?? null;
+    } finally {
+      inFlightYahooCharts.delete(key);
     }
+  })();
 
-    const nowMs = Date.now();
-    const price180d = findBarPriceNear(bars, nowMs - 180 * DAY_MS);
-    const price1y = findBarPriceNear(bars, nowMs - 365 * DAY_MS);
-    const price2y = findBarPriceNear(bars, nowMs - 730 * DAY_MS);
-    const price4y = findBarPriceNear(bars, nowMs - 1461 * DAY_MS);
-
-    return {
-      spotPrice,
-      releasePrice,
-      releaseLabel,
-      price180d,
-      price1y,
-      price2y,
-      price4y,
-      bars
-    };
-  } catch {
-    return null;
-  }
+  inFlightYahooCharts.set(key, reqPromise);
+  return reqPromise;
 }
 
 const WINDOW_SPECS: Array<{
@@ -501,12 +521,29 @@ export async function syncLivePricesAndPersistGainsCohort(
   windowTrajectories: WindowTrajectoriesMap;
   extraResolvedEntries: Record<string, CohortAssetEntry>;
 }> {
+  const currentSnapshot = getPersistedGainsCohort();
+  const initialExistingSet = new Set(
+    [...currentSnapshot.passed, ...currentSnapshot.failed].map((i) => i.ticker)
+  );
+  const preSanitizedExtras = sanitizeExtraSyncItems(extraItems, initialExistingSet);
   const hasClientOverrides = Boolean(
     clientSpotOverrides && Object.keys(clientSpotOverrides).length > 0
   );
-  const hasExtraItems = Boolean(Array.isArray(extraItems) && extraItems.length > 0);
-  if (inFlightLiveSync && !hasClientOverrides && !hasExtraItems) {
-    return inFlightLiveSync;
+  const hasExtraItems = preSanitizedExtras.length > 0;
+
+  if (!hasClientOverrides && !hasExtraItems) {
+    if (inFlightLiveSync) {
+      return inFlightLiveSync;
+    }
+    if (lastLiveSyncCompletedAtMs > 0 && Date.now() - lastLiveSyncCompletedAtMs < 4_000) {
+      return {
+        record: currentSnapshot,
+        syncedTickers: [],
+        liveSpotMap: { ...lastLiveSpotMap },
+        windowTrajectories: cachedWindowTrajectories,
+        extraResolvedEntries: {}
+      };
+    }
   }
 
   const runSync = async () => {
